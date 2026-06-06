@@ -153,3 +153,53 @@ Daily cron: prompt evolution analysis (admin-triggered or scheduled).
 - Does the system prompt still fit in token budget after my additions?
 - Does this respect the 14-day curriculum lock?
 - Does this handle empty arrays / null fields gracefully?
+
+## Shipping an update (deploy workflow)
+
+The app is hosted on **Vercel**, connected to the GitHub repo `bobbywzl/release-edu`.
+Vercel auto-deploys on every push: **push to `main` → Production**, **push to any
+other branch → a temporary Preview URL** (production untouched). Production domain:
+`https://release-edu.vercel.app`.
+
+**Trigger phrases** — when the user says any of: "ship it", "ship this", "ship this
+update", "deploy this", "push it live", or "redeploy" → follow the matching workflow
+below WITHOUT re-asking for the steps. Always confirm with the user before the final
+`git push` (push to a remote is a publish action).
+
+### Pre-flight (ALWAYS run before any push)
+1. `npx tsc -p tsconfig.json --noEmit` (ignore `scripts/` + `downlevelIteration` noise) — must be clean.
+2. `npm run build` — must reach "Compiled successfully" / full route table. A red build
+   locally = a red build on Vercel, so never push a failing build.
+3. Confirm `git status` shows only intended files; never stage `.env` or `.next/`.
+
+### Workflow A — Quick ship (small, low-risk change → straight to production)
+Use for copy tweaks, bug fixes, prompt edits, anything you're confident in.
+```bash
+git add -A
+git commit -m "<why-focused message>
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+git push                      # pushes main → Vercel auto-deploys to production
+```
+Then tell the user it's deploying and that `release-edu.vercel.app` updates in ~2-3 min.
+
+### Workflow B — Branch & preview (anything risky → test before production)
+Use for schema/Prisma changes, auth/env changes, big refactors, new features.
+```bash
+git checkout -b feat/<short-name>
+git add -A && git commit -m "<message>  (+ Co-Authored-By trailer)"
+git push -u origin feat/<short-name>     # Vercel builds a PREVIEW deploy, prod untouched
+gh pr create --fill                      # optional: open a PR (preview URL posts on it)
+```
+Give the user the Vercel **Preview URL** to verify. After they approve:
+```bash
+git checkout main && git merge feat/<short-name> && git push   # → production
+```
+
+### Notes / guardrails
+- **Env-var or Google-OAuth changes don't ship via git** — they're set in the Vercel
+  dashboard and require a manual **Redeploy** (Deployments → ⋯ → Redeploy) to take effect.
+- Default to **Workflow A** for routine changes; escalate to **B** when the pre-flight or
+  the nature of the change suggests real risk (DB migrations, auth, payment, deletes).
+- Branch naming: `feat/…`, `fix/…`, `chore/…`. Keep `main` always deployable.
+- If a Vercel build fails after push, read the build log, fix locally, re-run pre-flight, push again.
