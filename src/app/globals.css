@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 6% 13%;
+    --foreground: 210 11% 89%;
+    --card: 220 6% 16%;
+    --card-foreground: 210 11% 89%;
+    --popover: 220 6% 16%;
+    --popover-foreground: 210 11% 89%;
+    --primary: 210 10% 75%;
+    --primary-foreground: 220 6% 13%;
+    --secondary: 220 5% 20%;
+    --secondary-foreground: 210 11% 89%;
+    --muted: 220 5% 20%;
+    --muted-foreground: 215 8% 52%;
+    --accent: 220 5% 22%;
+    --accent-foreground: 210 11% 89%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 210 11% 89%;
+    --border: 220 5% 22%;
+    --input: 220 5% 22%;
+    --ring: 210 8% 50%;
+    --radius: 0.625rem;
+  }
+
+  .light {
+    --background: 40 30% 97%;
+    --foreground: 222 47% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 8%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 8%;
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 94%;
+    --accent-foreground: 222 47% 8%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Force graph canvas */
+.force-graph-container canvas {
+  border-radius: var(--radius);
+}
+
+/* Chat markdown styles */
+.prose-chat h1, .prose-chat h2, .prose-chat h3 {
+  @apply font-semibold text-foreground mb-2 mt-4;
+}
+.prose-chat p {
+  @apply mb-3 leading-relaxed;
+}
+.prose-chat code {
+  @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+}
+.prose-chat pre {
+  @apply bg-muted p-4 rounded-lg overflow-x-auto mb-3;
+}
+.prose-chat ul, .prose-chat ol {
+  @apply pl-5 mb-3 space-y-1;
+}
+.prose-chat li {
+  @apply leading-relaxed;
+}
+.prose-chat ul li {
+  @apply list-disc;
+}
+.prose-chat ol li {
+  @apply list-decimal;
+}
+.prose-chat strong {
+  @apply font-semibold text-foreground;
+}
+.prose-chat blockquote {
+  @apply border-l-4 border-primary/50 pl-4 italic text-muted-foreground my-3;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Highlight pulse animation for scroll-to-message */
+@keyframes highlight-pulse-anim {
+  0%   { background-color: hsl(var(--primary) / 0.15); }
+  50%  { background-color: hsl(var(--primary) / 0.05); }
+  100% { background-color: transparent; }
+}
+
+.highlight-pulse {
+  animation: highlight-pulse-anim 1.5s ease-out forwards;
+  border-radius: 0.75rem;
+}

@@ -1,0 +1,485 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ── Users & Auth ─────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  role          String    @default("student") // "student" | "mentor" | "admin"
+  createdAt     DateTime  @default(now())
+  conversations Conversation[]
+  highlights    MessageHighlight[]
+  feedback      MessageFeedback[]
+  studentProfile StudentProfile?
+  mentorConfig   MentorConfig?
+  curriculumPlan CurriculumPlan?
+  tracks         Track[]
+  insights       Insight[]
+  files          LinkedFile[]
+  portfolioCache   PortfolioCache?
+  curriculumBlocks CurriculumBlock[]
+}
+
+// ── Student Profile ──────────────────────────────────────────
+
+model StudentProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName     String?  // User-chosen name, fully independent of Google OAuth
+  learningStage   Int      @default(1)
+  xp              Int      @default(0)
+  streak          Int      @default(0)
+  learningStyle   String?
+  pacePreference  String?
+  interests       String?  // JSON array
+  strengths       String?  // JSON array
+  weaknesses      String?  // JSON array
+  aspirations     String?
+  currentProjects String?  // JSON array
+  roadmapState    String?  // JSON
+  isOnboarded     Boolean  @default(false)
+  // Counter for user-initiated "Regenerate with AI" clicks. Capped at 2 per
+  // curriculum lifetime; reset to 0 when the user does Start Over. Does NOT
+  // increment for system-initiated regenerations (onboarding's first call,
+  // auto-recovery in the dashboard layout).
+  manualRegenerationCount Int @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+// ── Mentor Config ────────────────────────────────────────────
+
+model MentorConfig {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  socraticIntensity    Int      @default(7)
+  hintLevel            Int      @default(5)
+  difficultyBias       Int      @default(5)
+  celebrateMistakes    Boolean  @default(true)
+  encourageExploration Boolean  @default(true)
+  focusTopics          String?  // JSON array
+  restrictedTopics     String?  // JSON array
+  customInstructions   String?
+  tonePreference       String   @default("warm")
+  maxResponseLength    Int      @default(500)
+  allowProjectIdeas    Boolean  @default(true)
+  allowCareerAdvice    Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+}
+
+// ── Conversations & Messages ─────────────────────────────────
+
+model Conversation {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String    @default("New Conversation")
+  context     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  // Rolling compaction summary — covers messages 0..(messages.length - KEEP_RECENT).
+  // Regenerated lazily when the message count grows past COMPACT_TRIGGER.
+  summary          String?
+  summaryThroughId String? // last messageId covered by the summary (exclusive)
+  messages    Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String       // "user" | "assistant" | "system"
+  content        String
+  metadata       String?      // JSON
+  createdAt      DateTime     @default(now())
+}
+
+// ── Insights (Bob's observations about students) ─────────────
+
+model Insight {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String   // personality, interest, strength, weakness, preference, aspiration, breakthrough, struggle, style
+  content    String
+  confidence Float    @default(0.5)
+  source     String   // where this insight came from
+  createdAt  DateTime @default(now())
+}
+
+// ── Curriculum Plan ──────────────────────────────────────────
+
+model CurriculumPlan {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version           Int      @default(1)
+  profileSummary    String?
+  primaryStrengths  String?  // JSON array
+  primaryInterests  String?  // JSON array
+  learningStyle     String?
+  personalityTraits String?  // JSON array
+  generatedAt       DateTime @default(now())
+  lastUpdatedAt     DateTime @updatedAt
+  lockedAt          DateTime?
+  completedAt       DateTime? // moment all tracks flipped to completed
+}
+
+// ── Tracks (subjects) ────────────────────────────────────────
+
+model Track {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  color       String    @default("#3B82F6")
+  type        String    @default("project") // "project" | "core"
+  order       Int       @default(0)
+  progress    Int       @default(0)            // computed, 0-100
+  trackStatus String    @default("not-started") // computed: not-started | in-progress | completed
+  completedAt DateTime?
+  chapters    Chapter[]
+  homeworks   Homework[]
+  quizzes     Quiz[]
+  projects    SubjectProject[]
+  modules     CurriculumModule[]
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ── Curriculum Modules (within tracks) ───────────────────────
+
+model CurriculumModule {
+  id             String  @id @default(cuid())
+  trackId        String
+  track          Track   @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  type           String  @default("project") // "project" | "core-content"
+  subject        String?
+  status         String  @default("not-started") // "not-started" | "in-progress" | "completed"
+  progress       Int     @default(0)
+  estimatedHours Int     @default(10)
+  prerequisites  String? // JSON array
+  skills         String? // JSON array
+  aiRationale    String?
+  order          Int     @default(0)
+
+  @@index([trackId])
+}
+
+// ── Chapters (content within tracks) ─────────────────────────
+
+model Chapter {
+  id               String   @id @default(cuid())
+  trackId          String
+  track            Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  title            String
+  description      String?
+  content          String?  // markdown
+  status           String   @default("not-started")
+  estimatedMinutes Int      @default(30)
+  keyTopics        String?  // JSON array
+  notes            String?  // markdown lecture notes, auto-generated and saved
+  sessionPlan      String?  // JSON: { objectives: string[], plan: string, checkpoints: string[], estimatedExchanges: number }
+  sessionScore     Int?     // 0-100, computed understanding score
+  sessionData      String?  // JSON: { objectives: [{id, text, understood, evidence}], quizResults: [...], conversationScore: number }
+  sessionConvId    String?  // ID of the conversation where this chapter session lives — used to resume
+  order            Int      @default(0)
+  startedAt        DateTime?  // first time the student opened/began this chapter
+  completedAt      DateTime?  // moment the chapter flipped to "completed"
+  createdAt        DateTime @default(now())
+
+  @@index([trackId])
+}
+
+// ── Homework ─────────────────────────────────────────────────
+
+model Homework {
+  id               String   @id @default(cuid())
+  trackId          String
+  track            Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  chapterId        String?
+  title            String
+  description      String?
+  instructions     String?  // markdown
+  status           String   @default("not-started")
+  studentResponse  String?  // student's written answer
+  dueDate          DateTime?
+  competencies     String?  // JSON array
+  estimatedMinutes Int      @default(30)
+  createdAt        DateTime @default(now())
+
+  @@index([trackId])
+}
+
+// ── Quizzes ──────────────────────────────────────────────────
+
+model Quiz {
+  id          String         @id @default(cuid())
+  trackId     String
+  track       Track          @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  chapterId   String?
+  title       String
+  description String?
+  status      String         @default("not-started")
+  score       Int?
+  totalPoints Int            @default(0)
+  timeLimit   Int?           // minutes
+  completedAt DateTime?
+  questions   QuizQuestion[]
+  createdAt   DateTime       @default(now())
+
+  @@index([trackId])
+}
+
+model QuizQuestion {
+  id            String  @id @default(cuid())
+  quizId        String
+  quiz          Quiz    @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  question      String
+  type          String  @default("multiple-choice") // "multiple-choice" | "short-answer" | "true-false"
+  options       String? // JSON array
+  correctAnswer String?
+  explanation   String?
+  points        Int     @default(1)
+  order         Int     @default(0)
+  studentAnswer String? // what the student answered
+
+  @@index([quizId])
+}
+
+// ── Subject Projects ─────────────────────────────────────────
+
+model SubjectProject {
+  id              String             @id @default(cuid())
+  trackId         String
+  track           Track              @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  proposal        String?
+  rubric          String?            // JSON: evaluation rubric generated by AI
+  status          String             @default("proposal") // proposal | approved | in-progress | completed | needs-revision
+  progress        Int                @default(0)
+  coverageMap     String?            // JSON array - which chapters/topics covered
+  mentorFeedback  String?
+  exploreConvId   String?            // conversation ID for the "Discuss with Bob" explore session
+  tasks           ProjectTask[]
+  milestones      ProjectMilestone[]
+  startedAt       DateTime?          // first time the student opened/locked-in the project
+  completedAt    DateTime?          // moment the project flipped to "completed"
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model ProjectTask {
+  id        String         @id @default(cuid())
+  projectId String
+  project   SubjectProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title     String
+  completed Boolean        @default(false)
+  order     Int            @default(0)
+
+  @@index([projectId])
+}
+
+model ProjectMilestone {
+  id        String         @id @default(cuid())
+  projectId String
+  project   SubjectProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title     String
+  date      DateTime?
+  completed Boolean        @default(false)
+  order     Int            @default(0)
+
+  @@index([projectId])
+}
+
+// ── Linked Files (Google Drive references) ───────────────────
+
+model LinkedFile {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackId   String?
+  workType  String?  // "content" | "homework" | "quiz" | "project"
+  workId    String?  // ID of the work item this file is linked to
+  driveId   String?  // Google Drive file ID
+  name      String
+  mimeType  String?
+  url       String?  // Google Drive webViewLink or public path
+  content   String?  // File content stored as text or base64 data URI for persistence
+  size      Int?     // File size in bytes
+  addedAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([workId])
+}
+
+// ── Conversation Archive (preserves chat history when conversations are deleted) ──
+
+model ConversationArchive {
+  id             String   @id @default(cuid())
+  userId         String
+  originalConvId String
+  linkedType     String   // 'chapter' | 'project'
+  linkedId       String   // chapterId or projectId
+  linkedTitle    String
+  messagesJson   String   // JSON array of {role, content, createdAt}
+  archivedAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([linkedId])
+}
+
+// ── Portfolio Cache ──────────────────────────────────────────
+
+model PortfolioCache {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data        String   // JSON of generated portfolio (or empty while generating)
+  status      String   @default("ready") // "generating" | "ready" | "error"
+  startedAt   DateTime?                   // when generation started (for timeout detection)
+  errorMessage String?                    // if status=error
+  generatedAt DateTime @default(now())
+}
+
+// ── Message Feedback (thumbs up/down) ────────────────────────
+
+model MessageFeedback {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  messageId      String
+  rating         Int      // 1 = thumbs up, -1 = thumbs down
+  comment        String?  // optional text reason
+  mode           String?  // tutoring / research / logistics
+  chapterId      String?  // if in a lesson session
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, messageId])
+  @@index([userId])
+  @@index([messageId])
+}
+
+// ── Session Outcomes (for prompt evolution) ──────────────────
+
+model SessionOutcome {
+  id             String   @id @default(cuid())
+  userId         String
+  chapterId      String
+  conversationId String
+  startScore     Int      @default(0)
+  endScore       Int
+  passed         Boolean
+  dropOff        Boolean  @default(false)
+  thumbsUp       Int      @default(0)
+  thumbsDown     Int      @default(0)
+  messageCount   Int
+  subjectArea    String
+  sessionSummary String?
+  createdAt      DateTime @default(now())
+
+  @@index([subjectArea])
+  @@index([passed])
+  @@index([createdAt])
+}
+
+// ── Training Examples (few-shot injection) ───────────────────
+
+model TrainingExample {
+  id           String   @id @default(cuid())
+  category     String
+  userMessage  String
+  bobResponse  String
+  sessionScore Int
+  rating       Int
+  approved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([category])
+  @@index([approved])
+}
+
+// ── Prompt Evolution Proposals ───────────────────────────────
+
+model PromptEvolutionProposal {
+  id              String    @id @default(cuid())
+  status          String    @default("pending")
+  analysisSource  String
+  patternsFound   String
+  proposedChanges String
+  basedOnSessions Int
+  basedOnFeedback Int
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  appliedAt       DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+// ── Curriculum Blocks (archived curriculum history) ──────────
+
+model CurriculumBlock {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Curriculum metadata
+  title           String   // e.g. "Golf Swing Biomechanics" — derived from primary interests
+  profileSummary  String?
+  primaryInterests String? // JSON array
+  primaryStrengths String? // JSON array
+  learningStyle   String?
+  // Progress snapshot at time of archive
+  totalChapters   Int      @default(0)
+  completedChapters Int    @default(0)
+  totalXp         Int      @default(0)
+  overallProgress Int      @default(0) // 0-100
+  // Detailed data — JSON blobs preserving full state
+  tracksJson      String   // JSON: array of { name, type, color, progress, chapters: [{ title, status, sessionScore, keyTopics }] }
+  insightsJson    String?  // JSON: array of { type, content, confidence }
+  sessionOutcomesJson String? // JSON: array of { chapterId, subjectArea, endScore, passed, messageCount, sessionSummary }
+  highlightsJson  String?  // JSON: array of { selectedText, comment, color }
+  // Lifecycle
+  startedAt       DateTime // when the curriculum was generated (from CurriculumPlan.generatedAt)
+  lockedAt        DateTime? // when it was locked
+  archivedAt      DateTime @default(now()) // when the user started over
+  // User control
+  includedInPortfolio Boolean @default(true) // user can exclude from portfolio
+
+  @@index([userId])
+}
+
+// ── Message Highlights & Comments ────────────────────────────
+
+model MessageHighlight {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  messageId      String   // DB message ID (not temp IDs)
+  selectedText   String   // exact text that was highlighted
+  startOffset    Int      // character offset within message content
+  endOffset      Int
+  comment        String?
+  color          String   @default("amber") // amber | blue | green | purple
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([conversationId])
+  @@index([messageId])
+}
