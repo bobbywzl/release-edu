@@ -92,6 +92,10 @@ Return ONLY valid JSON, no markdown fences:
 {"interests":["specific-sub-discipline-1","specific-sub-discipline-2","...at least 4-8"],"strengths":["..."],"weaknesses":["..."],"learningStyle":"visual / hands-on / reading / discussion","personalityTraits":["..."],"aspirations":"specific thing they want to build or achieve","educationFrustrations":["..."],"baselineAssessment":{"math":5,"writing":5,"science":5,"history":5,"criticalThinking":5}}`
           }]
         })
+        {
+          const { recordAnthropicUsage } = await import('@/lib/usage')
+          recordAnthropicUsage(result.usage, { model: 'claude-opus-4-8', feature: 'curriculum' })
+        }
         const text = ((result.content[0] as { type: string; text?: string }).text || '').trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
         profile = JSON.parse(text) as OnboardingProfile
       } catch (err) {

@@ -39,6 +39,10 @@ Reply with ONLY the title, no quotes, no punctuation at end.`,
       }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-haiku-4-5-20251001', feature: 'title' })
+    }
     const title = (result.content[0] as any).text?.trim().slice(0, 60) || conv.title
     await prisma.conversation.update({ where: { id }, data: { title } })
     return NextResponse.json({ title })

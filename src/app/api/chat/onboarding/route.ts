@@ -280,6 +280,10 @@ export async function POST(req: NextRequest) {
                 fullResponse = attemptText
                 controller.enqueue(encoder.encode(attemptText))
               }
+              try {
+                const { recordAnthropicUsage } = await import('@/lib/usage')
+                recordAnthropicUsage((await response.finalMessage()).usage, { userId: storeUserId, model, feature: 'onboarding' })
+              } catch { /* usage best-effort */ }
               succeeded = true
               break outer
             } catch (err) {

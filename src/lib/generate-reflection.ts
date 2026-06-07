@@ -113,6 +113,8 @@ export async function generateReflectionBlock(
       max_tokens: 600,
       messages: [{ role: 'user', content: REFLECTION_PROMPT(inputs) }],
     })
+    const { recordAnthropicUsage } = await import('@/lib/usage')
+    recordAnthropicUsage(result.usage, { model: CHAT_MODELS.haiku, feature: 'reflection' })
     const text = (result.content[0] as { type: string; text?: string })?.text?.trim() ?? ''
     // Pull just the fenced block out — the model occasionally adds a stray
     // newline or wrapper despite the instructions.

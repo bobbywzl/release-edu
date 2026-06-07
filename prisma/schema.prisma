@@ -483,3 +483,27 @@ model MessageHighlight {
   @@index([conversationId])
   @@index([messageId])
 }
+
+// ── AI Usage Telemetry ───────────────────────────────────────
+// One row per model call across the whole app (chat, onboarding, research,
+// background tasks, curriculum/chapter generation, etc.). Powers the admin
+// cost dashboard. costUsd is computed at write time from MODEL_PRICING so the
+// figure is locked to the price at the moment of the call.
+model UsageEvent {
+  id               String   @id @default(cuid())
+  userId           String?  // null for system/cron calls with no user
+  provider         String   // "anthropic" | "google"
+  model            String   // e.g. "claude-opus-4-8", "gemini-3.1-pro-preview"
+  feature          String   // "tutoring" | "onboarding" | "research" | "reflection" | "insight" | "title" | "curriculum" | "chapter" | "quiz" | "capstone" | "other"
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  costUsd          Float    @default(0)
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([feature])
+  @@index([model])
+}

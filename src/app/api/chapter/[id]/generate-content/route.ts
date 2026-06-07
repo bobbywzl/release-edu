@@ -77,6 +77,10 @@ Write at depth appropriate for genuine mastery, not surface familiarity. Be prec
       messages: [{ role: 'user', content: prompt }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'chapter' })
+    }
     let content = (result.content[0] as { text: string }).text?.trim() || ''
 
     // If output hit the token cap, repair common mid-sentence truncation so the

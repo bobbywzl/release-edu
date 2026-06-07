@@ -41,41 +41,54 @@ function roleBadge(role: string) {
   )
 }
 
-interface UserTokenStats {
+interface UserUsage {
   userId: string
   name: string | null
   email: string | null
   image: string | null
+  tokens: number
   inputTokens: number
   outputTokens: number
-  totalTokens: number
-  trackedMessages: number
-  totalMessages: number
-  avgInputPerMessage: number
-  avgOutputPerMessage: number
-  avgTotalPerMessage: number
-  estimatedCost: number
+  costUsd: number
+  events: number
 }
 
 interface TokenStats {
-  totalMessages: number
-  trackedMessages: number
+  totalEvents: number
   totalInputTokens: number
   totalOutputTokens: number
+  totalCacheReadTokens: number
+  totalCacheWriteTokens: number
   totalTokens: number
-  avgInputPerMessage: number
-  avgOutputPerMessage: number
-  avgTotalPerMessage: number
-  estimatedCost: number
-  modelBreakdown: Record<string, { input: number; output: number; count: number }>
-  dailyUsage: Record<string, { input: number; output: number; count: number }>
-  perUserStats: UserTokenStats[]
+  totalCostUsd: number
+  projectedMonthlyUsd: number
+  windowDays: number
+  byModel: { model: string; provider: string; tokens: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; events: number }[]
+  byFeature: { feature: string; tokens: number; costUsd: number; events: number }[]
+  byProvider: { provider: string; tokens: number; costUsd: number }[]
+  daily: { day: string; costUsd: number; tokens: number; events: number }[]
+  perUser: UserUsage[]
 }
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return n.toString()
+}
+
+function formatUsd(n: number): string {
+  if (n >= 1000) return `$${(n / 1000).toFixed(2)}k`
+  if (n >= 1) return `$${n.toFixed(2)}`
+  if (n > 0 && n < 0.01) return `<$0.01`
+  return `$${n.toFixed(3)}`
+}
+
+const FEATURE_LABELS: Record<string, string> = {
+  tutoring: 'Tutoring chat', chapter: 'Lesson sessions', onboarding: 'Onboarding',
+  research: 'Research (Gemini)', reflection: 'Reflection blocks', insight: 'Insight extraction',
+  title: 'Title generation', curriculum: 'Curriculum gen', quiz: 'Quiz eval',
+  capstone: 'Capstone eval', compaction: 'Chat compaction', image: 'Image/file analysis',
+  portfolio: 'Portfolio', project: 'Projects', other: 'Other',
 }
 
 export default function AdminDashboardPage() {
@@ -250,25 +263,26 @@ export default function AdminDashboardPage() {
         ))}
       </div>
 
-      {/* Token Usage Stats */}
+      {/* AI Cost & Usage */}
       <div className="bg-card border border-border rounded-xl p-5">
         <div className="flex items-center gap-2 mb-4">
-          <Activity className="w-5 h-5 text-cyan-400" />
-          <h2 className="text-lg font-semibold text-foreground">Token Usage & Cost</h2>
+          <DollarSign className="w-5 h-5 text-emerald-400" />
+          <h2 className="text-lg font-semibold text-foreground">AI Cost &amp; Usage</h2>
+          {tokenStats && <span className="text-xs text-muted-foreground ml-1">· last {tokenStats.windowDays}d · real $ from live telemetry</span>}
           {tokenStatsLoading && <span className="text-xs text-muted-foreground ml-2">Loading…</span>}
         </div>
 
-        {tokenStats ? (
+        {tokenStats && tokenStats.totalEvents > 0 ? (
           <>
-            {/* Token stat cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-5">
+            {/* Headline cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
               {[
-                { label: 'Avg Input / msg', value: formatTokens(tokenStats.avgInputPerMessage), icon: Cpu, color: 'text-blue-400' },
-                { label: 'Avg Output / msg', value: formatTokens(tokenStats.avgOutputPerMessage), icon: Cpu, color: 'text-green-400' },
-                { label: 'Avg Total / msg', value: formatTokens(tokenStats.avgTotalPerMessage), icon: BarChart3, color: 'text-cyan-400' },
-                { label: 'Total Tokens', value: formatTokens(tokenStats.totalTokens), icon: Activity, color: 'text-purple-400' },
-                { label: 'Tracked Messages', value: `${tokenStats.trackedMessages} / ${tokenStats.totalMessages}`, icon: MessageSquare, color: 'text-orange-400' },
-                { label: 'Est. Cost', value: `$${tokenStats.estimatedCost.toFixed(2)}`, icon: DollarSign, color: 'text-emerald-400' },
+                { label: `Total cost (${tokenStats.windowDays}d)`, value: formatUsd(tokenStats.totalCostUsd), icon: DollarSign, color: 'text-emerald-400' },
+                { label: 'Projected / month', value: formatUsd(tokenStats.projectedMonthlyUsd), icon: BarChart3, color: 'text-amber-400' },
+                { label: 'Total tokens', value: formatTokens(tokenStats.totalTokens), icon: Activity, color: 'text-purple-400' },
+                { label: 'Input tokens', value: formatTokens(tokenStats.totalInputTokens), icon: Cpu, color: 'text-blue-400' },
+                { label: 'Output tokens', value: formatTokens(tokenStats.totalOutputTokens), icon: Cpu, color: 'text-green-400' },
+                { label: 'Cache read (saved)', value: formatTokens(tokenStats.totalCacheReadTokens), icon: Activity, color: 'text-cyan-400' },
               ].map(stat => (
                 <div key={stat.label} className="bg-background/50 border border-border/50 rounded-lg p-3">
                   <stat.icon className={cn('w-4 h-4 mb-1', stat.color)} />
@@ -278,93 +292,105 @@ export default function AdminDashboardPage() {
               ))}
             </div>
 
-            {/* Model breakdown */}
-            {Object.keys(tokenStats.modelBreakdown).length > 0 && (
-              <div className="mb-4">
-                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">By Model</h3>
-                <div className="space-y-2">
-                  {Object.entries(tokenStats.modelBreakdown)
-                    .sort(([, a], [, b]) => (b.input + b.output) - (a.input + a.output))
-                    .map(([model, data]) => {
-                      const total = data.input + data.output
-                      const pct = tokenStats.totalTokens > 0 ? (total / tokenStats.totalTokens * 100) : 0
-                      return (
-                        <div key={model} className="flex items-center gap-3">
-                          <div className="w-40 text-xs font-mono text-foreground/70 truncate" title={model}>{model}</div>
-                          <div className="flex-1 h-2 bg-background/50 rounded-full overflow-hidden">
-                            <div className="h-full bg-primary/60 rounded-full" style={{ width: `${Math.max(pct, 1)}%` }} />
-                          </div>
-                          <div className="text-xs text-muted-foreground w-24 text-right">{formatTokens(total)} ({data.count} msgs)</div>
-                        </div>
-                      )
-                    })}
-                </div>
-              </div>
-            )}
-
-            {/* Daily usage (last 7 days) */}
-            {Object.keys(tokenStats.dailyUsage).length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+              {/* By model */}
               <div>
-                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Daily Usage (recent)</h3>
-                <div className="flex items-end gap-1 h-20">
-                  {Object.entries(tokenStats.dailyUsage)
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .slice(-14)
-                    .map(([day, data]) => {
-                      const total = data.input + data.output
-                      const maxTokens = Math.max(...Object.values(tokenStats.dailyUsage).map(d => d.input + d.output))
-                      const height = maxTokens > 0 ? (total / maxTokens * 100) : 0
-                      return (
-                        <div key={day} className="flex-1 flex flex-col items-center gap-1">
-                          <div
-                            className="w-full bg-primary/40 rounded-t hover:bg-primary/60 transition-colors cursor-default min-h-[2px]"
-                            style={{ height: `${Math.max(height, 3)}%` }}
-                            title={`${day}: ${formatTokens(total)} tokens (${data.count} msgs)`}
-                          />
-                          <span className="text-[8px] text-muted-foreground/50">{day.slice(5)}</span>
+                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Cost by model</h3>
+                <div className="space-y-2">
+                  {tokenStats.byModel.map(m => {
+                    const pct = tokenStats.totalCostUsd > 0 ? (m.costUsd / tokenStats.totalCostUsd * 100) : 0
+                    return (
+                      <div key={m.model} className="flex items-center gap-3">
+                        <div className="w-40 text-xs font-mono text-foreground/70 truncate" title={`${m.model} (${m.provider})`}>{m.model}</div>
+                        <div className="flex-1 h-2 bg-background/50 rounded-full overflow-hidden">
+                          <div className="h-full bg-emerald-500/60 rounded-full" style={{ width: `${Math.max(pct, 1)}%` }} />
                         </div>
-                      )
-                    })}
+                        <div className="text-xs text-emerald-400 font-medium w-16 text-right">{formatUsd(m.costUsd)}</div>
+                        <div className="text-[10px] text-muted-foreground/60 w-20 text-right">{formatTokens(m.tokens)} · {m.events}×</div>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
-            )}
 
-            {tokenStats.trackedMessages === 0 && (
-              <p className="text-sm text-muted-foreground/60 text-center py-4">
-                No token data yet. Token tracking starts with new messages — existing messages don&apos;t have usage data.
-              </p>
+              {/* By feature */}
+              <div>
+                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Cost by feature</h3>
+                <div className="space-y-2">
+                  {tokenStats.byFeature.map(f => {
+                    const pct = tokenStats.totalCostUsd > 0 ? (f.costUsd / tokenStats.totalCostUsd * 100) : 0
+                    return (
+                      <div key={f.feature} className="flex items-center gap-3">
+                        <div className="w-36 text-xs text-foreground/70 truncate" title={f.feature}>{FEATURE_LABELS[f.feature] || f.feature}</div>
+                        <div className="flex-1 h-2 bg-background/50 rounded-full overflow-hidden">
+                          <div className="h-full bg-purple-500/60 rounded-full" style={{ width: `${Math.max(pct, 1)}%` }} />
+                        </div>
+                        <div className="text-xs text-purple-300 font-medium w-16 text-right">{formatUsd(f.costUsd)}</div>
+                        <div className="text-[10px] text-muted-foreground/60 w-12 text-right">{f.events}×</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Daily cost */}
+            {tokenStats.daily.length > 0 && (
+              <div>
+                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Daily cost (recent)</h3>
+                <div className="flex items-end gap-1 h-24">
+                  {tokenStats.daily.slice(-21).map(d => {
+                    const maxCost = Math.max(...tokenStats.daily.map(x => x.costUsd), 0.0001)
+                    const height = (d.costUsd / maxCost) * 100
+                    return (
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-1">
+                        <div
+                          className="w-full bg-emerald-500/40 rounded-t hover:bg-emerald-500/70 transition-colors cursor-default min-h-[2px]"
+                          style={{ height: `${Math.max(height, 3)}%` }}
+                          title={`${d.day}: ${formatUsd(d.costUsd)} · ${formatTokens(d.tokens)} tokens · ${d.events} calls`}
+                        />
+                        <span className="text-[8px] text-muted-foreground/50">{d.day.slice(5)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             )}
           </>
+        ) : tokenStats ? (
+          <p className="text-sm text-muted-foreground/70 text-center py-6 leading-relaxed">
+            No usage recorded yet. Telemetry captures every AI call (chat, onboarding, research, generation,
+            background tasks) going forward — numbers appear here as soon as the app is used.
+          </p>
         ) : !tokenStatsLoading ? (
-          <p className="text-sm text-muted-foreground text-center py-4">Could not load token stats.</p>
+          <p className="text-sm text-muted-foreground text-center py-4">Could not load usage stats.</p>
         ) : null}
       </div>
 
-      {/* Per-User Token Usage */}
-      {tokenStats && tokenStats.perUserStats.length > 0 && (
+      {/* Cost by User */}
+      {tokenStats && tokenStats.perUser.length > 0 && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border flex items-center gap-2">
             <Users className="w-5 h-5 text-blue-400" />
-            <h2 className="text-lg font-semibold text-foreground">Usage by User</h2>
-            <span className="text-xs text-muted-foreground ml-auto">{tokenStats.perUserStats.length} users with tracked data</span>
+            <h2 className="text-lg font-semibold text-foreground">Cost by User</h2>
+            <span className="text-xs text-muted-foreground ml-auto">{tokenStats.perUser.length} with usage</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="px-4 py-3 font-medium">User</th>
-                  <th className="px-4 py-3 font-medium text-right">Messages</th>
-                  <th className="px-4 py-3 font-medium text-right">Input Tokens</th>
-                  <th className="px-4 py-3 font-medium text-right">Output Tokens</th>
-                  <th className="px-4 py-3 font-medium text-right">Total Tokens</th>
-                  <th className="px-4 py-3 font-medium text-right">Avg / msg</th>
-                  <th className="px-4 py-3 font-medium text-right">Est. Cost</th>
-                  <th className="px-4 py-3 font-medium w-32">Usage</th>
+                  <th className="px-4 py-3 font-medium text-right">Calls</th>
+                  <th className="px-4 py-3 font-medium text-right">Input</th>
+                  <th className="px-4 py-3 font-medium text-right">Output</th>
+                  <th className="px-4 py-3 font-medium text-right">Total tokens</th>
+                  <th className="px-4 py-3 font-medium text-right">Cost</th>
+                  <th className="px-4 py-3 font-medium w-32">Share</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {tokenStats.perUserStats.map(u => {
-                  const pct = tokenStats.totalTokens > 0 ? (u.totalTokens / tokenStats.totalTokens * 100) : 0
+                {tokenStats.perUser.map(u => {
+                  const pct = tokenStats.totalCostUsd > 0 ? (u.costUsd / tokenStats.totalCostUsd * 100) : 0
                   return (
                     <tr key={u.userId} className="hover:bg-accent/50 transition-colors">
                       <td className="px-4 py-3">
@@ -378,27 +404,21 @@ export default function AdminDashboardPage() {
                           )}
                           <div className="min-w-0">
                             <div className="font-medium text-foreground text-xs truncate">{u.name || 'Unnamed'}</div>
-                            <div className="text-[10px] text-muted-foreground/60 truncate">{u.email}</div>
+                            <div className="text-[10px] text-muted-foreground/60 truncate">{u.email || '—'}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">
-                        <span className="text-foreground font-medium">{u.trackedMessages}</span>
-                        <span className="text-muted-foreground/50"> / {u.totalMessages}</span>
-                      </td>
+                      <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{u.events}</td>
                       <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{formatTokens(u.inputTokens)}</td>
                       <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{formatTokens(u.outputTokens)}</td>
-                      <td className="px-4 py-3 text-right font-medium text-foreground tabular-nums">{formatTokens(u.totalTokens)}</td>
-                      <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{formatTokens(u.avgTotalPerMessage)}</td>
+                      <td className="px-4 py-3 text-right font-medium text-foreground tabular-nums">{formatTokens(u.tokens)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">
-                        <span className={cn('font-medium', u.estimatedCost >= 1 ? 'text-amber-400' : 'text-emerald-400')}>
-                          ${u.estimatedCost.toFixed(2)}
-                        </span>
+                        <span className={cn('font-medium', u.costUsd >= 1 ? 'text-amber-400' : 'text-emerald-400')}>{formatUsd(u.costUsd)}</span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 h-1.5 bg-background/50 rounded-full overflow-hidden">
-                            <div className="h-full bg-primary/50 rounded-full" style={{ width: `${Math.max(pct, 2)}%` }} />
+                            <div className="h-full bg-emerald-500/50 rounded-full" style={{ width: `${Math.max(pct, 2)}%` }} />
                           </div>
                           <span className="text-[10px] text-muted-foreground/60 w-8 text-right">{pct.toFixed(0)}%</span>
                         </div>

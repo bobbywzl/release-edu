@@ -88,6 +88,10 @@ Guidelines:
       }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-haiku-4-5-20251001', feature: 'insight' })
+    }
     const text = (result.content[0] as { type: string; text?: string })?.text ?? '{}'
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     const insights: Insights = jsonMatch ? JSON.parse(jsonMatch[0]) : {

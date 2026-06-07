@@ -9,6 +9,7 @@ import { getStudentContext } from '@/lib/student-context'
 import { buildSystemPrompt, buildModeSystemPrompt, DEFAULT_TEACHER_CONFIG, type TeacherConfigShape, type ChatMode, getModeConfig } from '@/lib/system-prompt'
 import { pickMainModel, pickBackgroundModel, explainMainModelChoice } from '@/lib/chat-model-router'
 import { generateReflectionBlock } from '@/lib/generate-reflection'
+import { recordAnthropicUsage, recordGeminiUsage } from '@/lib/usage'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 const SMART_MOCK_RESPONSES = [
@@ -1144,6 +1145,10 @@ Ask: "Does this match what you had in mind?" Adjust based on feedback. Once conf
               controller.enqueue(encoder.encode(text))
             }
           }
+          try {
+            const aggregated = await result.response
+            recordGeminiUsage(aggregated?.usageMetadata, { userId: storeUserId, model: modeConfig.model, feature: 'research' })
+          } catch { /* usage best-effort */ }
         } catch (error) {
           console.error('Gemini API error:', error)
           const errMsg = "I'm having trouble connecting to the research engine right now. Please try again in a moment."
@@ -1204,6 +1209,11 @@ Ask: "Does this match what you had in mind?" Adjust based on feedback. Once conf
                 outputTokens: finalMessage.usage.output_tokens,
                 model: anthropicModel,
               }
+              recordAnthropicUsage(finalMessage.usage, {
+                userId: storeUserId,
+                model: anthropicModel,
+                feature: capturedChapterId ? 'chapter' : 'tutoring',
+              })
             }
           } catch { /* usage capture is best-effort */ }
 
