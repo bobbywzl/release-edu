@@ -220,7 +220,7 @@ export default function AdminDashboardPage() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <Shield className="w-7 h-7 text-red-400" />
           <div>
@@ -247,7 +247,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
           { icon: Users, label: 'Total Users', value: loading ? '—' : users.length, color: 'text-blue-400' },
           { icon: Zap, label: 'Active Today', value: loading ? '—' : activeToday, color: 'text-green-400' },

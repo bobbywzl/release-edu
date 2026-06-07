@@ -42,6 +42,10 @@ Score guide: 75-100 = correct, 40-74 = partial, 0-39 = incorrect`,
       }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { model: 'claude-opus-4-8', feature: 'quiz' })
+    }
     const text = (result.content[0] as { text: string }).text?.trim()
     const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}')
     return NextResponse.json({

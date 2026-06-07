@@ -49,6 +49,10 @@ Return as JSON:
       }]
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'image' })
+    }
     const textBlock = result.content[0]
     const text = textBlock && 'text' in textBlock ? textBlock.text?.trim() : null
     if (!text) {

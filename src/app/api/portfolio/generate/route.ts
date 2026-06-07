@@ -334,6 +334,10 @@ Return ONLY valid JSON.`
     }]
   })
 
+  {
+    const { recordAnthropicUsage } = await import('@/lib/usage')
+    recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'portfolio' })
+  }
   const text = (result.content[0] as { type: string; text?: string })?.text?.trim()
   if (!text) {
     await prisma.portfolioCache.update({

@@ -67,6 +67,10 @@ Create a structured session plan. Return ONLY valid JSON:
       }]
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'chapter' })
+    }
     const planText = (result.content[0] as { type: string; text?: string }).text?.trim() ?? ''
     let plan
     try {
@@ -191,6 +195,10 @@ Return JSON only:
       }]
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'chapter' })
+    }
     const evalText = (result.content[0] as { type: string; text?: string }).text?.trim() ?? ''
     let evaluation
     try {

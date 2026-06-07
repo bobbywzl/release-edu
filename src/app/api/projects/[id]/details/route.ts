@@ -62,6 +62,10 @@ Output JSON only:
       }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'project' })
+    }
     const text = (result.content[0] as { text: string }).text?.trim()
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('No JSON')

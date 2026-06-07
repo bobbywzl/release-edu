@@ -122,6 +122,10 @@ Return ONLY valid JSON, no markdown:
       messages: [{ role: 'user', content: prompt }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(response.usage, { userId, model: 'claude-opus-4-8', feature: 'project' })
+    }
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('No JSON in response')

@@ -131,6 +131,10 @@ Rules: Never propose changes based on fewer than 3 examples. Never suggest remov
       messages: [{ role: 'user', content: analysisPrompt }],
     })
 
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { model: 'claude-opus-4-8', feature: 'other' })
+    }
     const text = (result.content[0] as { type: string; text?: string })?.text?.trim() ?? '{}'
     let parsed: { patterns?: string[]; proposed_changes?: Array<{ section: string; rationale: string; proposed_addition: string; sampleSize: number }> }
     try {

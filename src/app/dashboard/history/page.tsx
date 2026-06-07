@@ -121,7 +121,7 @@ function BlockCard({ block, onTogglePortfolio, onDelete }: {
         </div>
 
         {/* Quick stats */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { icon: BookOpen, label: 'Chapters', value: `${block.completedChapters}/${block.totalChapters}`, color: 'text-blue-400' },
             { icon: Trophy, label: 'XP Earned', value: block.totalXp.toLocaleString(), color: 'text-yellow-400' },

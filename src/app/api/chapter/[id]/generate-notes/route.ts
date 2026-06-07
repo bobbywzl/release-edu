@@ -73,6 +73,10 @@ Rules:
     }]
   })
 
+  {
+    const { recordAnthropicUsage } = await import('@/lib/usage')
+    recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'chapter' })
+  }
   const noteContent = result.content[0]
   const notes = noteContent.type === 'text' ? noteContent.text?.trim() : null
   if (!notes) return NextResponse.json({ error: 'Generation failed' }, { status: 500 })

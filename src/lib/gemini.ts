@@ -40,6 +40,10 @@ export async function searchForResources(
       `Return ONLY a valid JSON array. No markdown fences. Example:\n` +
       `[{"title":"Khan Academy Calculus","url":"https://www.khanacademy.org/math/calculus-1","type":"course","description":"Free calculus course with exercises"}]`
     )
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: 'gemini-3-flash-preview', feature: 'research' })
+    }
     const text = result.response.text().trim()
       .replace(/^```(?:json)?\n?/, '')
       .replace(/\n?```$/, '')
@@ -72,6 +76,10 @@ export async function analyzeImage(imageBase64: string, context: string, mimeTyp
       { text: prompt },
       { inlineData: { mimeType: detectedMime, data: imageBase64 } },
     ])
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: 'gemini-3-flash-preview', feature: 'image' })
+    }
     return result.response.text()
   } catch (err) {
     console.error('Gemini multimodal analysis error:', err)
@@ -135,6 +143,10 @@ Return ONLY valid JSON. No markdown fences. Format:
     }
 
     const result = await model.generateContent(parts)
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: 'gemini-2.5-pro-preview-06-05', feature: 'capstone' })
+    }
     const text = result.response.text().trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     return JSON.parse(text)
   } catch (err) {
@@ -160,6 +172,10 @@ export async function researchExistingCurricula(topic: string, relatedInterests:
       `Find 3-5 real programs. Focus on how they structure the subject — what topics come first, what order, what depth.\n` +
       `Be factual — only reference programs that actually exist. Use plain text.`
     )
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: 'gemini-3-flash-preview', feature: 'curriculum' })
+    }
     return result.response.text()
   } catch {
     return ''
@@ -182,6 +198,10 @@ export async function researchTopic(topic: string): Promise<string> {
       `- Recommended learning sequence\n` +
       `Be thorough but concise. Use plain text.`
     )
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: 'gemini-3-flash-preview', feature: 'curriculum' })
+    }
     return result.response.text()
   } catch {
     return ''

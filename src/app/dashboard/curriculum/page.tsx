@@ -593,7 +593,7 @@ function CurriculumStatusCard({
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{tr('curriculum.changeWindowOpens')}</span>
           </div>
           {mounted ? (
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
                 { label: tr('curriculum.unitDays'), value: countdown.days },
                 { label: tr('curriculum.unitHours'), value: countdown.hours },
@@ -928,7 +928,7 @@ export default function CurriculumPage() {
       <CurriculumStatusCard plan={plan} allModules={allModules} />
 
       {/* Stats row */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card className="bg-card border-border">
           <CardContent className="p-3 text-center">
             <p className="text-2xl font-bold text-foreground">{totalProgress}%</p>

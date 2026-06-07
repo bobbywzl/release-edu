@@ -181,6 +181,10 @@ ${transcript}
 Return ONLY the compact memo, no preamble or trailing commentary.`,
       }],
     })
+    {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { model: 'claude-haiku-4-5-20251001', feature: 'compaction' })
+    }
     const text = (result.content[0] as { type: string; text?: string })?.text?.trim()
     return text || null
   } catch {
