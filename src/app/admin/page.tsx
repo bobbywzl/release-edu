@@ -5,7 +5,7 @@ import {
   Shield, Users, MessageSquare, Lightbulb, Search,
   ChevronUp, ChevronDown, Settings2, Zap, Flame,
   CheckCircle2, XCircle, ArrowUpDown, Activity, DollarSign, Cpu,
-  BarChart3,
+  BarChart3, Trash2, Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -87,23 +87,67 @@ export default function AdminDashboardPage() {
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [tokenStats, setTokenStats] = useState<TokenStats | null>(null)
   const [tokenStatsLoading, setTokenStatsLoading] = useState(true)
+  // Per-row action state: the userId currently being mutated, and any banner msg.
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [actionMsg, setActionMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  async function loadUsers() {
+    try {
+      const r = await fetch('/api/admin/users')
+      if (r.status === 401 || r.status === 403) { window.location.href = '/admin/login'; return }
+      const data = await r.json()
+      setUsers(data.users || [])
+    } catch {
+      setError('Failed to load users')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    fetch('/api/admin/users')
-      .then(r => {
-        if (r.status === 401 || r.status === 403) {
-          window.location.href = '/admin/login'
-          throw new Error('Unauthorized')
-        }
-        return r.json()
-      })
-      .then(data => { setUsers(data.users || []); setLoading(false) })
-      .catch((e) => { if (e.message !== 'Unauthorized') { setError('Failed to load users'); setLoading(false) } })
+    loadUsers()
     fetch('/api/admin/stats')
       .then(r => { if (!r.ok) throw new Error(); return r.json() })
       .then(data => { setTokenStats(data); setTokenStatsLoading(false) })
       .catch(() => setTokenStatsLoading(false))
   }, [])
+
+  async function changeRole(user: any, role: string) {
+    if (role === user.role) return
+    setBusyId(user.id); setActionMsg(null)
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_role', role }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setActionMsg({ kind: 'err', text: data.error || 'Failed to change role' }); return }
+      setActionMsg({ kind: 'ok', text: `${user.name || user.email || 'User'} → ${role}` })
+      await loadUsers()
+    } catch {
+      setActionMsg({ kind: 'err', text: 'Request failed' })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function deleteUser(user: any) {
+    const label = user.name || user.email || user.id
+    if (!confirm(`Permanently delete "${label}" and ALL their data (curriculum, conversations, progress)?\n\nThis cannot be undone.`)) return
+    setBusyId(user.id); setActionMsg(null)
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) { setActionMsg({ kind: 'err', text: data.error || 'Failed to delete' }); return }
+      setActionMsg({ kind: 'ok', text: `Deleted ${label}` })
+      await loadUsers()
+    } catch {
+      setActionMsg({ kind: 'err', text: 'Request failed' })
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -380,6 +424,19 @@ export default function AdminDashboardPage() {
         />
       </div>
 
+      {/* Action result banner */}
+      {actionMsg && (
+        <div className={cn(
+          'rounded-lg border px-4 py-2.5 text-sm flex items-center justify-between',
+          actionMsg.kind === 'ok'
+            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+            : 'bg-red-500/10 border-red-500/20 text-red-300'
+        )}>
+          <span>{actionMsg.text}</span>
+          <button onClick={() => setActionMsg(null)} className="text-xs opacity-60 hover:opacity-100">Dismiss</button>
+        </div>
+      )}
+
       {/* User Table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         {loading ? (
@@ -418,6 +475,7 @@ export default function AdminDashboardPage() {
                       </div>
                     </th>
                   ))}
+                  <th className="px-4 py-3 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -479,6 +537,33 @@ export default function AdminDashboardPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">{timeAgo(user.createdAt)}</td>
+                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-2">
+                        {busyId === user.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                        ) : (
+                          <>
+                            <select
+                              value={user.role}
+                              onChange={e => changeRole(user, e.target.value)}
+                              className="bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
+                              title="Change role / access"
+                            >
+                              <option value="student">student</option>
+                              <option value="mentor">mentor</option>
+                              <option value="admin">admin</option>
+                            </select>
+                            <button
+                              onClick={() => deleteUser(user)}
+                              className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                              title="Delete account (permanent)"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
