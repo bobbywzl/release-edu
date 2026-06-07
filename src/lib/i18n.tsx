@@ -800,7 +800,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>('en')
 
   useEffect(() => {
-    // 1. localStorage for instant application (no flash).
+    let cancelled = false
+    // 1. localStorage = instant, per-browser cache to avoid a flash. It is NOT
+    //    authoritative: localStorage is shared by every account in this browser,
+    //    so the per-account DB profile (step 2) always overrides it. Language is
+    //    a property of the ACCOUNT, never of the browser.
     try {
       const local = localStorage.getItem('language')
       if (local === 'en' || local === 'zh') {
@@ -809,17 +813,31 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       }
     } catch { /* SSR safe */ }
 
-    // 2. DB (cross-device) via _profileMeta.
+    // 2. DB profile = the per-account source of truth.
     fetch('/api/student-profile')
       .then(r => (r.ok ? r.json() : null))
       .then(meta => {
+        if (cancelled) return
         if (meta?.language === 'en' || meta?.language === 'zh') {
+          // This account has a saved language — apply it and refresh the cache.
           setLanguageState(meta.language)
           try { localStorage.setItem('language', meta.language) } catch { /* noop */ }
           document.documentElement.lang = meta.language === 'zh' ? 'zh-CN' : 'en'
+        } else if (meta && typeof meta === 'object') {
+          // Profile loaded but this account hasn't chosen a language yet
+          // (brand-new / pre-onboarding). Reset to the default instead of
+          // inheriting another account's cached choice, and clear the shared
+          // cache so it can't bleed across accounts. Onboarding's language modal
+          // will prompt this account to choose.
+          setLanguageState('en')
+          try { localStorage.removeItem('language') } catch { /* noop */ }
+          document.documentElement.lang = 'en'
         }
+        // else (meta == null): couldn't load the profile (offline / signed out) —
+        // leave the cached value as-is rather than flashing to English.
       })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   const setLanguage = useCallback((l: Language) => {
