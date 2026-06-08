@@ -33,23 +33,12 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/admin/login', request.url))
     }
 
-    // Factor 2 — must ALSO be an authorized admin EMAIL. For API routes we check
-    // it here from the JWT (env owner is immediate; DB-allow-list admins resolve
-    // on their next sign-in). For PAGE routes the email gate is enforced LIVE in
-    // the admin layout (a DB read), so allow-list changes take effect instantly
-    // and the layout can skip the check on /admin/login. We forward the pathname
-    // so the layout knows which page it is rendering.
-    if (isAdminApi) {
-      const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-      const envAdmins = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-      const emailLower = (token?.email as string | undefined)?.toLowerCase()
-      const isAdmin = token?.isAdmin === true || (!!emailLower && envAdmins.includes(emailLower))
-      if (!isAdmin) {
-        return NextResponse.json({ error: 'Forbidden — not an authorized admin email' }, { status: 403 })
-      }
-      return NextResponse.next()
-    }
-
+    // Factor 2 — the authorized-EMAIL check is enforced LIVE (a DB read), so
+    // allow-list changes take effect immediately. Middleware can't read the DB
+    // (edge), so it happens downstream: PAGE routes enforce it in the admin
+    // layout; API routes enforce it via adminApiGuard() in each handler. We
+    // forward the pathname so the layout knows which page it's rendering (and
+    // can skip the gate on /admin/login).
     const headers = new Headers(request.headers)
     headers.set('x-admin-pathname', pathname)
     return NextResponse.next({ request: { headers } })

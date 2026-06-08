@@ -9,6 +9,10 @@
  *   - the email of a User whose role is "admin".
  */
 import prisma from '@/lib/prisma'
+import { cookies } from 'next/headers'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { NextResponse } from 'next/server'
 
 export function envAdminEmails(): string[] {
   return (process.env.ADMIN_EMAILS || '')
@@ -28,4 +32,21 @@ export async function isAuthorizedAdminEmail(email: string | null | undefined): 
     /* DB unreachable — fall back to the env list result (false here) */
   }
   return false
+}
+
+/**
+ * Guard for admin API routes: enforces BOTH the admin password (cookie) and a
+ * live authorized-email check. Returns an error Response if not allowed, or
+ * null if authorized. Usage at the top of an admin route handler:
+ *   const denied = await adminApiGuard(); if (denied) return denied
+ */
+export async function adminApiGuard(): Promise<NextResponse | null> {
+  if ((await cookies()).get('admin-auth')?.value !== 'true') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const session = await getServerSession(authOptions)
+  if (!(await isAuthorizedAdminEmail(session?.user?.email))) {
+    return NextResponse.json({ error: 'Forbidden — not an authorized admin email' }, { status: 403 })
+  }
+  return null
 }

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import prisma from '@/lib/prisma'
-import { cookies } from 'next/headers'
 import { authOptions } from '@/lib/auth'
+import { adminApiGuard } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,10 +20,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const cookieStore = await cookies()
-  if (cookieStore.get('admin-auth')?.value !== 'true') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const denied = await adminApiGuard(); if (denied) return denied
 
   const { id } = await params
   const body = await req.json() as { action: string; role?: string }
@@ -74,10 +71,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const cookieStore = await cookies()
-  if (cookieStore.get('admin-auth')?.value !== 'true') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const denied = await adminApiGuard(); if (denied) return denied
 
   const { id } = await params
   const target = await prisma.user.findUnique({ where: { id }, select: { email: true } })
@@ -105,6 +99,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = await adminApiGuard(); if (denied) return denied
   const { id } = await params
 
   try {

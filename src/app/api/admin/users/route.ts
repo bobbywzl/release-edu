@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { adminApiGuard } from '@/lib/admin-auth'
 
 export async function GET() {
+  const denied = await adminApiGuard(); if (denied) return denied
   try {
     const users = await prisma.user.findMany({
       include: {

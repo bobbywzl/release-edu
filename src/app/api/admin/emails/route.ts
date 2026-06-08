@@ -1,10 +1,10 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { adminApiGuard } from '@/lib/admin-auth'
 
 // Manage the editable admin-email allow-list. /api/admin is already gated by the
 // middleware (password + authorized email); we re-check the password cookie here
@@ -12,13 +12,10 @@ import prisma from '@/lib/prisma'
 function envAdmins(): string[] {
   return (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
 }
-async function hasAdminCookie(): Promise<boolean> {
-  return (await cookies()).get('admin-auth')?.value === 'true'
-}
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 export async function GET() {
-  if (!(await hasAdminCookie())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const denied = await adminApiGuard(); if (denied) return denied
   const managed = await prisma.adminEmail.findMany({ orderBy: { createdAt: 'asc' } })
   return NextResponse.json({
     ownerEmails: envAdmins(), // from ADMIN_EMAILS env — permanent, not removable here
@@ -27,7 +24,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await hasAdminCookie())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const denied = await adminApiGuard(); if (denied) return denied
   const { email } = (await req.json().catch(() => ({}))) as { email?: string }
   const lower = (email || '').trim().toLowerCase()
   if (!EMAIL_RE.test(lower)) {
@@ -46,7 +43,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!(await hasAdminCookie())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const denied = await adminApiGuard(); if (denied) return denied
   const { email } = (await req.json().catch(() => ({}))) as { email?: string }
   const lower = (email || '').trim().toLowerCase()
   if (envAdmins().includes(lower)) {

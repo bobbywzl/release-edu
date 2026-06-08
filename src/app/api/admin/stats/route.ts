@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
+import { adminApiGuard } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,10 +8,7 @@ export const dynamic = 'force-dynamic'
 // (one row per model call across the whole app). Breaks spend down by model,
 // feature, provider, day, and user — with real $ cost computed at write time.
 export async function GET() {
-  const cookieStore = await cookies()
-  if (cookieStore.get('admin-auth')?.value !== 'true') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const denied = await adminApiGuard(); if (denied) return denied
 
   // Bound the window so the table stays cheap as data grows.
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
