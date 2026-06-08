@@ -2,6 +2,14 @@
 
 This file documents conventions, architecture, and rules for working in this codebase. Read this before making changes.
 
+## Working style (user preference — important)
+
+- **When you are not sure what the user means, ALWAYS clarify before acting.** Do not
+  guess at ambiguous intent and build the wrong thing. Ask a focused question, then proceed.
+- Any user-facing text Bob generates (greetings, fallbacks, errors) must respect the
+  student's chosen language — never hard-code English where a Chinese (or other) learner
+  could see it.
+
 ## Canonical Documents
 
 - **`FOUNDATION.md`** is the canonical source for pedagogy, product decisions, and curriculum logic. Read it before changing system prompts, the curriculum engine, or onboarding flows. Other spec docs may have drifted.
