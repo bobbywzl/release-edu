@@ -13,9 +13,10 @@ import {
   Bot, Send, Plus, MessageSquare, Trash2, ChevronRight, ChevronLeft,
   ChevronDown, ChevronUp, Lightbulb, Target, Zap, BookOpen,
   Camera, X, Sparkles, Search, GraduationCap, SearchIcon, ClipboardList, FolderOpen,
-  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen,
+  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, Mic, Volume2, VolumeX,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useSpeechRecognition, speak, stopSpeaking, speechSynthesisSupported, voiceLangTag } from '@/lib/use-voice'
 import { triggerCurriculumRefresh } from '@/lib/refresh-bus'
 import { SessionProgressBar } from '@/components/session-progress-bar'
 import { Progress } from '@/components/ui/progress'
@@ -1362,7 +1363,7 @@ interface ActiveChapterContext {
 }
 
 function ChatPageInner() {
-  const { t: tr } = useLanguage()
+  const { t: tr, language } = useLanguage()
   const searchParams = useSearchParams()
   const chapterIdParam = searchParams.get('chapterId')
   const trackIdParam = searchParams.get('trackId')
@@ -1389,6 +1390,39 @@ function ChatPageInner() {
   const [replyQuote, setReplyQuote] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
+
+  // ── Voice (Web Speech API) ──────────────────────────────────────────────
+  const ttsSupported = speechSynthesisSupported()
+  const [readAloud, setReadAloud] = useState(false)
+  const prevStreamingRef = useRef(false)
+  const lastSpokenIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    try { setReadAloud(localStorage.getItem('bob-read-aloud') === '1') } catch { /* noop */ }
+  }, [])
+  // Mic → text: append final transcripts into the composer for review.
+  const { supported: micSupported, listening, toggle: toggleMic } = useSpeechRecognition({
+    lang: voiceLangTag(language),
+    onFinal: (text) => setInput(prev => (prev && !prev.endsWith(' ') ? prev + ' ' : prev) + text),
+  })
+  const toggleReadAloud = useCallback(() => {
+    setReadAloud(prev => {
+      const next = !prev
+      try { localStorage.setItem('bob-read-aloud', next ? '1' : '0') } catch { /* noop */ }
+      if (!next) stopSpeaking()
+      return next
+    })
+  }, [])
+  // When read-aloud is on, speak Bob's reply the moment a stream finishes.
+  useEffect(() => {
+    const justFinished = prevStreamingRef.current && !isStreaming
+    prevStreamingRef.current = isStreaming
+    if (!justFinished || !readAloud) return
+    const last = [...messages].reverse().find(m => m.role === 'assistant' && !m.hidden)
+    if (last && lastSpokenIdRef.current !== last.id) {
+      lastSpokenIdRef.current = last.id
+      speak(last.content, voiceLangTag(language))
+    }
+  }, [isStreaming, messages, readAloud, language])
   const [loading, setLoading] = useState(true)
   const [contextSummary, setContextSummary] = useState<StudentContextSummary | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -3641,6 +3675,37 @@ function ChatPageInner() {
               rows={1}
               className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all disabled:opacity-50 min-h-[48px] max-h-40"
             />
+            {ttsSupported && (
+              <button
+                type="button"
+                onClick={toggleReadAloud}
+                title={readAloud ? tr('chat.voice.readAloudOn', 'Read Bob’s replies aloud: on') : tr('chat.voice.readAloudOff', 'Read Bob’s replies aloud: off')}
+                className={cn(
+                  'w-11 h-11 flex-shrink-0 rounded-xl border flex items-center justify-center transition-colors',
+                  readAloud
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent',
+                )}
+              >
+                {readAloud ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </button>
+            )}
+            {micSupported && (
+              <button
+                type="button"
+                onClick={toggleMic}
+                disabled={isStreaming}
+                title={listening ? tr('chat.voice.stop', 'Stop voice input') : tr('chat.voice.start', 'Speak your message')}
+                className={cn(
+                  'w-11 h-11 flex-shrink-0 rounded-xl border flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                  listening
+                    ? 'border-red-500/50 bg-red-500/15 text-red-400 animate-pulse'
+                    : 'border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent',
+                )}
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={sendMessage}
               disabled={(!input.trim() && !pendingImage) || isStreaming}

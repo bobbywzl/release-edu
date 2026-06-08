@@ -184,6 +184,10 @@ const EN: Dict = {
 
   // ── Chat ──
   'chat.placeholder': 'Ask Bob anything… (Shift+Enter for new line)',
+  'chat.voice.start': 'Speak your message',
+  'chat.voice.stop': 'Stop voice input',
+  'chat.voice.readAloudOn': 'Reading Bob’s replies aloud — click to mute',
+  'chat.voice.readAloudOff': 'Read Bob’s replies aloud',
   'chat.imagePlaceholder': 'Add a message about this image… (optional)',
   'chat.newConversation': 'New Conversation',
   'chat.mentor': 'Mentor',
@@ -561,6 +565,10 @@ const ZH: Dict = {
 
   // ── Chat ──
   'chat.placeholder': '问 Bob 任何问题…（Shift+Enter 换行）',
+  'chat.voice.start': '语音输入',
+  'chat.voice.stop': '停止语音输入',
+  'chat.voice.readAloudOn': '正在朗读 Bob 的回复 —— 点击关闭',
+  'chat.voice.readAloudOff': '朗读 Bob 的回复',
   'chat.imagePlaceholder': '为这张图片添加说明…（可选）',
   'chat.newConversation': '新对话',
   'chat.mentor': '导师',
