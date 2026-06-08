@@ -3,7 +3,8 @@ import { signIn } from 'next-auth/react'
 import { motion } from 'framer-motion'
 import { Zap, ArrowRight, Sparkles, MessageSquare, Hammer, Brain, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 // Combined logo for the "Learn while doing" pillar: project-based learning
 // (the hammer/build badge) fused with chat-based learning (the speech bubble).
@@ -17,9 +18,29 @@ function ProjectChatIcon({ className }: { className?: string }) {
 }
 
 export default function LoginPage() {
+  const router = useRouter()
   const [signUpLoading, setSignUpLoading] = useState(false)
   const [signInLoading, setSignInLoading] = useState(false)
   const [demoLoading, setDemoLoading] = useState(false)
+  const [checkingSession, setCheckingSession] = useState(true)
+
+  // If the user already has a valid session, never strand them on /login —
+  // forward them into the app. Without this, anything that lands an
+  // authenticated user back on /login (a stray redirect, the back button, a
+  // re-auth round-trip) leaves them stuck here, and clicking sign-in just
+  // re-opens Google's account chooser — the "jumping around / back to login".
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/session')
+      .then(r => (r.ok ? r.json() : null))
+      .then(s => {
+        if (cancelled) return
+        if (s && s.user) router.replace('/dashboard')
+        else setCheckingSession(false)
+      })
+      .catch(() => { if (!cancelled) setCheckingSession(false) })
+    return () => { cancelled = true }
+  }, [router])
 
   const handleSignUp = async () => {
     setSignUpLoading(true)
@@ -40,6 +61,16 @@ export default function LoginPage() {
     } catch {
       setDemoLoading(false)
     }
+  }
+
+  // Brief gate while we check for an existing session, so authenticated users
+  // are forwarded to the dashboard without the login form flashing first.
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
+      </div>
+    )
   }
 
   return (
