@@ -5,8 +5,13 @@ import type { NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Admin login page — always accessible, no auth required
-  if (pathname === '/admin/login') {
+  // Admin login page AND the password-auth endpoint are always reachable with
+  // no auth — they ARE the gate (password-based, independent of Google login).
+  // Without exempting /api/admin/auth here it falls through to the student-auth
+  // check below, which redirects unauthenticated POSTs to /login — making it
+  // impossible to log into admin unless you happen to already be signed into
+  // Google in the same browser.
+  if (pathname === '/admin/login' || pathname.startsWith('/api/admin/auth')) {
     return NextResponse.next()
   }
 
