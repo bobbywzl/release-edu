@@ -28,22 +28,11 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/admin/login', request.url))
     }
 
-    // Verify the caller is authorized: either their email is in the
-    // ADMIN_EMAILS bootstrap list, OR their DB role is "admin" (granted via the
-    // admin dashboard). The email list is the always-on owner safeguard.
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-    const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-    if (adminEmails.length > 0 && token?.email) {
-      const userEmail = (token.email as string).toLowerCase()
-      const isRoleAdmin = (token.role as string | undefined) === 'admin'
-      if (!adminEmails.includes(userEmail) && !isRoleAdmin) {
-        if (isAdminApi) {
-          return NextResponse.json({ error: 'Forbidden — not an admin' }, { status: 403 })
-        }
-        return NextResponse.redirect(new URL('/dashboard', request.url))
-      }
-    }
-
+    // The admin PASSWORD (the admin-auth cookie) is the sole gate. We deliberately
+    // do NOT block based on the signed-in Google email: doing so bounced an admin
+    // who happened to be logged into a non-admin Google account out into the user
+    // dashboard/setup flow. The admin header shows the connected email for
+    // visibility instead. (Per the user's choice: password is the gate.)
     return NextResponse.next()
   }
 
