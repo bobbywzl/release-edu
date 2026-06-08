@@ -1,9 +1,20 @@
 'use client'
 import { signIn } from 'next-auth/react'
 import { motion } from 'framer-motion'
-import { Zap, ArrowRight, Sparkles, BookOpen, Brain, Target } from 'lucide-react'
+import { Zap, ArrowRight, Sparkles, MessageSquare, Hammer, Brain, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useState } from 'react'
+
+// Combined logo for the "Learn while doing" pillar: project-based learning
+// (the hammer/build badge) fused with chat-based learning (the speech bubble).
+function ProjectChatIcon({ className }: { className?: string }) {
+  return (
+    <span className={`relative inline-flex ${className ?? ''}`}>
+      <MessageSquare className="w-full h-full" />
+      <Hammer className="absolute -bottom-1 -right-1.5 w-[62%] h-[62%]" strokeWidth={2.75} />
+    </span>
+  )
+}
 
 export default function LoginPage() {
   const [signUpLoading, setSignUpLoading] = useState(false)
@@ -175,8 +186,8 @@ export default function LoginPage() {
             className="grid grid-cols-3 gap-3 pt-2"
           >
             {[
-              { icon: Brain, label: 'AI Architect', sub: 'Builds your path' },
-              { icon: BookOpen, label: '80% Projects', sub: 'Learn by doing' },
+              { icon: Brain, label: 'AI Mentor', sub: 'Builds your path' },
+              { icon: ProjectChatIcon, label: 'Learn while doing', sub: 'Projects & chat' },
               { icon: Target, label: 'Personalized', sub: 'Fitted to you' },
             ].map((f, i) => (
               <div key={i} className="text-center space-y-1">
