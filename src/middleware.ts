@@ -12,7 +12,11 @@ export async function middleware(request: NextRequest) {
   // impossible to log into admin unless you happen to already be signed into
   // Google in the same browser.
   if (pathname === '/admin/login' || pathname.startsWith('/api/admin/auth')) {
-    return NextResponse.next()
+    // Forward the pathname so the admin layout knows it's the login page and
+    // renders it bare (no admin header, no email gate — it IS the gate).
+    const headers = new Headers(request.headers)
+    headers.set('x-admin-pathname', pathname)
+    return NextResponse.next({ request: { headers } })
   }
 
   // Admin pages & API — require admin-auth cookie + authorized Gmail
@@ -29,22 +33,26 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/admin/login', request.url))
     }
 
-    // Factor 2 — must ALSO be signed in with an authorized admin EMAIL. Admin =
-    // email in ADMIN_EMAILS env (owner safeguard) OR token.isAdmin (resolved from
-    // role / the editable AdminEmail allow-list at sign-in). Unauthorized callers
-    // go back to the admin login with a clear message — NEVER to the user flow.
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-    const envAdmins = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-    const emailLower = (token?.email as string | undefined)?.toLowerCase()
-    const isAdmin = token?.isAdmin === true || (!!emailLower && envAdmins.includes(emailLower))
-    if (!isAdmin) {
-      if (isAdminApi) {
+    // Factor 2 — must ALSO be an authorized admin EMAIL. For API routes we check
+    // it here from the JWT (env owner is immediate; DB-allow-list admins resolve
+    // on their next sign-in). For PAGE routes the email gate is enforced LIVE in
+    // the admin layout (a DB read), so allow-list changes take effect instantly
+    // and the layout can skip the check on /admin/login. We forward the pathname
+    // so the layout knows which page it is rendering.
+    if (isAdminApi) {
+      const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
+      const envAdmins = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+      const emailLower = (token?.email as string | undefined)?.toLowerCase()
+      const isAdmin = token?.isAdmin === true || (!!emailLower && envAdmins.includes(emailLower))
+      if (!isAdmin) {
         return NextResponse.json({ error: 'Forbidden — not an authorized admin email' }, { status: 403 })
       }
-      return NextResponse.redirect(new URL('/admin/login?error=email', request.url))
+      return NextResponse.next()
     }
 
-    return NextResponse.next()
+    const headers = new Headers(request.headers)
+    headers.set('x-admin-pathname', pathname)
+    return NextResponse.next({ request: { headers } })
   }
 
   // Student dashboard — require auth or demo mode

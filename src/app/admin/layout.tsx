@@ -1,22 +1,31 @@
 import { Shield, Mail, LogOut } from 'lucide-react'
 import Link from 'next/link'
+import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { isAuthorizedAdminEmail } from '@/lib/admin-auth'
 import { AdminBackLink } from './admin-back-link'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const pathname = (await headers()).get('x-admin-pathname') || ''
+  const onLoginPage = pathname.startsWith('/admin/login')
+
+  // The login page IS the gate — render it bare (no admin header) and don't
+  // enforce the email gate there (you're not signed in yet).
+  if (onLoginPage) {
+    return <div className="min-h-screen bg-background">{children}</div>
+  }
+
+  // LIVE email gate for every real admin page: authorized = ADMIN_EMAILS env
+  // owner OR the editable AdminEmail allow-list OR a user with role "admin".
+  // A live DB check, so allow-list changes take effect immediately. Unauthorized
+  // → back to the admin login (never the user flow).
   const session = await getServerSession(authOptions)
   const email = session?.user?.email ?? null
-  const adminEmails = (process.env.ADMIN_EMAILS || '')
-    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-  // Authorized = in the env owner list OR in the editable DB allow-list.
-  let isAuthorizedEmail = !!email && adminEmails.includes(email.toLowerCase())
-  if (email && !isAuthorizedEmail) {
-    try {
-      const { default: prisma } = await import('@/lib/prisma')
-      const row = await prisma.adminEmail.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } })
-      if (row) isAuthorizedEmail = true
-    } catch { /* non-critical */ }
+  const authorized = await isAuthorizedAdminEmail(email)
+  if (!authorized) {
+    redirect('/admin/login?error=email')
   }
 
   return (
@@ -30,23 +39,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
         </div>
         <div className="flex items-center gap-4">
-          {/* Connected admin email — green check if it's in the authorized
-              ADMIN_EMAILS allow-list, amber if signed in with a non-admin email,
-              muted if accessed via password only (no Google session). */}
-          <span
-            className="flex items-center gap-1.5 text-xs"
-            title={
-              email
-                ? (isAuthorizedEmail
-                    ? 'Signed in with an authorized admin email'
-                    : 'Signed in, but this email is not in ADMIN_EMAILS')
-                : 'No Google session — accessed via admin password only'
-            }
-          >
-            <Mail className={`w-3.5 h-3.5 ${email ? (isAuthorizedEmail ? 'text-emerald-400' : 'text-amber-400') : 'text-muted-foreground/50'}`} />
-            <span className={email ? (isAuthorizedEmail ? 'text-foreground' : 'text-amber-400') : 'text-muted-foreground/60'}>
-              {email ?? 'password-only session'}
-            </span>
+          <span className="flex items-center gap-1.5 text-xs" title="Authorized admin email">
+            <Mail className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-foreground">{email ?? 'admin'}</span>
           </span>
           {/* Dedicated admin sign-out — clears ONLY the admin password session
               (the admin-auth cookie). The Google account stays signed in. */}
