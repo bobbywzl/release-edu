@@ -12,11 +12,7 @@ export async function middleware(request: NextRequest) {
   // impossible to log into admin unless you happen to already be signed into
   // Google in the same browser.
   if (pathname === '/admin/login' || pathname.startsWith('/api/admin/auth')) {
-    // Forward the pathname so the admin layout knows it's the login page and
-    // renders it bare (no admin header, no email gate — it IS the gate).
-    const headers = new Headers(request.headers)
-    headers.set('x-admin-pathname', pathname)
-    return NextResponse.next({ request: { headers } })
+    return NextResponse.next()
   }
 
   // Admin pages & API — require admin-auth cookie + authorized Gmail
@@ -35,13 +31,14 @@ export async function middleware(request: NextRequest) {
 
     // Factor 2 — the authorized-EMAIL check is enforced LIVE (a DB read), so
     // allow-list changes take effect immediately. Middleware can't read the DB
-    // (edge), so it happens downstream: PAGE routes enforce it in the admin
-    // layout; API routes enforce it via adminApiGuard() in each handler. We
-    // forward the pathname so the layout knows which page it's rendering (and
-    // can skip the gate on /admin/login).
-    const headers = new Headers(request.headers)
-    headers.set('x-admin-pathname', pathname)
-    return NextResponse.next({ request: { headers } })
+    // (edge), so it happens downstream: PAGE routes enforce it in the (panel)
+    // admin layout; API routes enforce it via adminApiGuard() in each handler.
+    // NOTE: we must NOT rewrite request headers here (e.g. NextResponse.next({
+    // request: { headers } })) — doing so strips the session cookie from the
+    // downstream handler, so getServerSession() returns null and the email gate
+    // rejects everyone. The (panel)/login route-group split removes any need to
+    // forward the pathname, so a plain pass-through is correct.
+    return NextResponse.next()
   }
 
   // Student dashboard — require auth or demo mode

@@ -1,22 +1,17 @@
 import { Shield, Mail, LogOut } from 'lucide-react'
 import Link from 'next/link'
-import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isAuthorizedAdminEmail } from '@/lib/admin-auth'
 import { AdminBackLink } from './admin-back-link'
 
+// This layout wraps ONLY the real admin panel pages — /admin/login lives outside
+// the (panel) route group, so it renders bare with no header and no email gate
+// (it IS the gate). That separation is why we don't need the request pathname
+// here; middleware therefore never rewrites request headers (doing so stripped
+// the session cookie and broke getServerSession below).
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const pathname = (await headers()).get('x-admin-pathname') || ''
-  const onLoginPage = pathname.startsWith('/admin/login')
-
-  // The login page IS the gate — render it bare (no admin header) and don't
-  // enforce the email gate there (you're not signed in yet).
-  if (onLoginPage) {
-    return <div className="min-h-screen bg-background">{children}</div>
-  }
-
   // LIVE email gate for every real admin page: authorized = ADMIN_EMAILS env
   // owner OR the editable AdminEmail allow-list OR a user with role "admin".
   // A live DB check, so allow-list changes take effect immediately. Unauthorized
