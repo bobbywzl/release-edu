@@ -1,15 +1,16 @@
 'use client'
 /**
- * Language-choice modal shown at the ONSET of an onboarding session.
- * Bilingual by design (a language picker must be legible in every language).
+ * Language-choice modal shown on the /dashboard/setup page — the very first
+ * step, before the onboarding chat. Bilingual by design (a language picker must
+ * be legible in every language).
  *
  * It must ONLY appear when the user is genuinely mid-onboarding: a brand-new
  * user, someone with incomplete onboarding, or someone who reset their
- * curriculum and is back in onboarding. It must NEVER appear for an
- * already-onboarded account — which can momentarily pass through /onboarding on
- * sign-in before the layout redirects it to the dashboard. To guarantee that,
- * the modal starts HIDDEN and only reveals itself after confirming, via the
- * server, that the user is not yet onboarded.
+ * curriculum. It must NEVER appear for an already-onboarded account — which can
+ * momentarily pass through the setup/onboarding flow on sign-in before the
+ * layout redirects it to the dashboard. To guarantee that, the modal starts
+ * HIDDEN and only reveals itself after confirming, via the server, that the
+ * user is not yet onboarded.
  *
  * On confirm it sets the language and records languageConfirmed=true (used by
  * the server to lock the language once the curriculum is generated).

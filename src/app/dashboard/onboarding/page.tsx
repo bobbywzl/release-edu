@@ -7,7 +7,6 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Bot, Send, Sparkles, CheckCircle, Loader2, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { LanguageChoiceModal } from '@/components/language-choice-modal'
 import { useT } from '@/lib/i18n'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -446,14 +445,10 @@ let nextId = 1
 export default function OnboardingPage() {
   const router = useRouter()
   const t = useT()
-  // Language toggle stays available throughout onboarding (setup + this chat)
-  // — still pre-curriculum-generation, so switching here is safe. The server
-  // locks the value once isOnboarded=true (see /api/student-profile), so it
-  // becomes immutable the moment Bob emits [PROFILE_COMPLETE].
-  // Gate the chat start on a deliberate language choice. The modal resolves
-  // this: it calls onProceed() either immediately (already confirmed on the
-  // profile) or after the user confirms a language here.
-  const [langChosen, setLangChosen] = useState(false)
+  // Language is chosen earlier, on the /dashboard/setup page (see
+  // LanguageChoiceModal there). By the time the user reaches this chat the
+  // language is already persisted, so Bob's first message generates in it —
+  // no gating needed here.
   const [messages, setMessages] = useState<LocalMessage[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -524,17 +519,14 @@ export default function OnboardingPage() {
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
   }, [input])
 
-  // Start the conversation with Bob's opening message — but ONLY after the
-  // user has chosen a language, so Bob's first message is generated in the
-  // right language. langChosen flips true either because they already chose
-  // (on setup) or when they pick in the modal here.
+  // Start the conversation with Bob's opening message on mount. Language was
+  // already chosen on the setup page, so Bob's first message is in the right one.
   useEffect(() => {
-    if (!langChosen) return
     if (hasStarted.current) return
     hasStarted.current = true
     void startConversation()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [langChosen])
+  }, [])
 
   async function startConversation() {
     setIsStreaming(true)
@@ -875,10 +867,6 @@ export default function OnboardingPage() {
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
-      {/* Language picker for new users who reach onboarding without choosing.
-          Gates Bob's first message until a language is selected. onProceed
-          fires either immediately (already confirmed) or after they confirm. */}
-      <LanguageChoiceModal onProceed={() => setLangChosen(true)} />
       <button
         onClick={() => signOut({ callbackUrl: '/login' })}
         className="absolute top-6 left-6 z-10 flex items-center gap-1.5 text-xs text-white/40 hover:text-white/80 transition-colors"

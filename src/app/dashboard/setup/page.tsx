@@ -6,6 +6,7 @@ import { motion } from 'framer-motion'
 import { Zap, ArrowRight, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/lib/i18n'
+import { LanguageChoiceModal } from '@/components/language-choice-modal'
 
 // value = canonical English stored to the profile; key = i18n label key.
 const educationLevels = [
@@ -84,8 +85,9 @@ export default function SetupPage() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6 relative">
-      {/* Language is chosen at the onset of the onboarding chat (next step),
-          not here — see LanguageChoiceModal on the onboarding page. */}
+      {/* Language is chosen here, at the very first step. The modal overlays the
+          setup form and self-gates to not-yet-onboarded users only. */}
+      <LanguageChoiceModal />
       <button
         onClick={() => signOut({ callbackUrl: '/login' })}
         className="absolute top-6 left-6 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
