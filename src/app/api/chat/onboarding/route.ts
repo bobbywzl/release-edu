@@ -178,10 +178,11 @@ export async function POST(req: NextRequest) {
   } catch { /* ignore — Bob will fall back to generic onboarding */ }
 
   // Language: onboarding conversation in the student's chosen language.
+  let userLang: 'en' | 'zh' = 'en'
   try {
     const { getUserLanguage, languageDirective } = await import('@/lib/get-user-language')
-    const lang = await getUserLanguage(storeUserId)
-    const dir = languageDirective(lang)
+    userLang = await getUserLanguage(storeUserId)
+    const dir = languageDirective(userLang)
     if (dir) learnerContext = learnerContext + dir
   } catch { /* default English */ }
 
@@ -189,9 +190,14 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder()
   const finalConvId = conversationId
 
-  // A warm, human fallback opener. Used only if the model fails to produce a
-  // real greeting for the FIRST message (e.g. it parrots the start sentinel).
-  const FALLBACK_OPENER = "Hey! I'm Bob, your learning architect. I'm going to build you a curriculum made entirely around you — but first I need to get to know you. What's the one thing you could spend hours on and never get bored?"
+  // A warm, human fallback opener used only if the model fails to produce a real
+  // greeting for the FIRST message. MUST be in the student's chosen language —
+  // never show English to a Chinese learner.
+  const FALLBACK_OPENERS: Record<'en' | 'zh', string> = {
+    en: "Hey! I'm Bob, your learning architect. I'm going to build you a curriculum made entirely around you — but first I need to get to know you. What's the one thing you could spend hours on and never get bored?",
+    zh: '嘿！我是 Bob，你的学习架构师。我会为你打造一套完全围绕你的课程——不过首先，我需要了解你。有什么事情是你可以花上好几个小时、永远也不会觉得无聊的？',
+  }
+  const FALLBACK_OPENER = FALLBACK_OPENERS[userLang] ?? FALLBACK_OPENERS.en
   // Detects a degenerate first-message response: empty, or the model echoing
   // the "__START__" trigger (or any near-variant) instead of greeting.
   const isDegenerateOpener = (s: string) => {

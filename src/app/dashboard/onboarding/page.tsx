@@ -7,8 +7,16 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Bot, Send, Sparkles, CheckCircle, Loader2, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useT } from '@/lib/i18n'
+import { useT, useLanguage } from '@/lib/i18n'
 import { LanguageChoiceModal } from '@/components/language-choice-modal'
+
+// Warm opening greeting shown if Bob's first message can't be generated (API
+// blip, degenerate output). MUST match the student's chosen language — never
+// fall back to English for a Chinese learner.
+const FALLBACK_OPENER: Record<'en' | 'zh', string> = {
+  en: "Hey! I'm Bob, your learning architect. I'm going to build you a curriculum made entirely around you — but first I need to get to know you. What's the one thing you could spend hours on and never get bored?",
+  zh: '嘿！我是 Bob，你的学习架构师。我会为你打造一套完全围绕你的课程——不过首先，我需要了解你。有什么事情是你可以花上好几个小时、永远也不会觉得无聊的？',
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -446,6 +454,7 @@ let nextId = 1
 export default function OnboardingPage() {
   const router = useRouter()
   const t = useT()
+  const { language } = useLanguage()
   // Gate Bob's first message on a deliberate language choice so it generates in
   // the right language. The modal (which self-gates to not-yet-onboarded users)
   // flips this via onProceed when the user confirms a language.
@@ -556,15 +565,13 @@ export default function OnboardingPage() {
       // parroting the "__START__" trigger). Fall back to a warm greeting.
       const cleaned = full.trim()
       const isDegenerate = !cleaned || /^_{0,2}\s*start\s*_{0,2}$/i.test(cleaned)
-      const safe = isDegenerate
-        ? "Hey! I'm Bob, your learning architect. I'm going to build you a curriculum made entirely around you — but first I need to get to know you. What's the one thing you could spend hours on and never get bored?"
-        : full
+      const safe = isDegenerate ? (FALLBACK_OPENER[language] ?? FALLBACK_OPENER.en) : full
       const msg: LocalMessage = { id: `msg-${nextId++}`, role: 'assistant', content: safe, timestamp: new Date() }
       setMessages([msg])
     } catch {
       const msg: LocalMessage = {
         id: `msg-${nextId++}`, role: 'assistant',
-        content: "Hey! I'm Bob, your learning architect. I'm going to build you a personalized curriculum — but first, I need to get to know you. What gets you excited? What could you spend hours doing without getting bored?",
+        content: FALLBACK_OPENER[language] ?? FALLBACK_OPENER.en,
         timestamp: new Date(),
       }
       setMessages([msg])
