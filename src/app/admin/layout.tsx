@@ -9,7 +9,15 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const email = session?.user?.email ?? null
   const adminEmails = (process.env.ADMIN_EMAILS || '')
     .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-  const isAuthorizedEmail = !!email && adminEmails.includes(email.toLowerCase())
+  // Authorized = in the env owner list OR in the editable DB allow-list.
+  let isAuthorizedEmail = !!email && adminEmails.includes(email.toLowerCase())
+  if (email && !isAuthorizedEmail) {
+    try {
+      const { default: prisma } = await import('@/lib/prisma')
+      const row = await prisma.adminEmail.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } })
+      if (row) isAuthorizedEmail = true
+    } catch { /* non-critical */ }
+  }
 
   return (
     <div className="min-h-screen bg-background">
