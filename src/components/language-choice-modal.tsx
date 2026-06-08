@@ -1,27 +1,47 @@
 'use client'
 /**
- * Language-choice modal shown at the ONSET of every onboarding session.
+ * Language-choice modal shown at the ONSET of an onboarding session.
  * Bilingual by design (a language picker must be legible in every language).
  *
- * It is rendered only on the onboarding page, and onboarded users never reach
- * that page (the layout redirects them away). So it can show unconditionally
- * on mount: any account that actually lands on onboarding is mid-onboarding
- * and SHOULD pick a language before Bob says a word. The chat is gated on
- * onProceed() so Bob's first message generates in the chosen language.
+ * It must ONLY appear when the user is genuinely mid-onboarding: a brand-new
+ * user, someone with incomplete onboarding, or someone who reset their
+ * curriculum and is back in onboarding. It must NEVER appear for an
+ * already-onboarded account — which can momentarily pass through /onboarding on
+ * sign-in before the layout redirects it to the dashboard. To guarantee that,
+ * the modal starts HIDDEN and only reveals itself after confirming, via the
+ * server, that the user is not yet onboarded.
  *
  * On confirm it sets the language and records languageConfirmed=true (used by
  * the server to lock the language once the curriculum is generated).
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Languages, Check, AlertTriangle } from 'lucide-react'
 import { useLanguage, type Language } from '@/lib/i18n'
 
 export function LanguageChoiceModal({ onProceed }: { onProceed?: () => void }) {
   const { setLanguage } = useLanguage()
-  // Always show on mount — every onboarding entry begins with this choice.
-  const [show, setShow] = useState(true)
+  // Start hidden. Reveal only once we confirm the user is not yet onboarded.
+  const [show, setShow] = useState(false)
   const [pending, setPending] = useState<Language | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/student-data', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled) return
+        // Already onboarded → never show. The layout is redirecting this user
+        // off /onboarding; leave the modal hidden and don't unblock the chat.
+        if (d && d.isOnboarded) return
+        // New / incomplete / post-reset onboarding → prompt for language.
+        setShow(true)
+      })
+      // On a fetch error, fail OPEN: a genuine onboarding user must not be
+      // blocked from choosing a language. (Onboarded users won't reach here.)
+      .catch(() => { if (!cancelled) setShow(true) })
+    return () => { cancelled = true }
+  }, [])
 
   function commit(lang: Language) {
     setLanguage(lang) // updates UI state + localStorage + <html lang> + persists language
