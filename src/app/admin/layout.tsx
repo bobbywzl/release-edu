@@ -1,4 +1,4 @@
-import { Shield, Mail } from 'lucide-react'
+import { Shield, Mail, LogOut } from 'lucide-react'
 import Link from 'next/link'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -40,8 +40,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               {email ?? 'password-only session'}
             </span>
           </span>
-          <a href="/admin/login?logout=true" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-            Sign Out
+          {/* Dedicated admin sign-out — clears ONLY the admin password session
+              (the admin-auth cookie). The Google account stays signed in. */}
+          <a
+            href="/admin/login?logout=true"
+            className="flex items-center gap-1.5 text-xs font-medium text-red-400/90 hover:text-red-400 border border-red-500/30 hover:border-red-500/50 rounded-md px-2.5 py-1 transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Admin sign out
           </a>
         </div>
       </header>

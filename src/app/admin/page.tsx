@@ -8,6 +8,7 @@ import {
   BarChart3, Trash2, Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { AdminEmailsManager } from './admin-emails-manager'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -262,6 +263,9 @@ export default function AdminDashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Admin access (email allow-list) */}
+      <AdminEmailsManager />
 
       {/* AI Cost & Usage */}
       <div className="bg-card border border-border rounded-xl p-5">

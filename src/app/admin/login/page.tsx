@@ -1,7 +1,8 @@
 'use client'
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Shield, Loader2 } from 'lucide-react'
+import { signIn } from 'next-auth/react'
+import { Shield, Loader2, Mail } from 'lucide-react'
 
 function AdminLoginContent() {
   const router = useRouter()
@@ -9,6 +10,19 @@ function AdminLoginContent() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [googleEmail, setGoogleEmail] = useState<string | null | undefined>(undefined)
+
+  // The admin gate has TWO factors: this password AND being signed in with an
+  // authorized Google email. Surface the current Google account so the admin
+  // knows whether the second factor is satisfied, and can switch accounts.
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then(r => (r.ok ? r.json() : null))
+      .then(s => setGoogleEmail(s?.user?.email ?? null))
+      .catch(() => setGoogleEmail(null))
+  }, [])
+
+  const emailError = searchParams.get('error') === 'email'
 
   useEffect(() => {
     if (searchParams.get('logout') === 'true') {
@@ -53,8 +67,35 @@ function AdminLoginContent() {
               <Shield className="w-6 h-6 text-primary" />
             </div>
             <h1 className="text-lg font-bold text-foreground">Admin Access</h1>
-            <p className="text-xs text-muted-foreground mt-1">Enter the admin password to continue</p>
+            <p className="text-xs text-muted-foreground mt-1">Sign in with an authorized email, then enter the password</p>
           </div>
+
+          {/* Factor 2 status: which Google account is signed in. */}
+          <div className="mb-4 rounded-lg border border-border bg-background/60 px-3 py-2.5">
+            <div className="flex items-center gap-2 text-xs">
+              <Mail className="w-3.5 h-3.5 text-muted-foreground" />
+              {googleEmail === undefined ? (
+                <span className="text-muted-foreground">Checking Google account…</span>
+              ) : googleEmail ? (
+                <span className="text-foreground truncate">{googleEmail}</span>
+              ) : (
+                <span className="text-amber-400">Not signed in with Google</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => signIn('google', { callbackUrl: '/admin/login' })}
+              className="mt-2 w-full text-xs text-muted-foreground hover:text-foreground border border-border rounded-md py-1.5 transition-colors"
+            >
+              {googleEmail ? 'Use a different Google account' : 'Sign in with Google'}
+            </button>
+          </div>
+
+          {emailError && (
+            <div className="mb-4 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+              This Google account isn’t an authorized admin. Sign in with an admin email above, then enter the password.
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

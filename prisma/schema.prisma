@@ -507,3 +507,16 @@ model UsageEvent {
   @@index([feature])
   @@index([model])
 }
+
+// ── Admin Email Allow-list ───────────────────────────────────
+// Editable from the admin UI. To reach /admin a caller must (1) enter the
+// shared admin password AND (2) be signed in with a Google email that is either
+// in the ADMIN_EMAILS env bootstrap list OR in this table. The env list is the
+// always-on owner safeguard (can never be locked out); this table is the
+// in-app-manageable set.
+model AdminEmail {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  addedBy   String?  // email of the admin who added it
+  createdAt DateTime @default(now())
+}
