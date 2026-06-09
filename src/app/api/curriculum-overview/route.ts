@@ -43,6 +43,14 @@ export async function GET() {
 
   const userId = await getUserId()
 
+  // A transient session failure resolves to 'anonymous' — answering it with a
+  // 200 + empty tracks is indistinguishable from "user has no curriculum" and
+  // made the client render an empty curriculum page. Signal it as auth failure
+  // so the client retries instead of accepting the empty result.
+  if (userId === 'anonymous' || userId === 'unknown') {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
   // Single query — fetch all tracks with chapters, homework, quizzes, projects
   const tracks = await prisma.track.findMany({
     where: { userId },

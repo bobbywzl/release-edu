@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -673,6 +673,20 @@ export default function CurriculumPage() {
   const interestTracks = overviewTracks.filter(t => !FOUNDATION_TYPES.includes(t.type))
   const foundationTracks = overviewTracks.filter(t => FOUNDATION_TYPES.includes(t.type))
 
+  // Contradiction guard: student-data says a curriculum exists but the
+  // overview came back empty (transient auth/DB failure on its endpoint).
+  // Treat it as still-loading and re-request a few times instead of rendering
+  // "0 courses" for the whole visit.
+  const overviewUnsettled = overviewTracks.length === 0 && (overviewLoading || data.hasCurriculum)
+  const overviewRetries = useRef(0)
+  useEffect(() => {
+    if (overviewLoading || overviewTracks.length > 0 || !data.hasCurriculum) return
+    if (overviewRetries.current >= 3) return
+    overviewRetries.current += 1
+    const id = setTimeout(() => refreshCurriculumOverview(), 4000 * overviewRetries.current)
+    return () => clearTimeout(id)
+  }, [overviewLoading, overviewTracks.length, data.hasCurriculum])
+
   const [showInsights, setShowInsights] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetStep, setResetStep] = useState<1 | 2>(1)
@@ -947,13 +961,13 @@ export default function CurriculumPage() {
         </Card>
         <Card className="bg-card border-border">
           <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold text-primary">{interestTracks.length}</p>
+            <p className="text-2xl font-bold text-primary">{overviewUnsettled ? '—' : interestTracks.length}</p>
             <p className="text-xs text-muted-foreground">{tr("curriculum.interestCourses")}</p>
           </CardContent>
         </Card>
         <Card className="bg-card border-border">
           <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold text-emerald-400">{foundationTracks.length}</p>
+            <p className="text-2xl font-bold text-emerald-400">{overviewUnsettled ? '—' : foundationTracks.length}</p>
             <p className="text-xs text-muted-foreground">{tr("curriculum.foundationCourses")}</p>
           </CardContent>
         </Card>
@@ -1030,8 +1044,8 @@ export default function CurriculumPage() {
         </div>
       )}
 
-      {/* Fallback: overview still loading or no typed tracks */}
-      {overviewLoading && overviewTracks.length === 0 && (
+      {/* Fallback: overview still loading, or empty despite hasCurriculum (retrying) */}
+      {overviewUnsettled && (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
           <span className="ml-2 text-sm text-muted-foreground">{tr('curriculum.loadingCurriculum')}</span>

@@ -37,21 +37,37 @@ export function useCurriculumOverview() {
       setLoading(false)
       return
     }
-    try {
-      const res = await fetch('/api/curriculum-overview', { cache: 'no-store' })
-      if (res.ok) {
-        const data = (await res.json()).tracks
-        // Only cache non-empty results to avoid caching auth/timing failures
-        if (data.length > 0) {
-          _cache = { data, fetchedAt: Date.now() }
+    // A single bad response here used to be rendered as "no curriculum" for
+    // the whole visit: the server answers 401 on transient session failures
+    // and can 500 on a cold DB. Retry with backoff before giving up, and only
+    // accept an empty result from a successful (200) response.
+    const MAX_ATTEMPTS = 3
+    let okEmpty: TrackOverview[] | null = null
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch('/api/curriculum-overview', { cache: 'no-store' })
+        if (res.ok) {
+          const data = (await res.json()).tracks as TrackOverview[]
+          if (data.length > 0) {
+            // Only cache non-empty results to avoid caching auth/timing failures
+            _cache = { data, fetchedAt: Date.now() }
+            setTracks(data)
+            setLoading(false)
+            return
+          }
+          // 200 + empty can be real (brand-new user) — accept it, but only
+          // after the remaining attempts also fail to produce tracks.
+          okEmpty = data
         }
-        setTracks(data)
+      } catch {
+        // network error — retry below
       }
-    } catch {
-      // keep current state
-    } finally {
-      setLoading(false)
+      if (attempt < MAX_ATTEMPTS) await new Promise(r => setTimeout(r, 1000 * attempt))
     }
+    if (okEmpty) setTracks(okEmpty)
+    // else: all attempts failed (401/5xx/network) — keep current state rather
+    // than clobbering known-good tracks with a transient failure.
+    setLoading(false)
   }, [])
 
   const forceRefresh = useCallback(() => fetchData(true), [fetchData])
