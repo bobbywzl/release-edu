@@ -40,8 +40,10 @@ export async function GET(
     const Anthropic = (await import('@anthropic-ai/sdk')).default
     const client = new Anthropic({ apiKey })
 
+    // Haiku, not Opus: this is a 500-token micro-task the user actively
+    // waits on behind a spinner — Opus latency here read as "not working".
     const result = await client.messages.create({
-      model: 'claude-opus-4-8',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
       messages: [{
         role: 'user',
@@ -64,7 +66,7 @@ Output JSON only:
 
     {
       const { recordAnthropicUsage } = await import('@/lib/usage')
-      recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'project' })
+      recordAnthropicUsage(result.usage, { userId, model: 'claude-haiku-4-5-20251001', feature: 'project' })
     }
     const text = (result.content[0] as { text: string }).text?.trim()
     const jsonMatch = text.match(/\{[\s\S]*\}/)
@@ -79,7 +81,10 @@ Output JSON only:
     })
 
     return NextResponse.json({ details })
-  } catch {
-    return NextResponse.json({ details: null })
+  } catch (err) {
+    // Surface the failure — a silent null left the card looking broken
+    // (spinner disappears, nothing renders, no way to retry).
+    console.error('[project-details]', err)
+    return NextResponse.json({ details: null, error: 'Could not generate details' })
   }
 }

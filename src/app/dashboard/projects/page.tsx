@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import { useLanguage } from '@/lib/i18n'
@@ -12,6 +12,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { useStudentData, refreshStudentData } from '@/lib/student-data'
+import { useRegeneration } from '@/lib/regeneration'
 
 const fadeUp = {
   hidden: { opacity: 0, y: 8 },
@@ -140,24 +141,35 @@ function InspirationCard({ project }: { project: ProjectData }) {
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<ProjectDetails | null>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [detailsError, setDetailsError] = useState(false)
   const trackColor = project.trackColor || '#6366f1'
 
-  async function toggleExpand(e: React.MouseEvent) {
-    // Don't expand if clicking action buttons
-    const target = e.target as HTMLElement
-    if (target.closest('a, button')) return
-    if (expanded) { setExpanded(false); return }
-    setExpanded(true)
-    if (details) return
+  async function loadDetails() {
     setLoadingDetails(true)
+    setDetailsError(false)
     try {
       const res = await fetch(`/api/projects/${project.id}/details`)
       if (res.ok) {
         const { details: d } = await res.json()
         if (d) setDetails(d)
+        else setDetailsError(true)
+      } else {
+        setDetailsError(true)
       }
-    } catch { /* non-critical */ }
-    finally { setLoadingDetails(false) }
+    } catch {
+      setDetailsError(true)
+    } finally {
+      setLoadingDetails(false)
+    }
+  }
+
+  function toggleExpand(e: React.MouseEvent) {
+    // Don't expand if clicking action buttons
+    const target = e.target as HTMLElement
+    if (target.closest('a, button')) return
+    if (expanded) { setExpanded(false); return }
+    setExpanded(true)
+    if (!details) void loadDetails()
   }
 
   async function handleLockIn(e: React.MouseEvent) {
@@ -232,6 +244,14 @@ function InspirationCard({ project }: { project: ProjectData }) {
                     Generating project details…
                   </div>
                 )}
+                {detailsError && !loadingDetails && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void loadDetails() }}
+                    className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
+                  >
+                    Couldn&apos;t generate details — tap to retry
+                  </button>
+                )}
                 {details && (
                   <>
                     <div className="p-3 rounded-lg bg-background/60 border border-border/50 space-y-1">
@@ -303,27 +323,27 @@ function InspirationCard({ project }: { project: ProjectData }) {
 // ── Generate Inspirations Card ───────────────────────────────────────────────
 
 function GenerateInspirationsCard() {
-  const [loading, setLoading] = useState(false)
+  // Generation runs in the module-scoped manager so it survives navigating
+  // away from this page — data refreshes globally when it completes.
+  const { inspirations, startInspirations } = useRegeneration()
+  const loading = inspirations.running
+  const count = inspirations.count
+  const error = inspirations.error
   const [done, setDone] = useState(false)
-  const [count, setCount] = useState(0)
-  const [error, setError] = useState<string | null>(null)
 
-  async function handleGenerate() {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/projects/generate-inspirations', { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed')
-      setCount(data.count)
-      setDone(true)
-      refreshStudentData()
-      setTimeout(() => setDone(false), 3000)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
-    } finally {
-      setLoading(false)
-    }
+  // Flash the success state for a few seconds after a run completes (also
+  // fires if the run finished while the user was on another page and they
+  // come back within the window).
+  useEffect(() => {
+    if (!inspirations.successAt) return
+    if (Date.now() - inspirations.successAt > 10_000) return
+    setDone(true)
+    const id = setTimeout(() => setDone(false), 3000)
+    return () => clearTimeout(id)
+  }, [inspirations.successAt])
+
+  function handleGenerate() {
+    startInspirations()
   }
 
   return (

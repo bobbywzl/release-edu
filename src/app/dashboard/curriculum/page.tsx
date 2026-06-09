@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { TransitionScreen } from '@/components/transition-screen'
 import { useStudentData, refreshStudentData } from '@/lib/student-data'
 import { useCurriculumOverview, refreshCurriculumOverview, type TrackOverview } from '@/lib/curriculum-overview'
+import { useRegeneration } from '@/lib/regeneration'
 import { useLanguage } from '@/lib/i18n'
 import { useCompletionStats } from '@/lib/completion-stats'
 import { triggerCurriculumRefresh } from '@/lib/refresh-bus'
@@ -691,7 +692,10 @@ export default function CurriculumPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetStep, setResetStep] = useState<1 | 2>(1)
   const [resetting, setResetting] = useState(false)
-  const [regenerating, setRegenerating] = useState(false)
+  // Regeneration runs in the module-scoped manager so it keeps going (and
+  // refreshes data on completion) even when the user navigates away.
+  const { curriculum: curriculumRegen, startCurriculum } = useRegeneration()
+  const regenerating = curriculumRegen.running
   const router = useRouter()
 
   // Detect a fallback curriculum so we can prompt the user to regenerate
@@ -727,44 +731,11 @@ export default function CurriculumPage() {
   const regenerationsLeft = Math.max(0, regenerationsLimit - regenerationsUsed)
   const canRegenerate = regenerationsLeft > 0 && !regenerating
 
-  async function handleRegenerate() {
-    setRegenerating(true)
-    // 160s timeout matches the server's 150s overall budget + buffer.
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 160_000)
-    try {
-      const res = await fetch('/api/curriculum/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manual: true }), // route rebuilds profile from DB; manual flag counts toward the limit
-        signal: controller.signal,
-      })
-      clearTimeout(timeoutId)
-      if (res.status === 429) {
-        const body = await res.json().catch(() => ({}))
-        alert(body.error || `You've reached the ${regenerationsLimit}-regeneration limit. Use Start Over to reset.`)
-        return
-      }
-      if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        throw new Error(`Generation failed (HTTP ${res.status}): ${body.slice(0, 200)}`)
-      }
-      const [sd, cs, co] = await Promise.all([
-        import('@/lib/student-data'),
-        import('@/lib/completion-stats'),
-        import('@/lib/curriculum-overview'),
-      ])
-      sd.refreshStudentData()
-      cs.refreshCompletionStats()
-      co.refreshCurriculumOverview()
-      setTimeout(() => router.refresh(), 800)
-    } catch (err) {
-      clearTimeout(timeoutId)
-      console.error('Regenerate failed:', err)
-      alert(`Regeneration failed: ${err instanceof Error ? err.message : 'Unknown error'}. Try again in a moment.`)
-    } finally {
-      setRegenerating(false)
-    }
+  function handleRegenerate() {
+    // Fire-and-survive: the module-scoped manager owns the request, the
+    // timeout, the data refresh on completion, and the error state — so the
+    // run finishes correctly even if the user leaves this page.
+    startCurriculum()
   }
 
   async function handleReset() {
@@ -992,6 +963,9 @@ export default function CurriculumPage() {
           </p>
           {regenerating && (
             <p className="text-[11px] text-primary mt-1">{tr('curriculum.regenInProgress')}</p>
+          )}
+          {curriculumRegen.error && !regenerating && (
+            <p className="text-[11px] text-destructive mt-1">{curriculumRegen.error}</p>
           )}
         </div>
         <Button

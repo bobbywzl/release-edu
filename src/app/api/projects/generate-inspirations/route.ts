@@ -8,6 +8,14 @@ import Anthropic from '@anthropic-ai/sdk'
 export async function POST() {
   const userId = await getUserId()
 
+  // A transient session failure resolves to 'anonymous' — without this guard
+  // it falls through to the track query, finds nothing, and answers
+  // "No curriculum found", which reads like a real (and very confusing)
+  // generation failure. Signal it as auth so the client can retry.
+  if (userId === 'anonymous' || userId === 'unknown') {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
   // Get curriculum tracks + chapters for context
   const tracks = await prisma.track.findMany({
     where: { userId },
@@ -108,9 +116,12 @@ Return ONLY valid JSON array — no markdown, no explanation:
 ]`
 
   try {
+    // 4000 tokens: 4 projects × (title, description, overview, skills, 4-6
+    // milestones, deliverable) — 3000 risked truncated JSON, which surfaced
+    // as an opaque "Generation failed".
     const response = await client.messages.create({
       model: 'claude-opus-4-8',
-      max_tokens: 3000,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }],
     })
 
