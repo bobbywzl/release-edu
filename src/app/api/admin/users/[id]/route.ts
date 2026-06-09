@@ -23,7 +23,7 @@ export async function PATCH(
   const denied = await adminApiGuard(); if (denied) return denied
 
   const { id } = await params
-  const body = await req.json() as { action: string; role?: string }
+  const body = await req.json() as { action: string; role?: string; limit?: number }
 
   if (body.action === 'set_role') {
     const role = body.role
@@ -59,6 +59,30 @@ export async function PATCH(
       data: { isOnboarded: false },
     })
     return NextResponse.json({ success: true, message: 'Onboarding reset' })
+  }
+
+  // Grant a custom "Regenerate with AI" budget — admins can raise (or lower)
+  // the per-student cap when a student needs more curriculum regenerations.
+  if (body.action === 'set_regen_limit') {
+    const limit = Number(body.limit)
+    if (!Number.isInteger(limit) || limit < 0 || limit > 99) {
+      return NextResponse.json({ error: 'Limit must be an integer between 0 and 99' }, { status: 400 })
+    }
+    await prisma.studentProfile.upsert({
+      where: { userId: id },
+      update: { manualRegenerationLimit: limit },
+      create: { userId: id, manualRegenerationLimit: limit },
+    })
+    return NextResponse.json({ success: true, message: `Regeneration limit set to ${limit}` })
+  }
+
+  // Zero out the used-regenerations counter without touching the limit.
+  if (body.action === 'reset_regen_count') {
+    await prisma.studentProfile.updateMany({
+      where: { userId: id },
+      data: { manualRegenerationCount: 0 },
+    })
+    return NextResponse.json({ success: true, message: 'Regeneration count reset to 0' })
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })

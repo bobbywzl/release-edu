@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { useStudentData } from '@/lib/student-data'
 import { useLanguage } from '@/lib/i18n'
+import { useRegeneration } from '@/lib/regeneration'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -245,20 +246,34 @@ export default function PortfolioPage() {
     }
   }, [pollStatus])
 
-  const generate = useCallback(async () => {
-    setLoading(true)
+  // Generation is owned by the module-scope manager so it keeps being
+  // tracked (and completes) even when the user navigates away. The status
+  // is DB-backed server-side; this page's pollStatus picks the result up on
+  // return, and the manager's state drives the loading UI in between.
+  const { portfolio: portfolioRegen, startPortfolio } = useRegeneration()
+  const generate = useCallback(() => {
     setError(null)
-    try {
-      const res = await fetch('/api/portfolio/generate', { method: 'POST' })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Failed to generate')
-      // Background generation started — start polling (loading stays true)
-      pollStatus()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
-      setLoading(false)
+    setLoading(true)
+    startPortfolio()
+    pollStatus()
+  }, [startPortfolio, pollStatus])
+
+  // Mirror the manager's lifecycle into this page's loading/error state —
+  // covers the run finishing (or failing) while the user was on another page.
+  useEffect(() => {
+    if (portfolioRegen.running) {
+      setLoading(true)
+      return
     }
-  }, [pollStatus])
+    if (portfolioRegen.error) {
+      setError(portfolioRegen.error)
+      setLoading(false)
+    } else if (portfolioRegen.successAt) {
+      // Fetch the finished portfolio data.
+      pollStatus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolioRegen.running, portfolioRegen.error, portfolioRegen.successAt])
 
   // Sort skills by level (normalize level first since AI may return fuzzy strings)
   const sortedSkills = portfolio?.skills?.slice()

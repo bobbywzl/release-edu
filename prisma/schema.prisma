@@ -49,11 +49,14 @@ model StudentProfile {
   currentProjects String?  // JSON array
   roadmapState    String?  // JSON
   isOnboarded     Boolean  @default(false)
-  // Counter for user-initiated "Regenerate with AI" clicks. Capped at 2 per
+  // Counter for user-initiated "Regenerate with AI" clicks. Capped per
   // curriculum lifetime; reset to 0 when the user does Start Over. Does NOT
   // increment for system-initiated regenerations (onboarding's first call,
   // auto-recovery in the dashboard layout).
   manualRegenerationCount Int @default(0)
+  // Per-student cap for the counter above. Defaults to 2; admins can raise
+  // it from the admin panel to grant extra regenerations where needed.
+  manualRegenerationLimit Int @default(2)
   updatedAt       DateTime @updatedAt
 }
 

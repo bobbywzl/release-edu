@@ -17,7 +17,7 @@
  */
 import { useState, useEffect } from 'react'
 
-export type RegenKind = 'curriculum' | 'inspirations'
+export type RegenKind = 'curriculum' | 'inspirations' | 'portfolio'
 
 export interface RegenState {
   running: boolean
@@ -31,11 +31,13 @@ export interface RegenState {
 const TIMEOUTS_MS: Record<RegenKind, number> = {
   curriculum: 160_000, // matches the server's 150s budget + buffer
   inspirations: 120_000,
+  portfolio: 320_000, // server marks the job stale after 5 min
 }
 
 const state: Record<RegenKind, RegenState> = {
   curriculum: { running: false, error: null, successAt: null, count: 0 },
   inspirations: { running: false, error: null, successAt: null, count: 0 },
+  portfolio: { running: false, error: null, successAt: null, count: 0 },
 }
 
 const listeners = new Set<() => void>()
@@ -140,6 +142,59 @@ export function startInspirationsGeneration(): void {
   })()
 }
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+/**
+ * Poll the portfolio status endpoint until the server-side job reaches a
+ * terminal state. The job itself runs on the server (status is DB-backed),
+ * so this works no matter which page is mounted — or none.
+ */
+async function pollPortfolioUntilDone(deadline: number): Promise<void> {
+  while (Date.now() < deadline) {
+    await sleep(2_500)
+    try {
+      const res = await fetch('/api/portfolio/status', { cache: 'no-store' })
+      if (!res.ok) continue // transient — keep polling
+      const json = await res.json() as { status: string; error?: string }
+      if (json.status === 'ready') {
+        finish('portfolio', { successAt: Date.now() })
+        return
+      }
+      if (json.status === 'error') {
+        finish('portfolio', { error: json.error || 'Generation failed' })
+        return
+      }
+      if (json.status === 'none') {
+        // Nothing in flight server-side (e.g. job never started) — stop.
+        finish('portfolio', { error: 'Generation did not start. Try again.' })
+        return
+      }
+    } catch { /* transient — keep polling */ }
+  }
+  finish('portfolio', { error: 'Generation timed out. Try again in a minute.' })
+}
+
+export function startPortfolioGeneration(): void {
+  if (state.portfolio.running) return
+  state.portfolio = { running: true, error: null, successAt: null, count: 0 }
+  try { sessionStorage.setItem(ssKey('portfolio'), String(Date.now())) } catch { /* SSR safe */ }
+  emit()
+
+  void (async () => {
+    try {
+      const res = await fetch('/api/portfolio/generate', { method: 'POST' })
+      const body = await res.json().catch(() => ({} as { error?: string }))
+      if (!res.ok) {
+        finish('portfolio', { error: body.error || `Generation failed (HTTP ${res.status})` })
+        return
+      }
+      await pollPortfolioUntilDone(Date.now() + TIMEOUTS_MS.portfolio)
+    } catch {
+      finish('portfolio', { error: 'Network error during generation. Try again in a moment.' })
+    }
+  })()
+}
+
 /**
  * After a full reload, the original request is gone but the server is still
  * generating. Resume the "running" indicator and poll the data hooks until
@@ -155,6 +210,11 @@ function resumeIfInflight(kind: RegenKind) {
       return
     }
     state[kind] = { running: true, error: null, successAt: null, count: 0 }
+    if (kind === 'portfolio') {
+      // Portfolio status is DB-backed — resume real polling.
+      void pollPortfolioUntilDone(Date.now() + remaining)
+      return
+    }
     const poll = setInterval(refreshAllData, 8_000)
     setTimeout(() => {
       clearInterval(poll)
@@ -167,6 +227,7 @@ function resumeIfInflight(kind: RegenKind) {
 if (typeof window !== 'undefined') {
   resumeIfInflight('curriculum')
   resumeIfInflight('inspirations')
+  resumeIfInflight('portfolio')
 }
 
 export function useRegeneration() {
@@ -179,7 +240,9 @@ export function useRegeneration() {
   return {
     curriculum: state.curriculum,
     inspirations: state.inspirations,
+    portfolio: state.portfolio,
     startCurriculum: startCurriculumRegeneration,
     startInspirations: startInspirationsGeneration,
+    startPortfolio: startPortfolioGeneration,
   }
 }

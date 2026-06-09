@@ -266,7 +266,7 @@ export async function GET() {
       hasSetupProfile: true,
       hasCurriculum: true,
       manualRegenerationCount: profileForFlags?.manualRegenerationCount ?? 0,
-      manualRegenerationLimit: 2,
+      manualRegenerationLimit: profileForFlags?.manualRegenerationLimit ?? 2,
     })
   }
 
@@ -307,6 +307,6 @@ export async function GET() {
     hasSetupProfile,
     hasCurriculum: false,
     manualRegenerationCount: profileForFlags?.manualRegenerationCount ?? 0,
-    manualRegenerationLimit: 2,
+    manualRegenerationLimit: profileForFlags?.manualRegenerationLimit ?? 2,
   })
 }

@@ -47,19 +47,23 @@ export async function POST(req: NextRequest) {
   // Over. System-initiated calls (onboarding's first run, dashboard layout's
   // auto-recovery) do NOT count against this limit — only user-initiated
   // button clicks do.
-  const MAX_MANUAL_REGENERATIONS = 2
+  // Default cap is 2, but the per-student limit is admin-adjustable
+  // (StudentProfile.manualRegenerationLimit, set from the admin panel).
+  const DEFAULT_MANUAL_REGENERATIONS = 2
+  let manualRegenerationLimit = DEFAULT_MANUAL_REGENERATIONS
   if (isManualRegeneration) {
     const userIdForCheck = await getUserId()
     const sp = await prisma.studentProfile.findUnique({
       where: { userId: userIdForCheck },
-      select: { manualRegenerationCount: true },
+      select: { manualRegenerationCount: true, manualRegenerationLimit: true },
     })
     const used = sp?.manualRegenerationCount ?? 0
-    if (used >= MAX_MANUAL_REGENERATIONS) {
+    manualRegenerationLimit = sp?.manualRegenerationLimit ?? DEFAULT_MANUAL_REGENERATIONS
+    if (used >= manualRegenerationLimit) {
       return NextResponse.json({
-        error: `You've used all ${MAX_MANUAL_REGENERATIONS} regenerations for this curriculum. Click Start Over to reset.`,
+        error: `You've used all ${manualRegenerationLimit} regenerations for this curriculum. Click Start Over to reset, or ask your Mentor for more.`,
         manualRegenerationCount: used,
-        manualRegenerationLimit: MAX_MANUAL_REGENERATIONS,
+        manualRegenerationLimit,
       }, { status: 429 })
     }
   }
@@ -658,22 +662,24 @@ IMPORTANT: Every entry in "tracks" represents a COURSE (terminology note: the JS
       const updated = await prisma.studentProfile.update({
         where: { userId: storeUserId },
         data: { manualRegenerationCount: { increment: 1 } },
-        select: { manualRegenerationCount: true },
+        select: { manualRegenerationCount: true, manualRegenerationLimit: true },
       }).catch(() => null)
       manualRegenerationCount = updated?.manualRegenerationCount ?? 0
+      manualRegenerationLimit = updated?.manualRegenerationLimit ?? manualRegenerationLimit
     } else {
       const current = await prisma.studentProfile.findUnique({
         where: { userId: storeUserId },
-        select: { manualRegenerationCount: true },
+        select: { manualRegenerationCount: true, manualRegenerationLimit: true },
       }).catch(() => null)
       manualRegenerationCount = current?.manualRegenerationCount ?? 0
+      manualRegenerationLimit = current?.manualRegenerationLimit ?? manualRegenerationLimit
     }
   }
 
   return NextResponse.json({
     plan: finalPlan,
     manualRegenerationCount,
-    manualRegenerationLimit: MAX_MANUAL_REGENERATIONS,
+    manualRegenerationLimit,
   })
 }
 

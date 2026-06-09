@@ -105,6 +105,47 @@ export default function UserDetailPage() {
   const [expandedConvos, setExpandedConvos] = useState<Set<string>>(new Set())
   const [unlocking, setUnlocking] = useState(false)
   const [unlockMsg, setUnlockMsg] = useState<string | null>(null)
+  const [regenLimitInput, setRegenLimitInput] = useState('')
+  const [regenSaving, setRegenSaving] = useState(false)
+  const [regenMsg, setRegenMsg] = useState<string | null>(null)
+
+  // Shared PATCH helper for the regeneration-budget controls.
+  async function patchRegen(payload: Record<string, unknown>) {
+    setRegenSaving(true)
+    setRegenMsg(null)
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setRegenMsg(`✓ ${data.message}`)
+        const refreshed = await fetch(`/api/admin/users/${userId}`).then(r => r.json())
+        if (refreshed.user) setUser(refreshed.user)
+      } else {
+        setRegenMsg(`Error: ${data.error || 'Request failed'}`)
+      }
+    } catch {
+      setRegenMsg('Error: Request failed')
+    } finally {
+      setRegenSaving(false)
+    }
+  }
+
+  function handleSetRegenLimit() {
+    const limit = parseInt(regenLimitInput, 10)
+    if (!Number.isInteger(limit) || limit < 0 || limit > 99) {
+      setRegenMsg('Error: enter a number from 0 to 99')
+      return
+    }
+    void patchRegen({ action: 'set_regen_limit', limit })
+  }
+
+  function handleResetRegenCount() {
+    void patchRegen({ action: 'reset_regen_count' })
+  }
 
   async function handleUnlockCurriculum() {
     if (!confirm('Unlock this user\'s curriculum? This removes the 30-day lock and lets them make changes immediately.')) return
@@ -264,6 +305,47 @@ export default function UserDetailPage() {
             <InfoRow label="Onboarded" value={profile.isOnboarded ? '✅ Yes' : '❌ No'} />
             <InfoRow label="Aspirations" value={profile.aspirations} />
             <InfoRow label="Updated" value={formatDate(profile.updatedAt)} />
+          </div>
+
+          {/* Regeneration budget — grant extra "Regenerate with AI" uses */}
+          <div className="mt-4 p-3 rounded-lg bg-background border border-border space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-foreground">Curriculum regenerations</span>
+              <span className="text-xs text-muted-foreground">
+                {profile.manualRegenerationCount ?? 0} used / {profile.manualRegenerationLimit ?? 2} allowed
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="number"
+                min={0}
+                max={99}
+                value={regenLimitInput}
+                onChange={e => setRegenLimitInput(e.target.value)}
+                placeholder={String(profile.manualRegenerationLimit ?? 2)}
+                className="w-20 text-xs px-2 py-1.5 rounded-lg bg-card border border-border text-foreground"
+              />
+              <button
+                onClick={handleSetRegenLimit}
+                disabled={regenSaving}
+                className="text-xs px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+              >
+                Set limit
+              </button>
+              <button
+                onClick={handleResetRegenCount}
+                disabled={regenSaving}
+                className="text-xs px-3 py-1.5 rounded-lg bg-muted border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                Reset used to 0
+              </button>
+              {regenMsg && (
+                <span className={`text-xs ${regenMsg.startsWith('✓') ? 'text-emerald-400' : 'text-red-400'}`}>{regenMsg}</span>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Raise the limit or reset the used count to grant this student more &quot;Regenerate with AI&quot; uses.
+            </p>
           </div>
           <div className="mt-4 space-y-3">
             <div>

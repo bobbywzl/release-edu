@@ -18,6 +18,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useSpeechRecognition, speak, stopSpeaking, speechSynthesisSupported, voiceLangTag } from '@/lib/use-voice'
 import { triggerCurriculumRefresh } from '@/lib/refresh-bus'
+import { pumpChatStream, getActiveChatStream, subscribeChatStream } from '@/lib/chat-stream'
 import { SessionProgressBar } from '@/components/session-progress-bar'
 import { Progress } from '@/components/ui/progress'
 import { useHighlights } from '@/lib/highlights'
@@ -1391,6 +1392,33 @@ function ChatPageInner() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
 
+  // ── Re-attach to in-flight streams (like the Claude apps) ───────────────
+  // The pump lives at module scope (chat-stream.ts), so Bob keeps streaming
+  // while the user is on another page. When this page (re)mounts or the
+  // active conversation changes, pick the live stream back up and render it.
+  const isStreamingNowRef = useRef(false)
+  useEffect(() => { isStreamingNowRef.current = isStreaming }, [isStreaming])
+  useEffect(() => {
+    if (!activeId || activeId.startsWith('temp-')) return
+    const stream = getActiveChatStream(activeId)
+    if (!stream || stream.done) return
+    if (isStreamingNowRef.current) return // this instance already renders it
+    setIsStreaming(true)
+    setStreamingContent(stream.content)
+    const unsub = subscribeChatStream(activeId, s => {
+      setStreamingContent(s.content)
+      if (s.done) {
+        setIsStreaming(false)
+        setStreamingContent('')
+        // The server persists the assistant message right after the stream
+        // closes — reload the thread to pick it up with real IDs.
+        setTimeout(() => { void loadConversationMessages(activeId) }, 900)
+      }
+    })
+    return unsub
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId])
+
   // ── Voice (Web Speech API) ──────────────────────────────────────────────
   const ttsSupported = speechSynthesisSupported()
   const [readAloud, setReadAloud] = useState(false)
@@ -2352,14 +2380,17 @@ function ChatPageInner() {
         setActiveId(returnedConvId)
       }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+      // Pump via the module-scope registry so a remounted chat page can
+      // re-attach to this stream after navigating away and back.
+      const streamKey = returnedConvId ?? `pending-${Date.now()}`
       let full = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        full += decoder.decode(value, { stream: true })
-        setStreamingContent(full)
+      try {
+        full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
+      } catch (err) {
+        // Keep whatever streamed before the failure; only error out if we
+        // got nothing at all.
+        full = getActiveChatStream(streamKey)?.content ?? ''
+        if (!full) throw err
       }
 
       setMessages(prev => [...prev, {
@@ -2536,25 +2567,21 @@ function ChatPageInner() {
         })
       }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+      // Pump through the module-scope registry so a remounted chat page can
+      // re-attach to this stream after navigating away and back.
+      const streamKey = returnedConvId ?? (activeId && !activeId.startsWith('temp-') ? activeId : `pending-${Date.now()}`)
       let full = ''
 
       // Read until done OR the user clicks Stop. On AbortError we fall
-      // through with whatever's accumulated in `full` and treat it as the
-      // final (truncated) assistant message — no error UI, no data loss.
+      // through with whatever's accumulated and treat it as the final
+      // (truncated) assistant message — no error UI, no data loss.
       try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const chunk = decoder.decode(value, { stream: true })
-          full += chunk
-          setStreamingContent(full)
-        }
+        full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
       } catch (err) {
         const isAbort = err instanceof Error && (err.name === 'AbortError' || abortRef.current?.signal.aborted)
         if (!isAbort) throw err
-        // User stopped — keep `full` as-is and continue to persist it.
+        // User stopped — recover the partial content and persist it.
+        full = getActiveChatStream(streamKey)?.content ?? ''
       }
 
       const stoppedByUser = userStoppedRef.current
@@ -2808,14 +2835,17 @@ function ChatPageInner() {
         })
       }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+      // Pump via the module-scope registry so a remounted chat page can
+      // re-attach to this stream after navigating away and back.
+      const streamKey = returnedConvId ?? `pending-${Date.now()}`
       let full = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        full += decoder.decode(value, { stream: true })
-        setStreamingContent(full)
+      try {
+        full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
+      } catch (err) {
+        // Keep whatever streamed before the failure; only error out if we
+        // got nothing at all.
+        full = getActiveChatStream(streamKey)?.content ?? ''
+        if (!full) throw err
       }
 
       setMessages(prev => [...prev, {
@@ -2971,14 +3001,17 @@ function ChatPageInner() {
         })
       }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+      // Pump via the module-scope registry so a remounted chat page can
+      // re-attach to this stream after navigating away and back.
+      const streamKey = returnedConvId ?? `pending-${Date.now()}`
       let full = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        full += decoder.decode(value, { stream: true })
-        setStreamingContent(full)
+      try {
+        full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
+      } catch (err) {
+        // Keep whatever streamed before the failure; only error out if we
+        // got nothing at all.
+        full = getActiveChatStream(streamKey)?.content ?? ''
+        if (!full) throw err
       }
 
       setMessages(prev => [...prev, {
