@@ -455,7 +455,8 @@ Return ONLY valid JSON (no markdown). Do NOT include any "id" fields — IDs wil
   "tracks": [
     {
       "name": "[Formal Academic Title e.g. Stochastic Calculus, Buddhist Epistemology]", "description": "...", "color": "#3B82F6", "type": "project",
-      "projectIdea": "Build: [creative capstone project title that synthesizes all chapters in this track into one original creative work]",
+      "projectIdea": "[SHORT capstone artifact name, 3-8 words, e.g. 'Annotated Kernel Subsystem Audit' — names the thing the student builds. NO 'Build:' prefix, NO explanation inside the title]",
+      "projectDescription": "[COMPREHENSIVE 2-4 sentence brief: exactly what the student will build, the scope and any options, what accompanies it (write-up, benchmark, demo), and the central technical/intellectual challenge]",
       "modules": [
         {"title": "[Specific topic e.g. Brownian Motion & Random Walks]", "description": "Learn X because it enables Y for your goal of Z", "type": "project", "subject": "...", "estimatedHours": 12, "skills": ["...", "..."], "aiRationale": "...", "status": "in-progress"},
         {"title": "[Next specific topic]", "description": "...", "type": "project", "subject": "...", "estimatedHours": 10, "skills": ["...", "..."], "aiRationale": "...", "status": "not-started"}
@@ -470,7 +471,7 @@ Return ONLY valid JSON (no markdown). Do NOT include any "id" fields — IDs wil
   ]
 }
 
-IMPORTANT: Every entry in "tracks" represents a COURSE (terminology note: the JSON field is named "tracks" for backward compat, but each entry is a course inside one of the two tracks — Foundations or Interest-Based — distinguished by its "type" field). Every entry MUST have a "type" field — either "project" or "core". Every "project" entry MUST include a "projectIdea" field with a creative capstone project title (NOT just the course name — it should describe what the student would actually BUILD). Generate EXACTLY 3 interest-based courses AND EXACTLY 3 foundation courses — 6 courses total. Any other count is invalid. Each course must have 3–4 chapters with specific topic titles. Each course's "modules" array contains the full chapter objects (NOT string IDs). Do NOT include any "id" fields anywhere.`
+IMPORTANT: Every entry in "tracks" represents a COURSE (terminology note: the JSON field is named "tracks" for backward compat, but each entry is a course inside one of the two tracks — Foundations or Interest-Based — distinguished by its "type" field). Every entry MUST have a "type" field — either "project" or "core". Every "project" entry MUST include BOTH a "projectIdea" field (a SHORT artifact title, 3-8 words — names what the student builds, NOT just the course name) AND a "projectDescription" field (the comprehensive brief — every detail lives in the description, never in the title). Generate EXACTLY 3 interest-based courses AND EXACTLY 3 foundation courses — 6 courses total. Any other count is invalid. Each course must have 3–4 chapters with specific topic titles. Each course's "modules" array contains the full chapter objects (NOT string IDs). Do NOT include any "id" fields anywhere.`
 
     // Language: generate course/chapter text in the student's chosen language
     // while keeping JSON keys + enum values English so the parser works.
@@ -543,6 +544,7 @@ IMPORTANT: Every entry in "tracks" represents a COURSE (terminology note: the JS
         color: string
         type: string
         projectIdea?: string
+        projectDescription?: string
         modules: Array<{
           title: string
           description: string
@@ -690,6 +692,7 @@ async function saveCurriculumPlanToDb(
       color: string
       type: string
       projectIdea?: string
+      projectDescription?: string
       modules: Array<{
         title: string
         description: string
@@ -723,6 +726,7 @@ async function saveCurriculumPlanToDb(
       color: t.color,
       type: t.type,
       projectIdea: t.projectIdea,
+      projectDescription: t.projectDescription,
       order: idx,
       modules: (t.modules ?? []).map((m, mIdx) => ({
         title: m.title,

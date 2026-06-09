@@ -4,6 +4,7 @@
  * Provides the same scoped-by-user pattern: dbStore.forUser(userId)
  */
 import prisma from '@/lib/prisma'
+import { condenseProjectTitle } from '@/lib/title-normalize'
 import type {
   User,
   StudentProfile,
@@ -79,6 +80,7 @@ export interface DbScopedStore {
       color?: string
       type?: string
       projectIdea?: string
+      projectDescription?: string
       order?: number
       modules?: Array<{
         id?: string
@@ -348,15 +350,24 @@ function createDbScopedStore(userId: string): DbScopedStore {
             }
           }
 
-          // Create ONE capstone SubjectProject per interest-based (project-type) track
+          // Create ONE capstone SubjectProject per interest-based (project-type) track.
+          // Titles stay short artifact names; ALL detail lives in the description
+          // (which also feeds Bob's context, so he remembers the full brief).
           if ((t.type ?? 'project') === 'project') {
-            const projectTitle = t.projectIdea || `Build: Creative ${t.name} Capstone`
+            const rawIdea = t.projectIdea || `Creative ${t.name} Capstone`
+            const { title: projectTitle, overflow } = condenseProjectTitle(rawIdea)
             const moduleTitles = (t.modules || []).map(m => m.title)
+            const description = [
+              // Prefer the generator's dedicated comprehensive brief; fall back
+              // to whatever detail was condensed out of an over-long title.
+              t.projectDescription || overflow,
+              `Capstone project for ${t.name} — synthesize everything from ${moduleTitles.join(', ')} into one original creative work.`,
+            ].filter(Boolean).join(' ')
             await prisma.subjectProject.create({
               data: {
                 trackId: track.id,
                 title: projectTitle,
-                description: `Capstone project for ${t.name} — synthesize everything from ${moduleTitles.join(', ')} into one original creative work.`,
+                description,
                 status: 'proposal',
                 progress: 0,
               },

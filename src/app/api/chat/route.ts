@@ -125,7 +125,7 @@ You CAN still: discuss learning strategies, answer questions about subjects, rev
             where: { userId: storeUserId },
             include: {
               chapters: { select: { id: true, title: true, status: true, sessionScore: true }, orderBy: { order: 'asc' } },
-              projects: { select: { id: true, title: true, status: true, progress: true } },
+              projects: { select: { id: true, title: true, description: true, status: true, progress: true } },
               homeworks: { select: { id: true, title: true, status: true } },
             },
             orderBy: { order: 'asc' },
@@ -154,7 +154,9 @@ You CAN still: discuss learning strategies, answer questions about subjects, rev
             return [
               `**${t.name}** [${t.type}] - ${completedChapters}/${t.chapters.length} chapters complete`,
               t.chapters.map(c => `  - ${c.title} [${c.status}${c.sessionScore ? ` ${c.sessionScore}%` : ''}]`).join('\n'),
-              t.projects.length > 0 ? t.projects.map(p => `  📌 Project: "${p.title}" [${p.status}, ${p.progress}%]`).join('\n') : '  📌 No project yet',
+              // Title is just the artifact name — include the description so
+              // Bob remembers the full project brief, not only its label.
+              t.projects.length > 0 ? t.projects.map(p => `  📌 Project: "${p.title}" [${p.status}, ${p.progress}%]${p.description ? ` — ${p.description}` : ''}`).join('\n') : '  📌 No project yet',
               t.homeworks.length > 0 ? `  📝 Homework: ${t.homeworks.map(h => `${h.title} [${h.status}]`).join(', ')}` : '',
             ].filter(Boolean).join('\n')
           }).join('\n\n')
@@ -1438,8 +1440,8 @@ Available action types:
 {"type": "replace_curriculum", "tracks": [{"name": "Track Name", "type": "project|core", "color": "#hex", "chapters": [{"title": "Ch Title", "description": "desc", "keyTopics": ["t1"], "estimatedMinutes": 45, "content": "brief overview"}]}], "preserveProgress": true}
 
 7. Add a new project inspiration to a specific track (use when student asks for a new project idea):
-{"type": "add_project", "trackName": "Track Name", "project": {"title": "Project Title", "description": "What the project involves and what the student will build/create"}}
-Only use this for project-type tracks. One project per track max - if a project already exists, propose updating it instead.
+{"type": "add_project", "trackName": "Track Name", "project": {"title": "Short artifact name — 3-8 words naming WHAT gets built, no explanation", "description": "Comprehensive brief: exactly what the student will build, the scope, accompanying deliverables (write-up, demo, benchmark), and the central challenge"}}
+Only use this for project-type tracks. One project per track max - if a project already exists, propose updating it instead. Titles stay short; ALL detail goes in the description.
 
 7. Delete a specific track:
 {"type": "delete_track", "trackName": "exact track name"}
@@ -1715,21 +1717,28 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
             const track = currentTracks.find(t => t.name.toLowerCase().includes(trackName.toLowerCase()))
             if (!track) break
 
+            // Boundary rule: short artifact-name titles, comprehensive
+            // descriptions. If the model still wrote a brief into the title,
+            // condense it and fold the detail into the description.
+            const { condenseProjectTitle } = await import('@/lib/title-normalize')
+            const { title, overflow } = condenseProjectTitle(projectData.title)
+            const description = [overflow, projectData.description].filter(Boolean).join(' ')
+
             // Check if project already exists for this track
             const existing = await prisma.subjectProject.findFirst({ where: { trackId: track.id } })
             if (existing) {
               // Update instead of create
               await prisma.subjectProject.update({
                 where: { id: existing.id },
-                data: { title: projectData.title, description: projectData.description },
+                data: { title, description },
               })
               console.log(`[L&C] add_project: updated existing project for "${trackName}"`)
             } else {
               await prisma.subjectProject.create({
                 data: {
                   trackId: track.id,
-                  title: projectData.title,
-                  description: projectData.description,
+                  title,
+                  description,
                   status: 'proposal',
                   progress: 0,
                 },

@@ -65,6 +65,7 @@ ${curriculumSummary}
 - **SPECIFIC** — name the actual artifact, not the act of building one. "A Caesar Cipher Visualizer with Real-Time Frequency Analysis" ✓ — "Build a project on cryptography" ✗. "An Interactive Coral Reef Health Dashboard Using NOAA Data" ✓ — "A practical project on marine biology" ✗.
 - **COMPREHENSIVE** — the title alone tells the student what they're building. No "Capstone Project", no "Final Project", no "Build Something With X".
 - **SIMPLE** — readable, audience-calibrated. Not jargon-stacked, not pretentious.
+- **CONCISE** — 3-8 words, hard maximum ~60 characters. The title is the artifact's NAME; every explanation, option, or sub-deliverable belongs in the description, never the title.
 - FORBIDDEN PATTERNS (will be rejected): "Build: A capstone project showcasing your mastery", "Build: A starter project that demonstrates the core ideas of [X]", "Build: A practical project that solves a real problem using [X]", "Capstone Project", "Final Project", "[X] Showcase", "Mastery Project", any title that starts with "Build: A [adjective] project". The title must name the artifact, not describe its category.
 
 **DESCRIPTION QUALITY**
@@ -156,8 +157,14 @@ Return ONLY valid JSON array — no markdown, no explanation:
       ideas.map(async idea => {
         const track = tracks.find(t => t.name.toLowerCase().includes(idea.trackName.toLowerCase()))
           || tracks[0]
+        // Boundary rule: short artifact-name titles, comprehensive descriptions.
+        // If the model wrote a brief into the title anyway, condense it and
+        // fold the detail into the description.
+        const { condenseProjectTitle } = await import('@/lib/title-normalize')
+        const { title, overflow } = condenseProjectTitle(idea.title)
+        const description = [overflow, idea.description].filter(Boolean).join(' ')
         const proposalCache = JSON.stringify({
-          overview: idea.overview || idea.description,
+          overview: idea.overview || description,
           skills: idea.skills || [],
           firstSteps: idea.milestones || [],
           deliverable: idea.deliverable || '',
@@ -165,8 +172,8 @@ Return ONLY valid JSON array — no markdown, no explanation:
         const project = await prisma.subjectProject.create({
           data: {
             trackId: track.id,
-            title: idea.title,
-            description: idea.description,
+            title,
+            description,
             status: 'planning',
             progress: 0,
             proposal: proposalCache,

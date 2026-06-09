@@ -156,10 +156,16 @@ export async function GET() {
       include: { track: { select: { id: true, name: true, color: true } } },
       orderBy: { createdAt: 'desc' },
     })
-    const projects = allTrackProjects.map(sp => ({
+    // Legacy rows stored the whole assignment brief as the title. Condense on
+    // read (idempotent — short titles pass through) so existing data matches
+    // the short-title / comprehensive-description rule without a migration.
+    const { condenseProjectTitle } = await import('@/lib/title-normalize')
+    const projects = allTrackProjects.map(sp => {
+      const { title, overflow } = condenseProjectTitle(sp.title)
+      return {
       id: sp.id,
-      title: sp.title,
-      description: sp.description ?? '',
+      title,
+      description: [overflow, sp.description ?? ''].filter(Boolean).join(' '),
       subject: sp.track.name,
       trackId: sp.track.id,
       trackName: sp.track.name,
@@ -170,7 +176,8 @@ export async function GET() {
         : 'planning') as 'active' | 'planning' | 'completed' | 'paused',
       progress: sp.progress,
       tags: safeParseJSON<string[]>(sp.coverageMap, []).slice(0, 3),
-    }))
+      }
+    })
 
     const assignments = coreModules.map(m => ({
       id: m.id,

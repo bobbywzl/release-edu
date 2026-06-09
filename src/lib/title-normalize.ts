@@ -114,6 +114,49 @@ export function normalizeChapterTitle(rawTitle: string, parentSubject: string): 
   return toTitleCase(working)
 }
 
+/**
+ * Condense a project title into a short artifact name. Some generators (and
+ * older saved rows) put an entire assignment brief into the title — "Build:
+ * Modular xv6 Extension — extend xv6 (RISC-V) with one non-trivial original
+ * feature…". The card UI needs a compact title; all detail belongs in the
+ * description.
+ *
+ * Returns the condensed title plus the `overflow` text that was cut so the
+ * caller can fold it into the description and lose nothing. Idempotent: an
+ * already-short title passes through with empty overflow.
+ */
+export function condenseProjectTitle(raw: string): { title: string; overflow: string } {
+  if (!raw) return { title: raw, overflow: '' }
+  // The "Build:" label is presentation noise — the projects UI already frames
+  // these cards as things to build.
+  const working = raw.trim().replace(/^(build|create|make|design|project)\s*:\s*/i, '')
+  const MAX_LEN = 64
+  if (working.length <= MAX_LEN) return { title: working, overflow: '' }
+
+  // Briefs almost always read "Artifact Name — long explanation…". Break at
+  // the first dash/colon/semicolon so the artifact name becomes the title and
+  // the explanation moves to the description.
+  // [\s\S] instead of the dotAll flag — the tsconfig target predates es2018.
+  const m = working.match(/^([\s\S]{8,64}?)\s*(?:—|–|:|;)\s+([\s\S]+)$/)
+  if (m) {
+    return { title: m[1].trim(), overflow: sentenceStart(m[2].trim()) }
+  }
+
+  // No clean break point — keep whole words up to the cap and move the full
+  // text into the description so nothing is lost.
+  const words = working.split(/\s+/)
+  let title = words[0] ?? working.slice(0, MAX_LEN)
+  for (let i = 1; i < words.length; i++) {
+    if (`${title} ${words[i]}`.length > MAX_LEN) break
+    title = `${title} ${words[i]}`
+  }
+  return { title: title.replace(/[,;:—–-]+$/, ''), overflow: sentenceStart(working) }
+}
+
+function sentenceStart(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+}
+
 /** Normalize a subject/track name. */
 export function normalizeSubjectName(rawName: string): string {
   if (!rawName) return rawName
