@@ -32,7 +32,7 @@ async function main() {
   
   console.log('Generating curriculum for Bobby...')
   const result = await client.messages.create({
-    model: 'claude-opus-4-20250514',
+    model: 'claude-opus-4-8',
     max_tokens: 4000,
     messages: [{
       role: 'user',

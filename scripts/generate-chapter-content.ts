@@ -93,7 +93,7 @@ Write at depth appropriate for genuine mastery, not surface familiarity. Be prec
 
     try {
       const result = await client.messages.create({
-        model: 'claude-opus-4-20250514',
+        model: 'claude-opus-4-8',
         max_tokens: 3000,
         messages: [{ role: 'user', content: prompt }],
       })
