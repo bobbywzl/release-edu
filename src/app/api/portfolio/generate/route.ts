@@ -1,3 +1,6 @@
+// Long-running AI generation — without an explicit maxDuration, Vercel
+// kills the function at the plan default before Claude finishes.
+export const maxDuration = 300
 import { NextRequest, NextResponse } from 'next/server'
 import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'
@@ -46,7 +49,12 @@ export async function POST(_req: NextRequest) {
 async function generatePortfolioInBackground(userId: string, apiKey: string): Promise<void> {
   const store = dbStore.forUser(userId)
   const studentContext = await getStudentContext(userId, false, userId)
-  const insights = await store.getInsights()
+  // Curated memory only — stale/merged insights from abandoned directions
+  // must not contaminate the portfolio. Resolved struggles come separately:
+  // they're the growth narrative (started struggling with X, mastered it).
+  const { getTopInsights, getResolvedStruggles } = await import('@/lib/insight-memory')
+  const insights = await getTopInsights(userId, { limit: 40 })
+  const resolvedStruggles = await getResolvedStruggles(userId).catch(() => [])
   const conversations = await store.getConversations()
 
   // Separate insights by type
@@ -297,9 +305,14 @@ Key insights: ${blockInsights.slice(0, 5).map((i: { content: string }) => i.cont
 Sessions: ${outcomes.length} total, ${outcomes.filter((o: { passed: boolean }) => o.passed).length} passed`
 }).join('\n\n') : 'No past curricula archived yet'}
 
+## Overcome Struggles (growth narrative — strongest portfolio material)
+${resolvedStruggles.length > 0
+  ? resolvedStruggles.map(s => `- Previously: "${s.content}" — since RESOLVED through completed chapters (use this as evidence of growth over time)`).join('\n')
+  : 'None recorded yet'}
+
 ## Data Availability Summary
 - Conversations: ${allMessages.length} messages across ${conversations.length} conversations
-- Insights: ${insights.length} total (${strengths.length} strengths, ${improvements.length} growth areas)
+- Insights: ${insights.length} total (${strengths.length} strengths, ${improvements.length} growth areas, ${resolvedStruggles.length} resolved struggles)
 - Completion: ${studentContext.progress.overallCompletion}%
 - Projects: ${studentContext.projects.active.length} active
 - Archived curriculum blocks: ${archivedBlocks.length} (included in portfolio)

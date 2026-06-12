@@ -152,7 +152,7 @@ function InterestTrackRow({ track }: { track: TrackOverview }) {
             )}
             {track.projectStatus && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">
-                {tr('curriculum.project')}: {track.projectStatus}
+                {tr('curriculum.project')}: {tr(`status.${track.projectStatus}`, track.projectStatus)}
               </span>
             )}
             {totalChapters > 0 && (
@@ -714,6 +714,13 @@ export default function CurriculumPage() {
     /^Building Blocks of /,
     /^Working Methods in /,
     /^Applied Problems in /,
+    // Chinese fallback templates (generateDefaultCurriculum, lang === 'zh')
+    /的基本概念$/,
+    /的核心方法$/,
+    /的应用问题$/,
+    /的核心概念$/,
+    /的方法与技巧$/,
+    /的应用实践$/,
   ]
   const hasFallbackTitles = overviewTracks.some(t =>
     t.chapters.some(ch => {
@@ -1076,7 +1083,10 @@ export default function CurriculumPage() {
                   <div>
                     <p className="text-xs text-muted-foreground font-medium mb-1.5">{tr('curriculum.recentInsights')}</p>
                     <div className="space-y-1">
-                      {studentInsights.slice(-5).map(ins => (
+                      {/* studentInsights arrive ranked by the memory engine
+                          (highest importance first) — take the head, not the
+                          tail. slice(-5) was showing the LOWEST-ranked rows. */}
+                      {studentInsights.slice(0, 5).map(ins => (
                         <InsightCard key={ins.id} insight={ins} />
                       ))}
                     </div>

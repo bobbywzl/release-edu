@@ -1,4 +1,7 @@
 export const dynamic = 'force-dynamic'
+// Long-running AI generation — without an explicit maxDuration, Vercel
+// kills the function at the plan default before Claude finishes.
+export const maxDuration = 300
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'

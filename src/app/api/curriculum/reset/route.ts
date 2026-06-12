@@ -97,12 +97,19 @@ export async function POST() {
   //   - Track / CurriculumPlan / Chapter / Module / Project rows
   //   - Conversations + Messages + their archives (tied to chapters)
   //   - MessageHighlight / MessageFeedback (tied to messages)
-  //   - Low-confidence insights (transient signals; high-confidence kept)
+  //   - Topic-bound insights (interest/strength/weakness/struggle/aspiration/
+  //     breakthrough) regardless of confidence — they belong to the OLD
+  //     curriculum direction. Keeping them caused stale topics from abandoned
+  //     runs to haunt the new curriculum ("biology" insights on an
+  //     interior-design student). They're archived in the CurriculumBlock
+  //     snapshot above, so nothing is lost for portfolio/restore.
   //
   // PRESERVED (user state, achievements, personalization):
   //   - PortfolioCache (achievements; user explicitly asked for this)
   //   - LinkedFile (user-uploaded files belong to the user, not the curriculum)
-  //   - High-confidence insights (>= 0.7 — persist across curricula)
+  //   - Direction-independent insights (personality / style / preference at
+  //     high confidence) and anything pinned — HOW someone learns transfers
+  //     across curricula; WHAT they were studying doesn't
   //   - StudentProfile.{interests, strengths, weaknesses, learningStyle,
   //     aspirations, pacePreference, currentProjects} — personalization data
   //     gathered from past onboarding, used to seed the next one
@@ -115,7 +122,16 @@ export async function POST() {
   await prisma.conversationArchive.deleteMany({ where: { userId } })
   await prisma.track.deleteMany({ where: { userId } })
   await prisma.curriculumPlan.deleteMany({ where: { userId } })
-  await prisma.insight.deleteMany({ where: { userId, confidence: { lt: 0.7 } } })
+  await prisma.insight.deleteMany({
+    where: {
+      userId,
+      pinned: false,
+      OR: [
+        { type: { notIn: ['personality', 'style', 'preference'] } },
+        { confidence: { lt: 0.7 } },
+      ],
+    },
+  })
 
   // Flip onboarded flag, reset learning stage, and clear the regeneration
   // counter. Personalization fields (interests, strengths, etc.) stay intact

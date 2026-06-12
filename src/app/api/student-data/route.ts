@@ -81,7 +81,11 @@ export async function GET() {
 
   if (hasCurriculum) {
     const profile = profileForFlags
-    const insights = await store.getInsights()
+    // Curated memory only — active insights ranked by the memory engine.
+    // Raw rows (incl. stale/merged from past curriculum directions) must
+    // never reach the UI.
+    const { getTopInsights } = await import('@/lib/insight-memory')
+    const insights = await getTopInsights(userId, { limit: 50 })
 
     // Parse profile metadata (mentor/parent info from setup)
     let profileMeta: { mentorName?: string; mentorEmail?: string; parentName?: string; parentEmail?: string; organization?: string } = {}
