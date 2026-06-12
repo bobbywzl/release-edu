@@ -1083,7 +1083,10 @@ export default function CurriculumPage() {
                   <div>
                     <p className="text-xs text-muted-foreground font-medium mb-1.5">{tr('curriculum.recentInsights')}</p>
                     <div className="space-y-1">
-                      {studentInsights.slice(-5).map(ins => (
+                      {/* studentInsights arrive ranked by the memory engine
+                          (highest importance first) — take the head, not the
+                          tail. slice(-5) was showing the LOWEST-ranked rows. */}
+                      {studentInsights.slice(0, 5).map(ins => (
                         <InsightCard key={ins.id} insight={ins} />
                       ))}
                     </div>

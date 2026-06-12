@@ -38,7 +38,7 @@ export interface StudentContext {
   aspirations: string | null
   interests: string[]
   recentConversationSummary: string | null
-  insights: { type: string; content: string; confidence: number }[]
+  insights: { type: string; content: string; confidence: number; importance: number }[]
 }
 
 const STAGE_NAMES: Record<number, string> = {
@@ -119,7 +119,10 @@ async function buildContextFromDB(userId: string): Promise<StudentContext> {
   const store = dbStore.forUser(userId)
 
   const profile = await store.getProfile()
-  const insights = await store.getInsights()
+  // Curated memory, not raw rows: active insights only, ranked by
+  // importance × confidence × recency × reinforcement (see insight-memory.ts).
+  const { getTopInsights } = await import('@/lib/insight-memory')
+  const insights = await getTopInsights(userId, { limit: 20 })
   const conversations = await store.getConversations()
 
   const interests = safeParseJSON<string[]>(profile?.interests, [])
@@ -236,7 +239,7 @@ async function buildContextFromDB(userId: string): Promise<StudentContext> {
     aspirations: profile?.aspirations ?? null,
     interests,
     recentConversationSummary,
-    insights: insights.map(i => ({ type: i.type, content: i.content, confidence: i.confidence })),
+    insights: insights.map(i => ({ type: i.type, content: i.content, confidence: i.confidence, importance: i.importance })),
   }
 }
 

@@ -14,7 +14,7 @@ export async function POST(
   // Verify ownership
   const chapter = await prisma.chapter.findUnique({
     where: { id },
-    include: { track: { select: { userId: true } } },
+    include: { track: { select: { userId: true, name: true } } },
   })
   if (!chapter || chapter.track.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -25,5 +25,15 @@ export async function POST(
   }
 
   await setChapterStatus(id, status)
+
+  // Mastering a chapter flips matching struggle insights to "resolved" —
+  // they stop steering Bob's teaching and become portfolio growth material.
+  if (status === 'completed') {
+    try {
+      const { markStrugglesResolved } = await import('@/lib/insight-memory')
+      void markStrugglesResolved(userId, `${chapter.title} ${chapter.track.name}`)
+    } catch { /* non-critical */ }
+  }
+
   return NextResponse.json({ success: true, chapterId: id, status })
 }

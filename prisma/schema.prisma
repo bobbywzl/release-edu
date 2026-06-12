@@ -111,14 +111,27 @@ model Message {
 // ── Insights (Bob's observations about students) ─────────────
 
 model Insight {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type       String   // personality, interest, strength, weakness, preference, aspiration, breakthrough, struggle, style
-  content    String
-  confidence Float    @default(0.5)
-  source     String   // where this insight came from
-  createdAt  DateTime @default(now())
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String   // personality, interest, strength, weakness, preference, aspiration, breakthrough, struggle, style
+  content         String
+  confidence      Float    @default(0.5)
+  source          String   // where this insight came from
+  // ── Memory-engine fields ──
+  // importance: how much this should shape teaching (durable traits high, one-off confusion low)
+  importance      Float    @default(0.5)
+  // status: active | merged (folded into another) | stale (outdated/off-track) | resolved (struggle overcome)
+  status          String   @default("active")
+  // timesObserved/lastConfirmedAt: reinforcement counters — repeated signals rank higher and decay slower
+  timesObserved   Int      @default(1)
+  lastConfirmedAt DateTime @default(now())
+  // pinned: student- or mentor-confirmed; never decays, never consolidated away
+  pinned          Boolean  @default(false)
+  mergedIntoId    String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId, status])
 }
 
 // ── Curriculum Plan ──────────────────────────────────────────

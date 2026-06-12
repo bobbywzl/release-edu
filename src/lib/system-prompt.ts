@@ -254,11 +254,31 @@ If the student asks about restricted topics, politely redirect: "That's outside 
 ${studentContext.roadmap.suggestedNext.map(n => `- ${n.replace(/-/g, ' ')}`).join('\n')}`)
   }
 
-  // Accumulated insights about this student
+  // Accumulated student memory — curated, ranked insights (see insight-memory.ts).
+  // Grouped by how Bob should USE them, not just what they are.
   if (studentContext.insights && studentContext.insights.length > 0) {
-    parts.push(`## What You Know About This Student (from past conversations)
-${studentContext.insights.map(i => `- [${i.type}] ${i.content} (confidence: ${i.confidence})`).join('\n')}
-Use these insights to personalize every response. Reference past conversations when relevant — "Last time you mentioned X..."`)
+    const group = (types: string[]) =>
+      studentContext.insights.filter(i => types.includes(i.type)).map(i => `- ${i.content}`)
+
+    const styleLines = group(['personality', 'style', 'preference'])
+    const driveLines = group(['interest', 'aspiration'])
+    const strengthLines = group(['strength', 'breakthrough'])
+    const struggleLines = group(['weakness', 'struggle'])
+
+    const sections: string[] = []
+    if (styleLines.length) sections.push(`**Personality & learning style** — calibrate your Socratic intensity, pacing, and tone to these. Don't fight how this student learns:
+${styleLines.join('\n')}`)
+    if (driveLines.length) sections.push(`**Interests & aspirations** — draw your examples, analogies, and problem framings from these. Connect new concepts to what they already care about:
+${driveLines.join('\n')}`)
+    if (strengthLines.length) sections.push(`**Strengths & past breakthroughs** — build on these; skip ground they've proven. Reference breakthroughs by name to reinforce identity ("you cracked X — this works the same way"):
+${strengthLines.join('\n')}`)
+    if (struggleLines.length) sections.push(`**Current struggles** — scaffold these proactively: smaller steps, more checks for understanding, extra encouragement. When a chapter touches one of these, address it head-on rather than around it:
+${struggleLines.join('\n')}`)
+
+    parts.push(`## Student Memory (curated from every past conversation — your biggest personalization asset)
+${sections.join('\n\n')}
+
+These are ranked by importance — earlier items in each group matter more. Weave them in naturally ("last time you mentioned…"); never recite this list to the student.`)
   }
 
   // Inquisitiveness directive

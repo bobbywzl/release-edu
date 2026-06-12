@@ -272,6 +272,18 @@ Return ONLY valid JSON, no markdown fences:
       learnerOrgLine,
     ].filter(Boolean).join(', ')
 
+    // Accumulated student memory: everything Bob has learned since onboarding.
+    // This is what makes a regenerated curriculum better than the first one —
+    // it reflects observed strengths/struggles, not just the intake interview.
+    let memoryBlock = ''
+    try {
+      const { getTopInsights } = await import('@/lib/insight-memory')
+      const memory = await getTopInsights(storeUserId, { limit: 15 })
+      if (memory.length > 0) {
+        memoryBlock = `\n**Accumulated observations from tutoring sessions (weigh these heavily — they're more current than the onboarding profile):**\n${memory.map(i => `- [${i.type}] ${i.content}`).join('\n')}\n`
+      }
+    } catch { /* non-critical — generate without memory */ }
+
     let prompt = `You are an educational curriculum designer. Create a personalized curriculum plan for a student with this profile:
 
 ${learnerProfileLine ? `**Learner Profile:** ${learnerProfileLine} — CRITICAL: calibrate ALL curriculum complexity, depth, vocabulary, pacing, and example choices to this profile. A 10-year-old needs simple, concrete, playful content. A 25-year-old working professional needs career-relevant, rigorous, efficient content. A graduate student needs research-grade depth.\n` : ''}**Interests:** ${profile.interests.join(', ')}
@@ -282,6 +294,7 @@ ${learnerProfileLine ? `**Learner Profile:** ${learnerProfileLine} — CRITICAL:
 **Aspirations:** ${profile.aspirations}
 ${profile.educationFrustrations?.length ? `**What they disliked about traditional education (AVOID these in curriculum design):** ${profile.educationFrustrations.join(', ')}` : ''}
 **Baseline Assessment:** Math: ${profile.baselineAssessment.math}/10, Writing: ${profile.baselineAssessment.writing}/10, Science: ${profile.baselineAssessment.science}/10, History: ${profile.baselineAssessment.history}/10, Critical Thinking: ${profile.baselineAssessment.criticalThinking}/10
+${memoryBlock}
 
 **Research on their top interest (${topInterest}):**
 ${researchContext.slice(0, 800)}
