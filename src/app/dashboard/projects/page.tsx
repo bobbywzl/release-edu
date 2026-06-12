@@ -25,6 +25,7 @@ type ProjectData = ReturnType<typeof useStudentData>['data']['projects'][number]
 // ── Active Project Card ──────────────────────────────────────────────────────
 
 function ActiveProjectCard({ project }: { project: ProjectData }) {
+  const { t } = useLanguage()
   const trackColor = project.trackColor || '#3B82F6'
 
   return (
@@ -65,7 +66,7 @@ function ActiveProjectCard({ project }: { project: ProjectData }) {
                   ) : (
                     <Rocket className="w-3 h-3" />
                   )}
-                  {project.status === 'completed' ? 'Completed' : 'Active'}
+                  {project.status === 'completed' ? t('projects.statusCompleted') : t('projects.statusActive')}
                 </div>
               </div>
 
@@ -78,7 +79,7 @@ function ActiveProjectCard({ project }: { project: ProjectData }) {
               {/* Progress bar */}
               <div className="mb-4">
                 <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
-                  <span>Progress</span>
+                  <span>{t('projects.progress')}</span>
                   <span>{project.progress}%</span>
                 </div>
                 <Progress
@@ -115,7 +116,7 @@ function ActiveProjectCard({ project }: { project: ProjectData }) {
                   className="flex items-center gap-1.5 text-xs text-primary hover:bg-primary/10 rounded-lg px-2.5 py-1.5 transition-colors"
                 >
                   <MessageCircle className="w-3 h-3" />
-                  Continue with Bob
+                  {t('projects.continueWithBob')}
                 </Link>
               </div>
             </CardContent>
@@ -136,6 +137,7 @@ interface ProjectDetails {
 }
 
 function InspirationCard({ project }: { project: ProjectData }) {
+  const { t } = useLanguage()
   const router = useRouter()
   const [locking, setLocking] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -185,7 +187,7 @@ function InspirationCard({ project }: { project: ProjectData }) {
         router.push(`/dashboard/projects/${project.id}`)
       } else {
         const data = await res.json().catch(() => ({}))
-        alert(data.message || 'Could not lock in project.')
+        alert(data.message || t('projects.lockInFailed'))
       }
     } catch {
       // ignore
@@ -214,7 +216,7 @@ function InspirationCard({ project }: { project: ProjectData }) {
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-medium text-muted-foreground/60 bg-muted/50 rounded-full px-2.5 py-0.5 flex items-center gap-1">
                   <Sparkles className="w-2.5 h-2.5" />
-                  Inspiration
+                  {t('projects.inspirationBadge')}
                 </span>
                 {expanded
                   ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
@@ -241,7 +243,7 @@ function InspirationCard({ project }: { project: ProjectData }) {
                 {loadingDetails && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Loader2 className="w-3 h-3 animate-spin" />
-                    Generating project details…
+                    {t('projects.generatingDetails')}
                   </div>
                 )}
                 {detailsError && !loadingDetails && (
@@ -249,19 +251,19 @@ function InspirationCard({ project }: { project: ProjectData }) {
                     onClick={(e) => { e.stopPropagation(); void loadDetails() }}
                     className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
                   >
-                    Couldn&apos;t generate details — tap to retry
+                    {t('projects.detailsRetry')}
                   </button>
                 )}
                 {details && (
                   <>
                     <div className="p-3 rounded-lg bg-background/60 border border-border/50 space-y-1">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">What you'll build</p>
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{t('projects.whatYoullBuild')}</p>
                       <p className="text-xs text-foreground/80 leading-relaxed">{details.overview}</p>
                     </div>
 
                     {details.skills?.length > 0 && (
                       <div>
-                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Skills developed</p>
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{t('projects.skillsDeveloped')}</p>
                         <div className="flex flex-wrap gap-1.5">
                           {details.skills.map((s, i) => (
                             <span key={i} className="text-[10px] px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20">{s}</span>
@@ -272,7 +274,7 @@ function InspirationCard({ project }: { project: ProjectData }) {
 
                     {details.firstSteps?.length > 0 && (
                       <div>
-                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">First steps</p>
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{t('projects.firstSteps')}</p>
                         <ol className="space-y-1">
                           {details.firstSteps.map((step, i) => (
                             <li key={i} className="flex items-start gap-2 text-xs text-foreground/70">
@@ -286,7 +288,7 @@ function InspirationCard({ project }: { project: ProjectData }) {
 
                     {details.deliverable && (
                       <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                        <p className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-1">Final deliverable</p>
+                        <p className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-1">{t('projects.finalDeliverable')}</p>
                         <p className="text-xs text-foreground/70">{details.deliverable}</p>
                       </div>
                     )}
@@ -302,14 +304,14 @@ function InspirationCard({ project }: { project: ProjectData }) {
                 className="flex items-center gap-1.5 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg px-3 py-2 transition-colors"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
-                Discuss with Bob
+                {t('projects.discussWithBob')}
               </Link>
               <button
                 onClick={handleLockIn}
                 disabled={locking}
                 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg px-3 py-2 transition-colors ml-auto disabled:opacity-50"
               >
-                {locking ? 'Locking…' : 'Lock In'}
+                {locking ? t('projects.locking') : t('projects.lockIn')}
                 <ArrowRight className="w-3 h-3" />
               </button>
             </div>
@@ -323,6 +325,7 @@ function InspirationCard({ project }: { project: ProjectData }) {
 // ── Generate Inspirations Card ───────────────────────────────────────────────
 
 function GenerateInspirationsCard() {
+  const { t } = useLanguage()
   // Generation runs in the module-scoped manager so it survives navigating
   // away from this page — data refreshes globally when it completes.
   const { inspirations, startInspirations } = useRegeneration()
@@ -366,7 +369,7 @@ function GenerateInspirationsCard() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <h3 className="font-semibold text-foreground text-sm">
-                {done ? `${count} new inspirations added!` : 'Generate Project Inspirations'}
+                {done ? `${count} ${t('projects.genDoneSuffix')}` : t('projects.genTitle')}
               </h3>
               {!loading && !done && (
                 <ArrowRight className="w-3.5 h-3.5 text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-200" />
@@ -374,10 +377,10 @@ function GenerateInspirationsCard() {
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
               {done
-                ? 'Scroll down to see your new project ideas'
+                ? t('projects.genScroll')
                 : loading
-                ? 'Generating ideas tailored to your curriculum and interests…'
-                : 'AI generates 4 fresh project ideas based on your curriculum, interests, and learning goals'}
+                ? t('projects.genLoading')
+                : t('projects.genBody')}
             </p>
             {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
           </div>
@@ -390,6 +393,7 @@ function GenerateInspirationsCard() {
 // ── Create Project Card ──────────────────────────────────────────────────────
 
 function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] }) {
+  const { t } = useLanguage()
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -416,7 +420,7 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
       setDescription('')
       router.push(`/dashboard/projects/${data.project.id}`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
+      setError(e instanceof Error ? e.message : t('projects.createError'))
     } finally {
       setSubmitting(false)
     }
@@ -434,11 +438,11 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-foreground text-sm">Create Your Own Project</h3>
+              <h3 className="font-semibold text-foreground text-sm">{t('projects.createTitle')}</h3>
               <ArrowRight className="w-3.5 h-3.5 text-primary opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1 group-hover:translate-x-0 duration-200" />
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Have your own idea? Define a custom project, link it to your curriculum, and discuss it with Bob
+              {t('projects.createBody')}
             </p>
           </div>
         </div>
@@ -462,7 +466,7 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-foreground">Create Project</h2>
+                <h2 className="text-lg font-bold text-foreground">{t('projects.createModalTitle')}</h2>
                 <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                   <X className="w-5 h-5" />
                 </button>
@@ -470,23 +474,23 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
 
               <div className="space-y-4">
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1.5">Project title *</label>
+                  <label className="text-xs text-muted-foreground block mb-1.5">{t('projects.fieldTitle')}</label>
                   <input
                     autoFocus
                     value={title}
                     onChange={e => setTitle(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                    placeholder="e.g. Build a Caesar Cipher Visualizer"
+                    placeholder={t('projects.fieldTitlePlaceholder')}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1.5">Description <span className="opacity-50">(optional)</span></label>
+                  <label className="text-xs text-muted-foreground block mb-1.5">{t('projects.fieldDesc')} <span className="opacity-50">{t('projects.fieldOptional')}</span></label>
                   <textarea
                     value={description}
                     onChange={e => setDescription(e.target.value)}
-                    placeholder="What do you want to build or explore?"
+                    placeholder={t('projects.fieldDescPlaceholder')}
                     rows={3}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all resize-none"
                   />
@@ -494,7 +498,7 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
 
                 {tracks.length > 1 && (
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1.5">Link to track</label>
+                    <label className="text-xs text-muted-foreground block mb-1.5">{t('projects.fieldTrack')}</label>
                     <select
                       value={trackId}
                       onChange={e => setTrackId(e.target.value)}
@@ -515,7 +519,7 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
                   onClick={() => setOpen(false)}
                   className="flex-1 px-4 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleCreate}
@@ -523,7 +527,7 @@ function CreateProjectCard({ tracks }: { tracks: { id: string; name: string }[] 
                   className="flex-1 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-all flex items-center justify-center gap-2"
                 >
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {submitting ? 'Creating…' : 'Create Project'}
+                  {submitting ? t('projects.creating') : t('projects.createConfirm')}
                 </button>
               </div>
             </motion.div>
@@ -578,7 +582,7 @@ export default function ProjectsPage() {
         <motion.div variants={fadeUp}>
           <div className="flex items-center gap-2 mb-4">
             <Rocket className="w-4 h-4 text-green-400" />
-            <h2 className="text-lg font-semibold text-foreground">Active Projects</h2>
+            <h2 className="text-lg font-semibold text-foreground">{tr('projects.activeProjects')}</h2>
             <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">
               {activeProjects.length + completedProjects.length}
             </span>
@@ -605,7 +609,7 @@ export default function ProjectsPage() {
         <motion.div variants={fadeUp}>
           <div className="flex items-center gap-2 mb-4">
             <Sparkles className="w-4 h-4 text-purple-400" />
-            <h2 className="text-lg font-semibold text-foreground">Project Inspirations</h2>
+            <h2 className="text-lg font-semibold text-foreground">{tr('projects.inspirations')}</h2>
             <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">
               {inspirationProjects.length}
             </span>
@@ -628,9 +632,9 @@ export default function ProjectsPage() {
       {projects.length === 0 && (
         <motion.div variants={fadeUp} className="text-center py-16">
           <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-          <p className="text-muted-foreground mb-2">No projects yet.</p>
+          <p className="text-muted-foreground mb-2">{tr('projects.empty')}</p>
           <p className="text-sm text-muted-foreground/70">
-            Projects will appear here as your curriculum generates them.
+            {tr('projects.emptyBody')}
           </p>
         </motion.div>
       )}

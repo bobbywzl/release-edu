@@ -1,3 +1,6 @@
+// Long-running AI generation — without an explicit maxDuration, Vercel
+// kills the function at the plan default before Claude finishes.
+export const maxDuration = 300
 import { NextRequest, NextResponse } from 'next/server'
 import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'

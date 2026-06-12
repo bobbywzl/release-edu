@@ -43,6 +43,14 @@ const state: Record<RegenKind, RegenState> = {
 const listeners = new Set<() => void>()
 function emit() { listeners.forEach(fn => fn()) }
 
+// This module is plain (no React context), so read the language preference
+// straight from the i18n provider's localStorage cache. Error strings here
+// are user-visible and must respect the student's chosen language.
+const isZh = () => {
+  try { return localStorage.getItem('language') === 'zh' } catch { return false }
+}
+const L = (en: string, zh: string) => (isZh() ? zh : en)
+
 const ssKey = (kind: RegenKind) => `regen-inflight-${kind}`
 
 async function refreshAllData() {
@@ -84,15 +92,28 @@ export function startCurriculumRegeneration(): void {
       clearTimeout(timeoutId)
       if (res.status === 429) {
         const body = await res.json().catch(() => ({} as { error?: string }))
-        finish('curriculum', { error: body.error || 'Regeneration limit reached. Use Start Over to reset.' })
+        finish('curriculum', { error: body.error || L('Regeneration limit reached. Use Start Over to reset.', '已达到重新生成上限。使用"重新开始"来重置。') })
         return
       }
       if (!res.ok) {
         const body = await res.text().catch(() => '')
-        finish('curriculum', { error: `Generation failed (HTTP ${res.status}): ${body.slice(0, 150)}` })
+        finish('curriculum', { error: `${L('Generation failed', '生成失败')} (HTTP ${res.status}): ${body.slice(0, 150)}` })
         return
       }
+      const body = await res.json().catch(() => null) as { aiGenerated?: boolean; aiError?: string | null } | null
       await refreshAllData()
+      // The route returns 200 even when Claude failed (it guarantees a plan
+      // exists), so check the aiGenerated flag: a failed run keeps the old
+      // plan, doesn't burn a regeneration, and must read as an error.
+      if (body && body.aiGenerated === false) {
+        finish('curriculum', {
+          error: L(
+            'AI generation failed — your current curriculum was kept and no regeneration was used. Try again in a minute.',
+            'AI 生成失败 —— 已保留当前课程，本次不计入重新生成次数。请稍后重试。',
+          ) + (body.aiError ? ` [${body.aiError}]` : ''),
+        })
+        return
+      }
       finish('curriculum', { successAt: Date.now() })
     } catch (err) {
       clearTimeout(timeoutId)
@@ -101,8 +122,8 @@ export function startCurriculumRegeneration(): void {
       await refreshAllData()
       finish('curriculum', {
         error: err instanceof Error && err.name === 'AbortError'
-          ? 'Generation timed out. The server may still finish — check back in a minute.'
-          : 'Network error during generation. Try again in a moment.',
+          ? L('Generation timed out. The server may still finish — check back in a minute.', '生成超时。服务器可能仍在继续 —— 请一分钟后回来查看。')
+          : L('Network error during generation. Try again in a moment.', '生成时网络出错。请稍后重试。'),
       })
     }
   })()
@@ -125,7 +146,7 @@ export function startInspirationsGeneration(): void {
       clearTimeout(timeoutId)
       const body = await res.json().catch(() => ({} as { count?: number; error?: string }))
       if (!res.ok) {
-        finish('inspirations', { error: body.error || `Generation failed (HTTP ${res.status})` })
+        finish('inspirations', { error: body.error || `${L('Generation failed', '生成失败')} (HTTP ${res.status})` })
         return
       }
       await refreshAllData()
@@ -135,8 +156,8 @@ export function startInspirationsGeneration(): void {
       await refreshAllData()
       finish('inspirations', {
         error: err instanceof Error && err.name === 'AbortError'
-          ? 'Generation timed out. The server may still finish — refresh in a minute.'
-          : 'Network error during generation. Try again in a moment.',
+          ? L('Generation timed out. The server may still finish — refresh in a minute.', '生成超时。服务器可能仍在继续 —— 请一分钟后刷新。')
+          : L('Network error during generation. Try again in a moment.', '生成时网络出错。请稍后重试。'),
       })
     }
   })()
@@ -161,17 +182,17 @@ async function pollPortfolioUntilDone(deadline: number): Promise<void> {
         return
       }
       if (json.status === 'error') {
-        finish('portfolio', { error: json.error || 'Generation failed' })
+        finish('portfolio', { error: json.error || L('Generation failed', '生成失败') })
         return
       }
       if (json.status === 'none') {
         // Nothing in flight server-side (e.g. job never started) — stop.
-        finish('portfolio', { error: 'Generation did not start. Try again.' })
+        finish('portfolio', { error: L('Generation did not start. Try again.', '生成未能启动。请重试。') })
         return
       }
     } catch { /* transient — keep polling */ }
   }
-  finish('portfolio', { error: 'Generation timed out. Try again in a minute.' })
+  finish('portfolio', { error: L('Generation timed out. Try again in a minute.', '生成超时。请一分钟后重试。') })
 }
 
 export function startPortfolioGeneration(): void {
@@ -185,12 +206,12 @@ export function startPortfolioGeneration(): void {
       const res = await fetch('/api/portfolio/generate', { method: 'POST' })
       const body = await res.json().catch(() => ({} as { error?: string }))
       if (!res.ok) {
-        finish('portfolio', { error: body.error || `Generation failed (HTTP ${res.status})` })
+        finish('portfolio', { error: body.error || `${L('Generation failed', '生成失败')} (HTTP ${res.status})` })
         return
       }
       await pollPortfolioUntilDone(Date.now() + TIMEOUTS_MS.portfolio)
     } catch {
-      finish('portfolio', { error: 'Network error during generation. Try again in a moment.' })
+      finish('portfolio', { error: L('Network error during generation. Try again in a moment.', '生成时网络出错。请稍后重试。') })
     }
   })()
 }
