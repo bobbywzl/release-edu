@@ -96,7 +96,10 @@ export default function LoginPage() {
               Learn <span className="text-muted-foreground">the world.</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-3 max-w-sm mx-auto">
-              AI-powered personalized education. Your curriculum, your pace, your path.
+              AI-powered personalized learning. Your curriculum, your pace, your path.
+            </p>
+            <p className="text-xs text-muted-foreground/90 leading-relaxed mt-4 max-w-sm mx-auto">
+              Turn <span className="text-foreground font-medium">any topic</span> into a full curriculum — taught by an <span className="text-foreground font-medium">AI chat mentor</span>, practiced through <span className="text-foreground font-medium">projects &amp; assignments</span>, and distilled into an <span className="text-foreground font-medium">insights-based résumé</span> for universities &amp; employers.
             </p>
           </motion.div>
 
@@ -112,10 +115,6 @@ export default function LoginPage() {
                 <Sparkles className="w-4 h-4 text-foreground" />
                 <span className="text-sm font-semibold text-foreground">New here? Start your journey</span>
               </div>
-
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Turn <span className="text-foreground font-medium">any topic</span> into a full curriculum — taught by an <span className="text-foreground font-medium">AI chat mentor</span>, practiced through <span className="text-foreground font-medium">projects &amp; assignments</span>, and distilled into an <span className="text-foreground font-medium">insights-based résumé</span> for universities &amp; employers.
-              </p>
 
               <Button
                 onClick={handleSignUp}
