@@ -1,7 +1,7 @@
 'use client'
 import { signIn } from 'next-auth/react'
 import { motion } from 'framer-motion'
-import { Zap, ArrowRight, Sparkles, MessageSquare, Hammer, Brain, Target } from 'lucide-react'
+import { Zap, ArrowRight, Sparkles, MessageSquare, Hammer, Brain, Target, BookOpen, Award } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -95,9 +95,35 @@ export default function LoginPage() {
             <h1 className="text-3xl font-bold text-foreground leading-tight">
               Learn <span className="text-muted-foreground">the world.</span>
             </h1>
-            <p className="text-sm text-muted-foreground leading-relaxed mt-3 max-w-sm mx-auto">
-              <span className="text-foreground font-semibold">AI-powered personalized learning</span> that turns <span className="text-foreground font-semibold">any topic</span> into a full curriculum at <span className="text-foreground font-semibold">your own pace</span> — taught by an <span className="text-foreground font-semibold">AI chat mentor</span>, practiced through <span className="text-foreground font-semibold">projects &amp; assignments</span>, and distilled into an <span className="text-foreground font-semibold">insights-based résumé</span> for universities &amp; employers.
+            <p className="text-sm text-muted-foreground mt-3">
+              <span className="text-foreground font-semibold">AI-powered personalized learning</span> — at your own pace.
             </p>
+            <div className="mt-5 space-y-2.5 text-left max-w-xs mx-auto">
+              <div className="flex items-start gap-2.5">
+                <BookOpen className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-muted-foreground leading-snug">
+                  <span className="text-foreground font-semibold">Any topic → a full curriculum</span>, built for your level
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <MessageSquare className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-muted-foreground leading-snug">
+                  <span className="text-foreground font-semibold">An AI chat mentor</span> that teaches you one-on-one
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <Hammer className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-muted-foreground leading-snug">
+                  <span className="text-foreground font-semibold">Projects &amp; assignments</span> to learn by building
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <Award className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-muted-foreground leading-snug">
+                  <span className="text-foreground font-semibold">An insights-based résumé</span> for universities &amp; employers
+                </p>
+              </div>
+            </div>
           </motion.div>
 
           {/* Sign Up — Primary CTA */}
