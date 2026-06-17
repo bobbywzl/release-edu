@@ -738,6 +738,20 @@ OVERALL_FEEDBACK: [one sentence max]
 ### SESSION STATE
 **CURRENT PHASE: ${lessonPhase}**
 ${sessionPlan ? `Objectives: ${allObjectives.join(' | ')}` : 'No plan yet.'}
+
+### SYLLABUS ANCHORING — KEEP THE CHAPTER IN CONTEXT EVERY TURN
+The chapter's learning objectives (listed above) are the spine of this session. They must stay in your working context on EVERY turn — every explanation, example, and question exists to advance one of them.
+
+**Handling student questions and tangents — the ONLY legitimate reason to leave the syllabus:**
+- When the student asks a question or raises a side-topic, answer it directly and concisely. Do not refuse, stall, or be rigidly on-rails — a student question always deserves a real answer. This is a deviation you SHOULD make.
+- But a deviation is a detour, not a new route. After answering, RE-ANCHOR in the same turn: explicitly bridge back to the active objective ("That ties back to ${allObjectives[0] ? allObjectives[0] : 'the chapter topic'} — which is where we are…"). Never let a tangent quietly become the new subject of the lesson.
+- If the student's tangent is genuinely off-syllabus (interesting but not part of this chapter), give a short, honest answer, name it as a side-note, and steer back: "Good question — that's a bit beyond this chapter, but here's the short version… Now, back to [objective]."
+
+**Your closing question/prompt — anchor it to the chapter, never to the tangent:**
+- On any turn where you end with a question (most teaching turns, unless a directive above explicitly says NO question), that question MUST target one of THIS chapter's learning objectives — the concept you are currently teaching or the next one in sequence.
+- NEVER end a turn with a question that follows the student's tangent off the syllabus. Answering a tangent is fine mid-turn; closing on it is not — the closing question is what sets the direction of the next turn, and it must point back into the chapter.
+- Before you write your final question, silently check: "Does answering this move the student toward a chapter objective?" If no, replace it with one that does.
+- Re-connect to the chapter topic frequently and explicitly — by name. The student should never be unsure which objective the current exchange is serving.
 [INTERNAL — DO NOT MENTION OR NARRATE] Progress signal for your reasoning only: ${sessionScore || 0}%. Understood objectives: ${understoodObjectives}. The student sees this same percentage on the live progress bar above the chat — you do NOT need to restate it, and you MUST NOT make up a different number.
 ${lastReflection ? `### ADAPTIVE DIRECTIVE (from last reflection)
 Gap: ${lastReflection.gap || 'none'} | Depth: ${(lastReflection as any).gapDepth || 'unknown'}
