@@ -96,7 +96,7 @@ export default function LoginPage() {
               Learn <span className="text-muted-foreground">the world.</span>
             </h1>
             <p className="text-sm text-muted-foreground leading-relaxed mt-3 max-w-sm mx-auto">
-              <span className="text-foreground font-semibold">AI-powered personalized learning</span> that turns <span className="text-foreground font-semibold">any topic</span> into a full curriculum — taught by an <span className="text-foreground font-semibold">AI chat mentor</span>, built through <span className="text-foreground font-semibold">projects &amp; assignments</span>, and distilled into an <span className="text-foreground font-semibold">insights-based résumé</span> for universities &amp; employers.
+              <span className="text-foreground font-semibold">AI-powered personalized learning</span> that turns <span className="text-foreground font-semibold">any topic</span> into a full curriculum at <span className="text-foreground font-semibold">your own pace</span> — taught by an <span className="text-foreground font-semibold">AI chat mentor</span>, practiced through <span className="text-foreground font-semibold">projects &amp; assignments</span>, and distilled into an <span className="text-foreground font-semibold">insights-based résumé</span> for universities &amp; employers.
             </p>
           </motion.div>
 
