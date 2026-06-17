@@ -93,8 +93,7 @@ export default function LoginPage() {
               <span className="text-2xl font-bold text-foreground">Release EDU</span>
             </div>
             <h1 className="text-3xl font-bold text-foreground leading-tight">
-              Become who you are<br />
-              <span className="text-muted-foreground">meant to be.</span>
+              Learn <span className="text-muted-foreground">the world.</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-3 max-w-sm mx-auto">
               AI-powered personalized education. Your curriculum, your pace, your path.
@@ -114,20 +113,9 @@ export default function LoginPage() {
                 <span className="text-sm font-semibold text-foreground">New here? Start your journey</span>
               </div>
 
-              <div className="space-y-2 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-foreground/10 flex items-center justify-center text-[10px] font-bold text-foreground">1</div>
-                  <span>Sign up with your Google account</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-foreground/10 flex items-center justify-center text-[10px] font-bold text-foreground">2</div>
-                  <span>Start with core subjects — English, Math, CS, Sciences & more</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-foreground/10 flex items-center justify-center text-[10px] font-bold text-foreground">3</div>
-                  <span>Chat with Architect Bob to build your personalized curriculum</span>
-                </div>
-              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Turn <span className="text-foreground font-medium">any topic</span> into a full curriculum — taught by an <span className="text-foreground font-medium">AI chat mentor</span>, practiced through <span className="text-foreground font-medium">projects &amp; assignments</span>, and distilled into an <span className="text-foreground font-medium">insights-based résumé</span> for universities &amp; employers.
+              </p>
 
               <Button
                 onClick={handleSignUp}
