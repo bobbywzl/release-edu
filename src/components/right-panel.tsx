@@ -10,6 +10,8 @@ type Tab = 'annotations' | 'notes' | 'review'
 interface Props {
   tab: Tab
   open: boolean
+  /** Mobile: render as a fixed slide-in overlay instead of an inline column. */
+  isMobile?: boolean
   onTabChange: (t: Tab) => void
   onToggle: () => void
   chapter?: { id: string; title: string; trackId: string; trackName: string; description?: string; keyTopics?: string[] } | null
@@ -157,7 +159,7 @@ function AnnotationCard({
 }
 
 export function RightPanel({
-  tab, open, onTabChange, onToggle, chapter, conversationId, trackId,
+  tab, open, isMobile = false, onTabChange, onToggle, chapter, conversationId, trackId,
   highlights, focusedHighlightId, onDeleteHighlight, onUpdateHighlight, onHighlightCardClick,
 }: Props) {
   const [reviewContent, setReviewContent] = useState<{ content: string; keyTopics: string[]; description: string } | null>(null)
@@ -191,6 +193,8 @@ export function RightPanel({
   ]
 
   if (!open) {
+    // On mobile the panel is an overlay opened from the header — no inline rail.
+    if (isMobile) return null
     return (
       <div className="w-8 flex-shrink-0 border-l border-border bg-card/50 flex flex-col items-center pt-4 gap-3">
         <button onClick={onToggle} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -211,7 +215,12 @@ export function RightPanel({
   }
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+    <div className={cn(
+      'border-l border-border bg-card flex flex-col overflow-hidden',
+      isMobile
+        ? 'fixed inset-y-0 right-0 z-50 w-[85vw] max-w-[360px] shadow-2xl'
+        : 'w-80 flex-shrink-0'
+    )}>
       {/* Tab bar */}
       <div className="flex items-center border-b border-border flex-shrink-0">
         {TABS.map(t => {
