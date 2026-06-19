@@ -214,7 +214,7 @@ function ChatMarkdown({ content: rawContent }: { content: string }) {
             return <em className="italic text-foreground/80">{children}</em>
           },
           p({ children }) {
-            return <p className="mb-3.5 last:mb-0 leading-[1.8] text-[16px] text-foreground/90">{children}</p>
+            return <p className="mb-3.5 last:mb-0 leading-[1.7] text-[17px] lg:text-[16px] text-foreground/90">{children}</p>
           },
           h1({ children }) {
             return <h1 className="text-2xl font-bold text-foreground mt-7 mb-3 pb-2 border-b border-border/40">{children}</h1>
@@ -235,7 +235,7 @@ function ChatMarkdown({ content: rawContent }: { content: string }) {
             return <ol className="my-3.5 space-y-2.5 pl-5 list-decimal marker:text-muted-foreground/60">{children}</ol>
           },
           li({ children }) {
-            return <li className="text-[16px] text-foreground/90 leading-[1.75] pl-1">{children}</li>
+            return <li className="text-[17px] lg:text-[16px] text-foreground/90 leading-[1.7] pl-1">{children}</li>
           },
           blockquote({ children }) {
             return (
@@ -3085,12 +3085,14 @@ function ChatPageInner() {
     }
   }
 
-  // Auto-resize textarea
+  // Auto-resize textarea. Force a single-line height when empty (some mobile
+  // browsers report an inflated scrollHeight for an empty textarea, which made
+  // the box render very tall); grow with content up to a sane cap.
   useEffect(() => {
     const ta = textareaRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`
+    ta.style.height = input.trim() ? `${Math.min(ta.scrollHeight, 140)}px` : '48px'
   }, [input])
 
   const activeConv = conversations.find(c => c.id === activeId)
@@ -3746,7 +3748,7 @@ function ChatPageInner() {
               placeholder={pendingImage ? tr('chat.imagePlaceholder') : (isMobile ? tr('chat.placeholderShort', 'Ask Bob anything…') : tr('chat.placeholder'))}
               disabled={isStreaming}
               rows={1}
-              className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all disabled:opacity-50 min-h-[48px] max-h-40"
+              className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] lg:text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all disabled:opacity-50 h-12 min-h-[48px] max-h-[140px]"
             />
             {ttsSupported && !isMobile && (
               <button
