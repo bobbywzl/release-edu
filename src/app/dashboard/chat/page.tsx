@@ -3281,8 +3281,8 @@ function ChatPageInner() {
             )}
           </div>
 
-          {/* Mode selector */}
-          <div className="px-4 pb-3 flex items-center gap-1.5">
+          {/* Mode selector — hidden on mobile to keep the chat minimal */}
+          <div className="px-4 pb-3 hidden lg:flex items-center gap-1.5">
             {MODES.map(m => {
               const Icon = m.icon
               const active = chatMode === m.id
@@ -3316,7 +3316,8 @@ function ChatPageInner() {
                 <BookOpen className="w-3 h-3 text-primary" />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Label line — hidden on mobile to keep the top bar to title + progress only */}
+                <div className="hidden lg:flex items-center gap-1.5 flex-wrap">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/60">
                     {activeChapterForConv.status === 'in-progress' ? tr('chat.continuingLesson') : tr('chat.lessonSession')}
                   </span>
@@ -3328,7 +3329,7 @@ function ChatPageInner() {
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               {sessionScore > 0 && (
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                <div className="hidden lg:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   <span className="text-[10px] font-medium text-emerald-400">{sessionScore}% {tr("chat.understood")}</span>
                 </div>
@@ -3400,7 +3401,7 @@ function ChatPageInner() {
               {activeChapterForConv.trackId && (
                 <a
                   href={`/dashboard/curriculum/${activeChapterForConv.trackId}/content/${activeChapterForConv.id}`}
-                  className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-1"
+                  className="hidden lg:flex text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors items-center gap-1"
                   target="_blank"
                   rel="noopener"
                 >
@@ -3421,8 +3422,8 @@ function ChatPageInner() {
           />
         )}
 
-        {/* Active project context banner — only for the specific project conv */}
-        {activeProjectForConv && activeId && (
+        {/* Active project context banner — only for the specific project conv (desktop only) */}
+        {activeProjectForConv && activeId && !isMobile && (
           <div className="px-4 py-2 bg-purple-500/5 border-b border-border text-xs text-muted-foreground flex items-center gap-2">
             <Sparkles className="w-3 h-3 text-purple-400" />
             <span>
@@ -3434,11 +3435,11 @@ function ChatPageInner() {
           </div>
         )}
 
-        {/* Context panel */}
-        <ContextPanel summary={contextSummary} />
+        {/* Context panel ("Bob knows about you") — desktop only; hidden on mobile to keep the chat minimal */}
+        {!isMobile && <ContextPanel summary={contextSummary} />}
 
         {/* Messages */}
-        <div className={cn('flex-1 overflow-y-auto p-6 space-y-4', isLessonMode && 'flex flex-col items-center')}>
+        <div className={cn('flex-1 overflow-y-auto p-4 lg:p-6 space-y-4', isLessonMode && 'flex flex-col items-center')}>
           {messages.length === 0 && !isStreaming ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-8">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
@@ -3657,7 +3658,7 @@ function ChatPageInner() {
         </div>
 
         {/* Input */}
-        <div className={cn('p-4 border-t border-border bg-card/50 backdrop-blur-sm', isLessonMode && 'flex flex-col items-center')}>
+        <div className={cn('p-3 lg:p-4 border-t border-border bg-card/50 backdrop-blur-sm', isLessonMode && 'flex flex-col items-center')}>
           {/* Pending image preview */}
           {pendingImage && (
             <div className="flex items-center gap-2 mb-3 max-w-4xl mx-auto">
@@ -3696,7 +3697,7 @@ function ChatPageInner() {
             </div>
           )}
 
-          <div className={cn('flex items-end gap-3 mx-auto w-full', isLessonMode ? 'max-w-3xl' : 'max-w-4xl')}>
+          <div className={cn('flex items-end gap-2 lg:gap-3 mx-auto w-full', isLessonMode ? 'max-w-3xl' : 'max-w-4xl')}>
             {/* Image upload button */}
             <input
               ref={fileInputRef}
@@ -3742,12 +3743,12 @@ function ChatPageInner() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={pendingImage ? tr('chat.imagePlaceholder') : tr('chat.placeholder')}
+              placeholder={pendingImage ? tr('chat.imagePlaceholder') : (isMobile ? tr('chat.placeholderShort', 'Ask Bob anything…') : tr('chat.placeholder'))}
               disabled={isStreaming}
               rows={1}
-              className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all disabled:opacity-50 min-h-[48px] max-h-40"
+              className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all disabled:opacity-50 min-h-[48px] max-h-40"
             />
-            {ttsSupported && (
+            {ttsSupported && !isMobile && (
               <button
                 type="button"
                 onClick={toggleReadAloud}
@@ -3786,7 +3787,7 @@ function ChatPageInner() {
               <Send className="w-4 h-4" />
             </button>
           </div>
-          <p className="text-center text-[10px] text-muted-foreground mt-2">
+          <p className="hidden lg:block text-center text-[10px] text-muted-foreground mt-2">
             {chatMode === 'tutoring' && tr('chat.footer.tutoring')}
             {chatMode === 'logistics' && tr('chat.footer.logistics')}
             {chatMode === 'research' && tr('chat.footer.research')}

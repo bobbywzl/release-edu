@@ -27,6 +27,10 @@ const PINNED_KEY = 'sidebar_pinned'
 export function Sidebar() {
   const pathname = usePathname()
   const t = useT()
+  // The chat is immersive on mobile (no bottom nav), so the hamburger is its
+  // only nav affordance there. Everywhere else the bottom nav handles it, so
+  // the hamburger is hidden to reduce clutter.
+  const isChat = pathname === '/dashboard/chat'
   const [pinned, setPinned] = useState(false) // permanently expanded
   const [hovered, setHovered] = useState(false) // expanded on hover
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -78,14 +82,17 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Mobile hamburger */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        className="lg:hidden fixed top-4 left-4 z-50 w-9 h-9 bg-card border border-border rounded-lg flex items-center justify-center shadow-md"
-        aria-label="Open menu"
-      >
-        <Menu className="w-4 h-4 text-foreground" />
-      </button>
+      {/* Mobile hamburger — only on the chat route (its sole nav affordance);
+          other pages use the bottom nav, so it's hidden there. */}
+      {isChat && (
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="lg:hidden fixed top-3 left-3 z-50 w-10 h-10 bg-card border border-border rounded-lg flex items-center justify-center shadow-md touch-manipulation active:scale-95 active:bg-accent transition-transform"
+          aria-label="Open menu"
+        >
+          <Menu className="w-5 h-5 text-foreground" />
+        </button>
+      )}
 
       {/* Mobile overlay */}
       <AnimatePresence>
@@ -290,18 +297,27 @@ export function BottomNav() {
   const pathname = usePathname()
   const t = useT()
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-40 flex">
+    <nav
+      className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-40 flex select-none touch-manipulation"
+      // Lift above the iOS home indicator / Safari toolbar so the buttons
+      // aren't partially covered (which made them feel unresponsive).
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
       {navItems.slice(0, 5).map(item => {
         const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
         return (
-          <Link key={item.href} href={item.href} className="flex-1">
-            <div className={cn(
-              'flex flex-col items-center gap-1 py-2 text-[10px] font-medium transition-colors',
-              isActive ? 'text-primary' : 'text-muted-foreground'
-            )}>
-              <item.icon className="w-5 h-5" />
-              {t(item.key).split(' ')[0]}
-            </div>
+          <Link
+            key={item.href}
+            href={item.href}
+            className={cn(
+              // Full-cell tap target (≥56px tall), with an explicit active state
+              // so taps register visually on touch.
+              'flex-1 flex flex-col items-center justify-center gap-1 min-h-[3.5rem] py-2 text-[10px] font-medium touch-manipulation transition-colors active:bg-accent',
+              isActive ? 'text-primary' : 'text-muted-foreground active:text-foreground'
+            )}
+          >
+            <item.icon className="w-5 h-5" />
+            {t(item.key).split(' ')[0]}
           </Link>
         )
       })}

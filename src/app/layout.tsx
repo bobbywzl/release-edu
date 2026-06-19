@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "@/components/providers";
@@ -17,6 +17,14 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "Release EDU — Student Dashboard",
   description: "Personalized career-oriented learning powered by AI and Mentors",
+};
+
+// viewport-fit=cover enables env(safe-area-inset-*) so the mobile bottom nav
+// clears the iOS home indicator and the immersive chat can extend edge-to-edge.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

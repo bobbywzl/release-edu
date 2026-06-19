@@ -26,7 +26,7 @@ export function SessionProgressBar({ objectives, currentScore, objectiveStatuses
     <motion.div
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="px-4 py-3 bg-card/50 border-b border-border space-y-2"
+      className="px-4 py-2 lg:py-3 bg-card/50 border-b border-border space-y-2"
     >
       {/* Score bar */}
       <div className="flex items-center gap-3">
@@ -39,9 +39,9 @@ export function SessionProgressBar({ objectives, currentScore, objectiveStatuses
         </span>
       </div>
 
-      {/* Objective chips */}
+      {/* Objective chips — hidden on mobile to keep the top bar to a thin progress bar */}
       {objectives.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pl-6">
+        <div className="hidden lg:flex flex-wrap gap-1.5 pl-6">
           {objectives.map((obj, i) => {
             const key = `OBJECTIVE_${i + 1}`
             const status = objectiveStatuses[key] || 'not-understood'
