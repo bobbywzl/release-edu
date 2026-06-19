@@ -555,7 +555,7 @@ export default function ProjectsPage() {
 
   return (
     <motion.div
-      className="p-8 space-y-8 max-w-7xl"
+      className="p-4 lg:p-8 space-y-6 lg:space-y-8 max-w-7xl"
       initial="hidden"
       animate="visible"
       variants={stagger}

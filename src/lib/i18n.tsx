@@ -184,6 +184,7 @@ const EN: Dict = {
 
   // ── Chat ──
   'chat.placeholder': 'Ask Bob anything… (Shift+Enter for new line)',
+  'chat.placeholderShort': 'Ask Bob anything…',
   'chat.voice.start': 'Speak your message',
   'chat.voice.stop': 'Stop voice input',
   'chat.voice.readAloudOn': 'Reading Bob’s replies aloud — click to mute',
@@ -614,6 +615,7 @@ const ZH: Dict = {
 
   // ── Chat ──
   'chat.placeholder': '问 Bob 任何问题…（Shift+Enter 换行）',
+  'chat.placeholderShort': '问 Bob 任何问题…',
   'chat.voice.start': '语音输入',
   'chat.voice.stop': '停止语音输入',
   'chat.voice.readAloudOn': '正在朗读 Bob 的回复 —— 点击关闭',
