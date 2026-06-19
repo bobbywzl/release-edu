@@ -42,6 +42,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isSetupPath = pathname === '/dashboard/setup'
   const isOnboardingFlow = isOnboardingPath || isSetupPath
   const isChrome = pathname === '/dashboard/portfolio/print'
+  // The Bob chat is an immersive, full-screen experience on mobile: it manages
+  // its own panels (conversations + right panel as drawers) and its own height,
+  // so we drop the shared mobile chrome (top spacer, bottom nav, bottom padding)
+  // for that route only. Desktop is unaffected.
+  const isChat = pathname === '/dashboard/chat'
 
   useEffect(() => {
     const sync = () => {
@@ -188,11 +193,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto pb-16 lg:pb-0 pl-0 lg:pl-0">
-        <div className="lg:hidden h-14" />
+      <main className={`flex-1 overflow-y-auto ${isChat ? '' : 'pb-16 lg:pb-0'}`}>
+        {/* Spacer clears the fixed mobile hamburger on normal pages. The chat
+            handles that clearance itself (header padding), so skip it there. */}
+        {!isChat && <div className="lg:hidden h-14" />}
         {children}
       </main>
-      <BottomNav />
+      {!isChat && <BottomNav />}
       <XpToastProvider />
     </div>
   )

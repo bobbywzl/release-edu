@@ -13,7 +13,7 @@ import {
   Bot, Send, Plus, MessageSquare, Trash2, ChevronRight, ChevronLeft,
   ChevronDown, ChevronUp, Lightbulb, Target, Zap, BookOpen,
   Camera, X, Sparkles, Search, GraduationCap, SearchIcon, ClipboardList, FolderOpen,
-  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, Mic, Volume2, VolumeX,
+  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSpeechRecognition, speak, stopSpeaking, speechSynthesisSupported, voiceLangTag } from '@/lib/use-voice'
@@ -27,6 +27,7 @@ import { useStudentData } from '@/lib/student-data'
 import { useLanguage } from '@/lib/i18n'
 import { HighlightableText } from '@/components/highlightable-text'
 import { RightPanel } from '@/components/right-panel'
+import { useIsMobile } from '@/lib/use-is-mobile'
 import { MermaidDiagram } from '@/components/mermaid-diagram'
 import { DataChart } from '@/components/data-chart'
 import { FuncPlot } from '@/components/func-plot'
@@ -1470,6 +1471,19 @@ function ChatPageInner() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const lessonAutoCollapsedFor = useRef<string | null>(null)
+  const isMobile = useIsMobile()
+
+  // On mobile the side panels are slide-in overlays, not columns — start with
+  // both closed so the chat opens clean and full-width. Runs once when the
+  // viewport is first known to be mobile.
+  const mobileDefaultsApplied = useRef(false)
+  useEffect(() => {
+    if (isMobile && !mobileDefaultsApplied.current) {
+      mobileDefaultsApplied.current = true
+      setLeftSidebarCollapsed(true)
+      setRightPanelOpen(false)
+    }
+  }, [isMobile])
   const [focusedHighlightId, setFocusedHighlightId] = useState<string | null>(null)
   const [showReviewMenu, setShowReviewMenu] = useState<string | null>(null)
 
@@ -3089,15 +3103,30 @@ function ChatPageInner() {
   ]
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Conversation sidebar — collapsible */}
+    <div className="flex h-[100dvh] overflow-hidden">
+      {/* Mobile backdrop — tap to close the conversations drawer */}
+      {isMobile && !leftSidebarCollapsed && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+          onClick={() => setLeftSidebarCollapsed(true)}
+        />
+      )}
+      {/* Conversation sidebar — collapsible column on desktop, slide-in drawer on mobile */}
       <aside className={cn(
-        'flex-shrink-0 border-r border-border bg-card flex flex-col transition-all duration-300 ease-in-out overflow-hidden',
-        leftSidebarCollapsed ? 'w-0 border-r-0' : 'w-64'
+        'border-border bg-card flex flex-col overflow-hidden',
+        isMobile
+          ? cn(
+              'fixed inset-y-0 left-0 z-50 w-[82vw] max-w-[300px] border-r shadow-2xl transition-transform duration-300 ease-in-out',
+              leftSidebarCollapsed ? '-translate-x-full' : 'translate-x-0'
+            )
+          : cn(
+              'flex-shrink-0 border-r transition-all duration-300 ease-in-out',
+              leftSidebarCollapsed ? 'w-0 border-r-0' : 'w-64'
+            )
       )}>
         <div className={cn('p-4 border-b border-border flex items-center gap-2', leftSidebarCollapsed && 'hidden')}>
           <button
-            onClick={newConversation}
+            onClick={() => { newConversation(); if (isMobile) setLeftSidebarCollapsed(true) }}
             className="flex-1 flex items-center justify-center gap-2 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg py-2.5 px-4 text-sm font-medium text-primary transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -3123,7 +3152,7 @@ function ChatPageInner() {
             conversations.map(conv => (
               <div key={conv.id} className="group relative">
                 <button
-                  onClick={() => switchConversation(conv.id)}
+                  onClick={() => { switchConversation(conv.id); if (isMobile) setLeftSidebarCollapsed(true) }}
                   className={cn(
                     'w-full text-left rounded-lg p-3 transition-colors pr-8',
                     conv.id === activeId
@@ -3209,7 +3238,7 @@ function ChatPageInner() {
         )}
         {/* Header */}
         <div className="border-b border-border bg-card/50 backdrop-blur-sm">
-          <div className="p-4 flex items-center gap-3">
+          <div className="p-4 pl-14 lg:pl-4 flex items-center gap-3">
             {leftSidebarCollapsed && (
               <button
                 onClick={() => setLeftSidebarCollapsed(false)}
@@ -3239,6 +3268,16 @@ function ChatPageInner() {
                 <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                 Thinking…
               </div>
+            )}
+            {/* Mobile-only: open the right panel (annotations / notes / review) */}
+            {isMobile && activeId && !rightPanelOpen && (
+              <button
+                onClick={() => setRightPanelOpen(true)}
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                title={tr('chat.showPanel', 'Notes & annotations')}
+              >
+                <PanelRightOpen className="w-4 h-4" />
+              </button>
             )}
           </div>
 
@@ -3759,11 +3798,19 @@ function ChatPageInner() {
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </div>
 
-      {/* Right panel — only during chapter sessions */}
+      {/* Mobile backdrop — tap to close the right panel drawer */}
+      {isMobile && activeId && rightPanelOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+          onClick={() => setRightPanelOpen(false)}
+        />
+      )}
+      {/* Right panel — inline column on desktop, slide-in drawer on mobile */}
       {activeId && (
         <RightPanel
           tab={rightPanelTab}
           open={rightPanelOpen}
+          isMobile={isMobile}
           onTabChange={setRightPanelTab}
           onToggle={() => setRightPanelOpen(p => !p)}
           chapter={activeChapterContext ?? null}

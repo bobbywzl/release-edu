@@ -253,6 +253,7 @@ const EN: Dict = {
   'chat.rightWorkingOn': 'Working on:',
   'chat.collapseSidebar': 'Collapse sidebar',
   'chat.showConversations': 'Show conversations',
+  'chat.showPanel': 'Notes & annotations',
   // Lesson header
   'chat.continuingLesson': 'Continuing Lesson',
   'chat.lessonSession': 'Lesson Session',
@@ -682,6 +683,7 @@ const ZH: Dict = {
   'chat.rightWorkingOn': '正在攻克：',
   'chat.collapseSidebar': '收起侧栏',
   'chat.showConversations': '显示对话列表',
+  'chat.showPanel': '笔记与标注',
   // Lesson header
   'chat.continuingLesson': '继续课程',
   'chat.lessonSession': '课程会话',
