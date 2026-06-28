@@ -255,6 +255,8 @@ const EN: Dict = {
   'chat.collapseSidebar': 'Collapse sidebar',
   'chat.showConversations': 'Show conversations',
   'chat.showPanel': 'Notes & annotations',
+  'chat.textSmaller': 'Smaller text',
+  'chat.textLarger': 'Larger text',
   // Lesson header
   'chat.continuingLesson': 'Continuing Lesson',
   'chat.lessonSession': 'Lesson Session',
@@ -686,6 +688,8 @@ const ZH: Dict = {
   'chat.collapseSidebar': '收起侧栏',
   'chat.showConversations': '显示对话列表',
   'chat.showPanel': '笔记与标注',
+  'chat.textSmaller': '缩小字号',
+  'chat.textLarger': '放大字号',
   // Lesson header
   'chat.continuingLesson': '继续课程',
   'chat.lessonSession': '课程会话',

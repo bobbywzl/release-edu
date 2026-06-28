@@ -82,6 +82,64 @@ export function cleanForSpeech(text: string): string {
     .trim()
 }
 
+// ── Voice selection ──────────────────────────────────────────────────────────
+// The browser default voice is frequently a low-quality, strained ("robotic /
+// suffocating") compact voice. We instead pick the most natural-sounding voice
+// available on the device, preferring known high-quality named voices.
+
+let cachedVoices: SpeechSynthesisVoice[] = []
+function loadVoices(): SpeechSynthesisVoice[] {
+  if (!speechSynthesisSupported()) return []
+  try { cachedVoices = window.speechSynthesis.getVoices() || [] } catch { cachedVoices = [] }
+  return cachedVoices
+}
+if (speechSynthesisSupported()) {
+  loadVoices()
+  // Voices load asynchronously on Chrome/Edge — refresh when they arrive.
+  try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices) } catch { /* noop */ }
+}
+
+// Curated, in order of preference. These are warm, natural, "teacher-like"
+// system voices across macOS / iOS / Windows / Chrome.
+const PREFERRED_VOICES: Record<'en' | 'zh', string[]> = {
+  en: [
+    'Google US English', 'Samantha', 'Ava (Enhanced)', 'Ava', 'Allison', 'Joelle',
+    'Microsoft Aria Online (Natural)', 'Microsoft Jenny', 'Microsoft Guy',
+    'Microsoft Aria', 'Daniel', 'Karen', 'Serena', 'Moira',
+  ],
+  zh: [
+    'Google 普通话（中国大陆）', 'Tingting', '婷婷', 'Meijia',
+    'Microsoft Xiaoxiao Online (Natural)', 'Microsoft Yunxi', 'Microsoft Xiaoyi', 'Sinji',
+  ],
+}
+
+function pickVoice(lang: string): SpeechSynthesisVoice | null {
+  const voices = cachedVoices.length ? cachedVoices : loadVoices()
+  if (!voices.length) return null
+  const isZh = lang.toLowerCase().startsWith('zh')
+  const prefs = isZh ? PREFERRED_VOICES.zh : PREFERRED_VOICES.en
+  const langPrefix = isZh ? 'zh' : 'en'
+
+  // 1. Exact preferred name.
+  for (const name of prefs) {
+    const v = voices.find(x => x.name === name)
+    if (v) return v
+  }
+  // 2. Preferred name as a substring (handles "(United States)" suffixes etc.).
+  for (const name of prefs) {
+    const v = voices.find(x => x.name.toLowerCase().includes(name.toLowerCase()))
+    if (v) return v
+  }
+  // 3. Best remaining voice for the language: prefer natural/enhanced/premium/
+  //    neural/google voices, then anything that isn't a known low-quality engine.
+  const langMatches = voices.filter(v => v.lang.toLowerCase().startsWith(langPrefix))
+  const natural = langMatches.find(v => /natural|enhanced|premium|neural|google/i.test(v.name))
+  if (natural) return natural
+  const notCompact = langMatches.find(v => !/compact|espeak|eloquence|pico/i.test(v.name))
+  if (notCompact) return notCompact
+  return langMatches[0] ?? null
+}
+
 export function speak(text: string, lang = 'en-US') {
   if (!speechSynthesisSupported()) return
   try {
@@ -90,7 +148,12 @@ export function speak(text: string, lang = 'en-US') {
     if (!clean) return
     const u = new SpeechSynthesisUtterance(clean)
     u.lang = lang
-    u.rate = 1.0
+    const v = pickVoice(lang)
+    if (v) u.voice = v
+    // A touch slower than default + neutral pitch = calmer, clearer, teacherly.
+    u.rate = 0.95
+    u.pitch = 1.0
+    u.volume = 1.0
     window.speechSynthesis.speak(u)
   } catch { /* noop */ }
 }
