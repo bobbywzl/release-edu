@@ -13,14 +13,12 @@ import {
   Bot, Send, Plus, MessageSquare, Trash2, ChevronRight, ChevronLeft,
   ChevronDown, ChevronUp, Lightbulb, Target, Zap, BookOpen,
   Camera, X, Sparkles, Search, GraduationCap, SearchIcon, ClipboardList, FolderOpen,
-  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX,
+  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX, CheckCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSpeechRecognition, speak, stopSpeaking, speechSynthesisSupported, voiceLangTag } from '@/lib/use-voice'
 import { triggerCurriculumRefresh } from '@/lib/refresh-bus'
 import { pumpChatStream, getActiveChatStream, subscribeChatStream } from '@/lib/chat-stream'
-import { SessionProgressBar } from '@/components/session-progress-bar'
-import { Progress } from '@/components/ui/progress'
 import { useHighlights } from '@/lib/highlights'
 import type { Highlight } from '@/lib/highlights'
 import { useStudentData } from '@/lib/student-data'
@@ -214,7 +212,7 @@ function ChatMarkdown({ content: rawContent }: { content: string }) {
             return <em className="italic text-foreground/80">{children}</em>
           },
           p({ children }) {
-            return <p className="mb-3.5 last:mb-0 leading-[1.7] text-[17px] lg:text-[16px] text-foreground/90">{children}</p>
+            return <p className="mb-3.5 last:mb-0 leading-[1.7] text-[length:var(--chat-msg,17px)] text-foreground/90">{children}</p>
           },
           h1({ children }) {
             return <h1 className="text-2xl font-bold text-foreground mt-7 mb-3 pb-2 border-b border-border/40">{children}</h1>
@@ -235,7 +233,7 @@ function ChatMarkdown({ content: rawContent }: { content: string }) {
             return <ol className="my-3.5 space-y-2.5 pl-5 list-decimal marker:text-muted-foreground/60">{children}</ol>
           },
           li({ children }) {
-            return <li className="text-[17px] lg:text-[16px] text-foreground/90 leading-[1.7] pl-1">{children}</li>
+            return <li className="text-[length:var(--chat-msg,17px)] text-foreground/90 leading-[1.7] pl-1">{children}</li>
           },
           blockquote({ children }) {
             return (
@@ -1472,6 +1470,23 @@ function ChatPageInner() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const lessonAutoCollapsedFor = useRef<string | null>(null)
   const isMobile = useIsMobile()
+
+  // User-adjustable chat text size (persisted). Applied to message body text
+  // via a CSS variable on the messages container so A−/A+ scales it live.
+  const [chatFontPx, setChatFontPx] = useState(17)
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem('bob-chat-font'))
+      if (saved >= 14 && saved <= 24) setChatFontPx(saved)
+    } catch { /* SSR safe */ }
+  }, [])
+  const adjustChatFont = (delta: number) => {
+    setChatFontPx(prev => {
+      const next = Math.min(24, Math.max(14, prev + delta))
+      try { localStorage.setItem('bob-chat-font', String(next)) } catch { /* noop */ }
+      return next
+    })
+  }
 
   // On mobile the side panels are slide-in overlays, not columns — start with
   // both closed so the chat opens clean and full-width. Runs once when the
@@ -3095,8 +3110,6 @@ function ChatPageInner() {
     ta.style.height = input.trim() ? `${Math.min(ta.scrollHeight, 140)}px` : '48px'
   }, [input])
 
-  const activeConv = conversations.find(c => c.id === activeId)
-
   const QUICK_PROMPTS = [
     'What should I learn next?',
     'Help me with my current project',
@@ -3253,12 +3266,33 @@ function ChatPageInner() {
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
               <Bot className="w-4 h-4 text-primary" />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-foreground text-sm">Bob — Architect Bob</div>
-              <div className="text-xs text-muted-foreground truncate">
-                {activeConv?.title ?? 'New conversation'}
-              </div>
+            <div className="font-semibold text-foreground text-sm flex-shrink-0">Architect Bob</div>
+            {/* Mode tabs — inline next to the name (desktop only) */}
+            <div className="hidden lg:flex items-center gap-1.5">
+              {MODES.map(m => {
+                const Icon = m.icon
+                const active = chatMode === m.id
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => { setChatMode(m.id); if (m.id !== 'logistics') localStorage.setItem('bob-chat-mode', m.id) }}
+                    disabled={isStreaming}
+                    className={cn(
+                      'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all',
+                      active
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+                      isStreaming && 'opacity-50 cursor-not-allowed'
+                    )}
+                    title={tr(`chat.mode.${m.id}.desc`)}
+                  >
+                    <Icon className="w-3 h-3" />
+                    {tr(`chat.mode.${m.id}.short`)}
+                  </button>
+                )
+              })}
             </div>
+            <div className="flex-1 min-w-0" />
             {isResearching && (
               <div className="flex items-center gap-2 text-xs text-blue-400">
                 <Search className="w-3 h-3 animate-pulse" />
@@ -3271,6 +3305,23 @@ function ChatPageInner() {
                 Thinking…
               </div>
             )}
+            {/* Chat text size — A− / A+ */}
+            <div className="flex items-center rounded-md border border-border overflow-hidden flex-shrink-0">
+              <button
+                onClick={() => adjustChatFont(-1)}
+                disabled={chatFontPx <= 14}
+                className="px-1.5 py-1 text-[11px] leading-none text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                title={tr('chat.textSmaller', 'Smaller text')}
+                aria-label={tr('chat.textSmaller', 'Smaller text')}
+              >A−</button>
+              <button
+                onClick={() => adjustChatFont(1)}
+                disabled={chatFontPx >= 24}
+                className="px-1.5 py-1 text-[14px] leading-none text-muted-foreground hover:text-foreground hover:bg-muted border-l border-border disabled:opacity-30 transition-colors"
+                title={tr('chat.textLarger', 'Larger text')}
+                aria-label={tr('chat.textLarger', 'Larger text')}
+              >A+</button>
+            </div>
             {/* Mobile-only: open the right panel (annotations / notes / review) */}
             {isMobile && activeId && !rightPanelOpen && (
               <button
@@ -3282,60 +3333,34 @@ function ChatPageInner() {
               </button>
             )}
           </div>
-
-          {/* Mode selector — hidden on mobile to keep the chat minimal */}
-          <div className="px-4 pb-3 hidden lg:flex items-center gap-1.5">
-            {MODES.map(m => {
-              const Icon = m.icon
-              const active = chatMode === m.id
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => { setChatMode(m.id); if (m.id !== 'logistics') localStorage.setItem('bob-chat-mode', m.id) }}
-                  disabled={isStreaming}
-                  className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all',
-                    active
-                      ? 'bg-primary text-primary-foreground shadow-sm'
-                      : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
-                    isStreaming && 'opacity-50 cursor-not-allowed'
-                  )}
-                  title={tr(`chat.mode.${m.id}.desc`)}
-                >
-                  <Icon className="w-3 h-3" />
-                  {tr(`chat.mode.${m.id}.short`)}
-                </button>
-              )
-            })}
-          </div>
         </div>
 
-        {/* Active chapter session banner — only shows for the specific lesson conversation */}
+        {/* Active chapter session banner — single compact row: title + inline progress + actions */}
         {activeChapterForConv && activeId && (
-          <div className="px-4 py-2.5 bg-primary/5 border-b border-primary/10 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-6 h-6 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
-                <BookOpen className="w-3 h-3 text-primary" />
-              </div>
-              <div className="min-w-0">
-                {/* Label line — hidden on mobile to keep the top bar to title + progress only */}
-                <div className="hidden lg:flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/60">
-                    {activeChapterForConv.status === 'in-progress' ? tr('chat.continuingLesson') : tr('chat.lessonSession')}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/40">·</span>
-                  <span className="text-[10px] text-muted-foreground/60 truncate">{activeChapterForConv.trackName}</span>
-                </div>
-                <p className="text-xs font-semibold text-foreground truncate leading-tight">{activeChapterForConv.title}</p>
-              </div>
+          <div className="px-4 py-2 bg-primary/5 border-b border-primary/10 flex items-center gap-3">
+            <div className="w-5 h-5 rounded bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+              <BookOpen className="w-3 h-3 text-primary" />
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {sessionScore > 0 && (
-                <div className="hidden lg:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span className="text-[10px] font-medium text-emerald-400">{sessionScore}% {tr("chat.understood")}</span>
-                </div>
-              )}
+            <p className="text-xs font-semibold text-foreground truncate leading-tight flex-1 min-w-0">{activeChapterForConv.title}</p>
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+              {/* Compact progress — sits directly to the right of the chapter title */}
+              {(sessionPlan || sessionScore > 0) && (() => {
+                const understoodCount = Object.values(objectiveStatuses).filter(s => s === 'understood').length
+                const totalObjectives = sessionPlan?.objectives?.length || activeChapterForConv.keyTopics?.length || 0
+                return (
+                  <div className="flex items-center gap-2">
+                    <div className="w-16 sm:w-28 h-1.5 rounded-full bg-muted/70 overflow-hidden">
+                      <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${sessionScore}%` }} />
+                    </div>
+                    <span className="text-[11px] font-medium text-foreground tabular-nums">{sessionScore}%</span>
+                    {totalObjectives > 0 && (
+                      <span className="hidden sm:flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                        <CheckCircle className="w-3 h-3" />{understoodCount}/{totalObjectives}
+                      </span>
+                    )}
+                  </div>
+                )
+              })()}
               {/* Review button — opens new review session window */}
               <div className="relative">
                 <button
@@ -3348,7 +3373,7 @@ function ChatPageInner() {
                 {showReviewMenu === activeChapterForConv.id && (
                   <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowReviewMenu(null)} />
-                  <div className="absolute top-full left-0 mt-1 z-50 bg-card border border-border rounded-lg shadow-xl p-2 w-60 space-y-1">
+                  <div className="absolute top-full right-0 mt-1 z-50 bg-card border border-border rounded-lg shadow-xl p-2 w-60 space-y-1">
                     <p className="text-[10px] text-muted-foreground px-2 pb-1 border-b border-border">{tr("chat.reviewMenuHint")}</p>
                     {[
                       { label: tr('chat.reviewRecap'), msg: `[REVIEW SESSION] I have completed the chapter "${activeChapterForConv.title}". Please review all the key concepts we covered in the original session, summarise what I should have learned, then quiz me with 3 targeted questions on the areas where I was weakest.` },
@@ -3414,16 +3439,6 @@ function ChatPageInner() {
           </div>
         )}
 
-        {/* Session progress bar — only for the active chapter conv */}
-        {activeChapterForConv && (sessionPlan || sessionScore > 0) && (
-          <SessionProgressBar
-            chapterId={activeChapterForConv.id}
-            objectives={sessionPlan?.objectives || activeChapterForConv.keyTopics || []}
-            currentScore={sessionScore}
-            objectiveStatuses={objectiveStatuses}
-          />
-        )}
-
         {/* Active project context banner — only for the specific project conv (desktop only) */}
         {activeProjectForConv && activeId && !isMobile && (
           <div className="px-4 py-2 bg-purple-500/5 border-b border-border text-xs text-muted-foreground flex items-center gap-2">
@@ -3441,7 +3456,10 @@ function ChatPageInner() {
         {!isMobile && <ContextPanel summary={contextSummary} />}
 
         {/* Messages */}
-        <div className={cn('flex-1 overflow-y-auto p-4 lg:p-6 space-y-4', isLessonMode && 'flex flex-col items-center')}>
+        <div
+          className={cn('flex-1 overflow-y-auto p-4 lg:p-6 space-y-4', isLessonMode && 'flex flex-col items-center')}
+          style={{ ['--chat-msg' as string]: `${chatFontPx}px` } as React.CSSProperties}
+        >
           {messages.length === 0 && !isStreaming ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-8">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
