@@ -1,0 +1,102 @@
+/**
+ * POST /api/image/generate  { prompt }
+ *
+ * Generates an educational concept illustration via the Gemini image API
+ * (a.k.a. "Nano Banana"). Results are cached durably in the DB keyed by a hash
+ * of the full prompt, so each unique concept image is generated only once —
+ * keeping cost minimal even though Bob may reference the same illustration
+ * across reloads and students.
+ *
+ * Bob triggers this by emitting a ```image``` block in his reply; the chat UI
+ * parses it and calls this route. Configure the model with GEMINI_IMAGE_MODEL;
+ * otherwise a list of known image models is tried in order.
+ */
+import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { getServerSession } from 'next-auth'
+import { createHash } from 'crypto'
+import { authOptions } from '@/lib/auth'
+import prisma from '@/lib/prisma'
+
+// Image generation can take 10–20s — give it headroom on Vercel.
+export const maxDuration = 60
+
+const IMAGE_MODELS = [
+  process.env.GEMINI_IMAGE_MODEL,
+  'gemini-3-pro-image-preview',
+  'gemini-2.5-flash-image',
+  'gemini-2.5-flash-image-preview',
+  'gemini-2.0-flash-preview-image-generation',
+].filter(Boolean) as string[]
+
+export async function POST(req: NextRequest) {
+  // Gate the expensive endpoint to authenticated / demo users.
+  const cookieStore = await cookies()
+  const isDemo = cookieStore.get('demo-mode')?.value === 'true'
+  const session = await getServerSession(authOptions)
+  if (!session?.user && !isDemo) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { prompt } = (await req.json().catch(() => ({}))) as { prompt?: string }
+  if (!prompt || !prompt.trim()) {
+    return NextResponse.json({ error: 'No prompt' }, { status: 400 })
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    return NextResponse.json({ error: 'Image generation is not configured.' }, { status: 503 })
+  }
+
+  // Steer the model toward a clean, labeled, textbook-style diagram.
+  const fullPrompt =
+    `Create a clear, educational illustration to help a student understand this concept. ` +
+    `Clean, well-labeled, textbook/diagram style on a simple light background. ` +
+    `Accurate and uncluttered. No watermarks or signatures.\n\nConcept: ${prompt.trim()}`
+  const promptHash = createHash('sha256').update(fullPrompt).digest('hex')
+
+  // Durable cache — generate each unique concept image exactly once.
+  try {
+    const cached = await prisma.generatedImage.findUnique({ where: { promptHash } })
+    if (cached) return NextResponse.json({ image: cached.dataUrl, cached: true })
+  } catch { /* table may not be migrated yet — fall through and generate */ }
+
+  const tried = new Set<string>()
+  for (const model of IMAGE_MODELS) {
+    if (tried.has(model)) continue
+    tried.add(model)
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: fullPrompt }] }],
+            generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+          }),
+        },
+      )
+      if (!res.ok) continue
+      const data = await res.json() as {
+        candidates?: { content?: { parts?: { inlineData?: { data?: string; mimeType?: string } }[] } }[]
+      }
+      const parts = data?.candidates?.[0]?.content?.parts ?? []
+      const imgPart = parts.find(p => p?.inlineData?.data)
+      if (!imgPart?.inlineData?.data) continue
+      const mime = imgPart.inlineData.mimeType || 'image/png'
+      const dataUrl = `data:${mime};base64,${imgPart.inlineData.data}`
+      // Best-effort durable store (ignore unique-races / missing-table).
+      try {
+        await prisma.generatedImage.create({
+          data: { promptHash, prompt: prompt.trim().slice(0, 1000), dataUrl, model },
+        })
+      } catch { /* non-critical */ }
+      return NextResponse.json({ image: dataUrl, model })
+    } catch {
+      continue
+    }
+  }
+
+  return NextResponse.json({ error: 'Could not generate an image right now.' }, { status: 502 })
+}

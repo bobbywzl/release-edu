@@ -110,6 +110,18 @@ model Message {
 
 // ── Insights (Bob's observations about students) ─────────────
 
+// Durable cache for Bob's AI-generated concept images. Keyed by a hash of the
+// full prompt so each unique concept illustration is generated exactly once
+// (across all users) — keeps image-generation cost minimal.
+model GeneratedImage {
+  id         String   @id @default(cuid())
+  promptHash String   @unique
+  prompt     String
+  dataUrl    String   // data:image/...;base64,...
+  model      String?
+  createdAt  DateTime @default(now())
+}
+
 model Insight {
   id              String   @id @default(cuid())
   userId          String

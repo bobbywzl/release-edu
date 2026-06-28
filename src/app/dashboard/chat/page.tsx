@@ -445,10 +445,13 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
   const { text: afterFuncPlots, funcPlots } = !isUser
     ? parseFuncPlotBlocks(afterCharts)
     : { text: afterCharts, funcPlots: [] }
+  const { text: afterImages, images: imageBlocks } = !isUser
+    ? parseImageBlocks(afterFuncPlots)
+    : { text: afterFuncPlots, images: [] }
   // Strip progress and reflection blocks from display
   const displayContent = !isUser
-    ? afterFuncPlots.replace(/```progress\n[\s\S]*?```/g, '').replace(/```reflection\n[\s\S]*?```/g, '').replace(/\[CHAPTER_MASTERED\]/gi, '').trim()
-    : afterFuncPlots
+    ? afterImages.replace(/```progress\n[\s\S]*?```/g, '').replace(/```reflection\n[\s\S]*?```/g, '').replace(/\[CHAPTER_MASTERED\]/gi, '').trim()
+    : afterImages
 
   const feedback = existingFeedback ?? null
 
@@ -479,7 +482,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
         'group flex items-end gap-3 transition-colors duration-700',
         isUser ? 'flex-row-reverse' : '',
         '[&.highlight-pulse]:bg-primary/10 [&.highlight-pulse]:rounded-xl',
-        lessonMode && 'w-full max-w-3xl'
+        lessonMode && 'w-full max-w-5xl'
       )}
     >
       {!isUser && !lessonMode && (
@@ -546,6 +549,9 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
             {funcPlots.map((raw, i) => (
               <FuncPlot key={`funcplot-${i}`} raw={raw} />
             ))}
+            {imageBlocks.map((p, i) => (
+              <GeneratedImage key={`img-${i}`} prompt={p} />
+            ))}
           </HighlightableText>
         ) : (
           <>
@@ -571,6 +577,9 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
             ))}
             {funcPlots.map((raw, i) => (
               <FuncPlot key={`funcplot-${i}`} raw={raw} />
+            ))}
+            {imageBlocks.map((p, i) => (
+              <GeneratedImage key={`img-${i}`} prompt={p} />
             ))}
           </>
         )}
@@ -928,6 +937,77 @@ function parseFuncPlotBlocks(text: string): { text: string; funcPlots: string[] 
     return ''
   })
   return { text: cleaned.trim(), funcPlots }
+}
+
+// Bob emits ```image\nPROMPT: <description>\n``` when an illustration would
+// genuinely help. We pull out the prompt and render a <GeneratedImage>.
+function parseImageBlocks(text: string): { text: string; images: string[] } {
+  const images: string[] = []
+  const cleaned = text.replace(/```image\n([\s\S]*?)```/g, (_, code: string) => {
+    const prompt = code.trim().replace(/^PROMPT:\s*/i, '').trim()
+    if (prompt) images.push(prompt)
+    return ''
+  })
+  return { text: cleaned.trim(), images }
+}
+
+// Session-scoped cache so a concept image isn't re-requested on every React
+// re-render. The server also caches durably (by prompt hash) across reloads.
+const generatedImageCache = new Map<string, string>()
+
+function GeneratedImage({ prompt }: { prompt: string }) {
+  const [src, setSrc] = useState<string | null>(() => generatedImageCache.get(prompt) ?? null)
+  const [loading, setLoading] = useState(!src)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    const hit = generatedImageCache.get(prompt)
+    if (hit) { setSrc(hit); setLoading(false); setError(false); return }
+    let cancelled = false
+    setLoading(true); setError(false)
+    fetch('/api/image/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('image gen failed'))))
+      .then((d: { image?: string }) => {
+        if (cancelled) return
+        if (d.image) { generatedImageCache.set(prompt, d.image); setSrc(d.image) }
+        else setError(true)
+      })
+      .catch(() => { if (!cancelled) setError(true) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [prompt, attempt])
+
+  return (
+    <div className="my-4 w-full max-w-xl">
+      {loading ? (
+        <div className="aspect-[4/3] w-full rounded-xl border border-border bg-muted/40 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+          <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+          <span className="text-xs">Generating illustration…</span>
+        </div>
+      ) : error || !src ? (
+        <button
+          onClick={() => setAttempt(a => a + 1)}
+          className="aspect-[4/3] w-full rounded-xl border border-dashed border-border bg-muted/20 flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+        >
+          <span>Couldn&apos;t generate the illustration.</span>
+          <span className="text-primary">Tap to retry</span>
+        </button>
+      ) : (
+        <figure className="space-y-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={prompt} className="w-full rounded-xl border border-border" loading="lazy" />
+          <figcaption className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+            <Sparkles className="w-2.5 h-2.5" /> AI-generated illustration
+          </figcaption>
+        </figure>
+      )}
+    </div>
+  )
 }
 
 // Semantic short-answer evaluation — Haiku judges meaning, not exact wording
@@ -3717,7 +3797,7 @@ function ChatPageInner() {
             </div>
           )}
 
-          <div className={cn('flex items-end gap-2 lg:gap-3 mx-auto w-full', isLessonMode ? 'max-w-3xl' : 'max-w-4xl')}>
+          <div className={cn('flex items-end gap-2 lg:gap-3 mx-auto w-full', isLessonMode ? 'max-w-5xl' : 'max-w-4xl')}>
             {/* Image upload button */}
             <input
               ref={fileInputRef}
