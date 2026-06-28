@@ -101,16 +101,38 @@ if (speechSynthesisSupported()) {
 
 // Curated, in order of preference. These are warm, natural, "teacher-like"
 // system voices across macOS / iOS / Windows / Chrome.
+// Curated high-quality names (warm, natural, teacher-like), used as a tiebreak.
 const PREFERRED_VOICES: Record<'en' | 'zh', string[]> = {
   en: [
-    'Google US English', 'Samantha', 'Ava (Enhanced)', 'Ava', 'Allison', 'Joelle',
-    'Microsoft Aria Online (Natural)', 'Microsoft Jenny', 'Microsoft Guy',
-    'Microsoft Aria', 'Daniel', 'Karen', 'Serena', 'Moira',
+    'Google US English', 'Microsoft Aria Online (Natural)', 'Microsoft Jenny',
+    'Ava (Enhanced)', 'Samantha (Enhanced)', 'Allison (Enhanced)', 'Ava', 'Allison',
+    'Samantha', 'Joelle', 'Microsoft Guy', 'Daniel', 'Serena',
   ],
   zh: [
-    'Google 普通话（中国大陆）', 'Tingting', '婷婷', 'Meijia',
-    'Microsoft Xiaoxiao Online (Natural)', 'Microsoft Yunxi', 'Microsoft Xiaoyi', 'Sinji',
+    'Google 普通话（中国大陆）', 'Microsoft Xiaoxiao Online (Natural)',
+    'Tingting (Enhanced)', 'Tingting', '婷婷', 'Microsoft Yunxi', 'Meijia',
   ],
+}
+
+// Novelty / robotic / low-fidelity engines to avoid — these are the
+// "suffocating"-sounding ones (macOS joke voices, eSpeak, compact synths).
+const BAD_VOICE = /compact|espeak|eloquence|pico|fred|albert|zarvox|whisper|bells|bahh|trinoids|cellos|deranged|bubbles|hysterical|boing|junior|ralph|kathy|bad news|good news|wobble|organ|superstar|grandma|grandpa|rocko|shelley|sandy|flo|reed|eddy|rishi/i
+
+// Higher score = better. The dominant signal is whether the voice is a
+// network/neural voice (localService === false) — those are the modern,
+// natural ones; local voices are usually the strained-sounding synths.
+function scoreVoice(v: SpeechSynthesisVoice, prefs: string[]): number {
+  const name = v.name.toLowerCase()
+  let s = 0
+  if (v.localService === false) s += 60                                   // network/neural
+  if (/natural|neural|enhanced|premium|online/.test(name)) s += 40
+  if (/google/.test(name)) s += 28
+  if (/microsoft/.test(name)) s += 14
+  const idx = prefs.findIndex(p => name.includes(p.toLowerCase()))
+  if (idx >= 0) s += 30 - idx                                             // curated, earlier = better
+  if (BAD_VOICE.test(name)) s -= 100
+  if (v.default) s += 1
+  return s
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
@@ -119,33 +141,16 @@ function pickVoice(lang: string): SpeechSynthesisVoice | null {
   const isZh = lang.toLowerCase().startsWith('zh')
   const prefs = isZh ? PREFERRED_VOICES.zh : PREFERRED_VOICES.en
   const langPrefix = isZh ? 'zh' : 'en'
-
-  // 1. Exact preferred name.
-  for (const name of prefs) {
-    const v = voices.find(x => x.name === name)
-    if (v) return v
-  }
-  // 2. Preferred name as a substring (handles "(United States)" suffixes etc.).
-  for (const name of prefs) {
-    const v = voices.find(x => x.name.toLowerCase().includes(name.toLowerCase()))
-    if (v) return v
-  }
-  // 3. Best remaining voice for the language: prefer natural/enhanced/premium/
-  //    neural/google voices, then anything that isn't a known low-quality engine.
-  const langMatches = voices.filter(v => v.lang.toLowerCase().startsWith(langPrefix))
-  const natural = langMatches.find(v => /natural|enhanced|premium|neural|google/i.test(v.name))
-  if (natural) return natural
-  const notCompact = langMatches.find(v => !/compact|espeak|eloquence|pico/i.test(v.name))
-  if (notCompact) return notCompact
-  return langMatches[0] ?? null
+  const matches = voices.filter(v => v.lang.toLowerCase().startsWith(langPrefix))
+  if (!matches.length) return null
+  return matches
+    .map(v => ({ v, s: scoreVoice(v, prefs) }))
+    .sort((a, b) => b.s - a.s)[0].v
 }
 
-export function speak(text: string, lang = 'en-US') {
-  if (!speechSynthesisSupported()) return
+function speakNow(clean: string, lang: string) {
   try {
     window.speechSynthesis.cancel()
-    const clean = cleanForSpeech(text)
-    if (!clean) return
     const u = new SpeechSynthesisUtterance(clean)
     u.lang = lang
     const v = pickVoice(lang)
@@ -156,6 +161,25 @@ export function speak(text: string, lang = 'en-US') {
     u.volume = 1.0
     window.speechSynthesis.speak(u)
   } catch { /* noop */ }
+}
+
+export function speak(text: string, lang = 'en-US') {
+  if (!speechSynthesisSupported()) return
+  const clean = cleanForSpeech(text)
+  if (!clean) return
+  // Voices load asynchronously (Chrome/Edge). If they're not ready yet, wait
+  // briefly so even the FIRST utterance gets the upgraded voice rather than the
+  // browser default — otherwise the first reply is the one that sounds bad.
+  if (cachedVoices.length || loadVoices().length) { speakNow(clean, lang); return }
+  let fired = false
+  const go = () => {
+    if (fired) return
+    fired = true
+    loadVoices()
+    speakNow(clean, lang)
+  }
+  try { window.speechSynthesis.addEventListener('voiceschanged', go, { once: true }) } catch { /* noop */ }
+  setTimeout(go, 350)
 }
 
 export function stopSpeaking() {
