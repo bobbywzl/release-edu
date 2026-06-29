@@ -21,12 +21,17 @@ import prisma from '@/lib/prisma'
 // Image generation can take 10–20s — give it headroom on Vercel.
 export const maxDuration = 60
 
+// "Nano Banana 2" = Gemini 3.1 Flash Image. Use it directly; fall back to
+// Gemini 3 Pro Image, then older image models as a last resort. Override with
+// GEMINI_IMAGE_MODEL to pin a specific one.
 const IMAGE_MODELS = [
   process.env.GEMINI_IMAGE_MODEL,
+  'gemini-3.1-flash-image',           // Nano Banana 2 — primary
+  'gemini-3.1-flash-image-preview',
+  'gemini-3-pro-image',               // fallback
   'gemini-3-pro-image-preview',
-  'gemini-2.5-flash-image',
+  'gemini-2.5-flash-image',           // older fallback
   'gemini-2.5-flash-image-preview',
-  'gemini-2.0-flash-preview-image-generation',
 ].filter(Boolean) as string[]
 
 export async function POST(req: NextRequest) {
@@ -38,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { prompt } = (await req.json().catch(() => ({}))) as { prompt?: string }
+  const { prompt, context } = (await req.json().catch(() => ({}))) as { prompt?: string; context?: string }
   if (!prompt || !prompt.trim()) {
     return NextResponse.json({ error: 'No prompt' }, { status: 400 })
   }
@@ -48,11 +53,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Image generation is not configured.' }, { status: 503 })
   }
 
-  // Steer the model toward a clean, labeled, textbook-style diagram.
+  // Ground the image in what the student is actively learning (the surrounding
+  // chat content), so the illustration matches the lesson rather than a generic
+  // stock picture. Steer toward a clean, labeled, textbook-style diagram.
+  const ctx = (context ?? '').toString().replace(/\s+/g, ' ').trim().slice(0, 900)
   const fullPrompt =
-    `Create a clear, educational illustration to help a student understand this concept. ` +
-    `Clean, well-labeled, textbook/diagram style on a simple light background. ` +
-    `Accurate and uncluttered. No watermarks or signatures.\n\nConcept: ${prompt.trim()}`
+    `Create a clear, educational illustration to help a student understand this concept, ` +
+    `grounded in exactly what they are learning right now. Clean, well-labeled, textbook/diagram ` +
+    `style on a simple light background. Accurate and uncluttered. No watermarks or signatures.\n\n` +
+    (ctx ? `What the student is learning right now (use this for accuracy and relevance):\n${ctx}\n\n` : '') +
+    `Illustration to create: ${prompt.trim()}`
   const promptHash = createHash('sha256').update(fullPrompt).digest('hex')
 
   // Durable cache — generate each unique concept image exactly once.

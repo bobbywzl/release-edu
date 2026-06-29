@@ -550,7 +550,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
               <FuncPlot key={`funcplot-${i}`} raw={raw} />
             ))}
             {imageBlocks.map((p, i) => (
-              <GeneratedImage key={`img-${i}`} prompt={p} />
+              <GeneratedImage key={`img-${i}`} prompt={p} context={displayContent} />
             ))}
           </HighlightableText>
         ) : (
@@ -579,7 +579,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
               <FuncPlot key={`funcplot-${i}`} raw={raw} />
             ))}
             {imageBlocks.map((p, i) => (
-              <GeneratedImage key={`img-${i}`} prompt={p} />
+              <GeneratedImage key={`img-${i}`} prompt={p} context={displayContent} />
             ))}
           </>
         )}
@@ -955,32 +955,35 @@ function parseImageBlocks(text: string): { text: string; images: string[] } {
 // re-render. The server also caches durably (by prompt hash) across reloads.
 const generatedImageCache = new Map<string, string>()
 
-function GeneratedImage({ prompt }: { prompt: string }) {
-  const [src, setSrc] = useState<string | null>(() => generatedImageCache.get(prompt) ?? null)
+function GeneratedImage({ prompt, context }: { prompt: string; context?: string }) {
+  // Cache key includes the lesson context so the same concept in a different
+  // lesson regenerates an appropriately different illustration.
+  const cacheKey = `${prompt} ${(context ?? '').slice(0, 900)}`
+  const [src, setSrc] = useState<string | null>(() => generatedImageCache.get(cacheKey) ?? null)
   const [loading, setLoading] = useState(!src)
   const [error, setError] = useState(false)
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
-    const hit = generatedImageCache.get(prompt)
+    const hit = generatedImageCache.get(cacheKey)
     if (hit) { setSrc(hit); setLoading(false); setError(false); return }
     let cancelled = false
     setLoading(true); setError(false)
     fetch('/api/image/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, context }),
     })
       .then(r => (r.ok ? r.json() : Promise.reject(new Error('image gen failed'))))
       .then((d: { image?: string }) => {
         if (cancelled) return
-        if (d.image) { generatedImageCache.set(prompt, d.image); setSrc(d.image) }
+        if (d.image) { generatedImageCache.set(cacheKey, d.image); setSrc(d.image) }
         else setError(true)
       })
       .catch(() => { if (!cancelled) setError(true) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [prompt, attempt])
+  }, [cacheKey, prompt, context, attempt])
 
   return (
     <div className="my-4 w-full max-w-xl">
