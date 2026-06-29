@@ -1,7 +1,8 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { BookOpen, Pin, FileText, ChevronRight, ChevronLeft, Trash2, MessageSquare } from 'lucide-react'
+import { BookOpen, Pin, FileText, ChevronRight, ChevronLeft, Trash2, MessageSquare, Sparkles, Download, RefreshCw } from 'lucide-react'
 import { LectureNotesPanel } from './lecture-notes-panel'
+import { MarkdownRenderer } from './markdown-renderer'
 import type { Highlight } from '@/lib/highlights'
 import { cn } from '@/lib/utils'
 
@@ -158,31 +159,112 @@ function AnnotationCard({
   )
 }
 
+// Review tab — on-demand study notes generated from the whole conversation,
+// with a PDF download. Nothing is generated until the student asks for it.
+function ReviewNotes({ conversationId, title }: { conversationId: string | null; title?: string }) {
+  const [notes, setNotes] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  async function generate() {
+    if (!conversationId || loading) return
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/review-notes`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error || 'Could not generate notes.'); return }
+      setNotes(data.notes || '')
+    } catch {
+      setError('Something went wrong. Try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function downloadPdf() {
+    if (!notes || downloading) return
+    setDownloading(true)
+    try {
+      const res = await fetch('/api/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `Review Notes${title ? ` — ${title}` : ''}`, markdown: notes }),
+      })
+      if (res.ok) {
+        const html = await res.text()
+        const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+        const w = window.open(url, '_blank')
+        // Give the new tab a moment to render, then open the print → Save as PDF dialog.
+        if (w) setTimeout(() => { try { w.print() } catch { /* user can print manually */ } }, 700)
+      }
+    } catch { /* ignore */ } finally {
+      setDownloading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground py-12">
+        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+        Writing your review notes…
+      </div>
+    )
+  }
+
+  if (!notes) {
+    return (
+      <div className="p-5 text-center space-y-3">
+        <BookOpen className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+        <div>
+          <p className="text-sm font-medium text-foreground">Review notes</p>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            Turn everything covered in this conversation into clean, organized study notes — then download them as a PDF.
+          </p>
+        </div>
+        <button
+          onClick={generate}
+          disabled={!conversationId}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Generate review notes
+        </button>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-3 space-y-3">
+      <div className="flex items-center gap-2 sticky top-0">
+        <button
+          onClick={downloadPdf}
+          disabled={downloading}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" />
+          {downloading ? 'Preparing…' : 'Download PDF'}
+        </button>
+        <button
+          onClick={() => { setNotes(null); generate() }}
+          title="Regenerate"
+          className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="border-t border-border/50 pt-2">
+        <MarkdownRenderer content={notes} />
+      </div>
+    </div>
+  )
+}
+
 export function RightPanel({
   tab, open, isMobile = false, onTabChange, onToggle, chapter, conversationId, trackId,
   highlights, focusedHighlightId, onDeleteHighlight, onUpdateHighlight, onHighlightCardClick,
 }: Props) {
-  const [reviewContent, setReviewContent] = useState<{ content: string; keyTopics: string[]; description: string } | null>(null)
-  const [loadingReview, setLoadingReview] = useState(false)
-
-  useEffect(() => {
-    if (tab === 'review' && chapter && !reviewContent) {
-      setLoadingReview(true)
-      fetch(`/api/chapter/${chapter.id}`)
-        .then(r => r.json())
-        .then(async ({ chapter: ch }) => {
-          let content = ch?.content || ''
-          if (!content || content.includes('Content will be generated') || content.length < 200) {
-            const gen = await fetch(`/api/chapter/${chapter.id}/generate-content`, { method: 'POST' })
-            if (gen.ok) content = (await gen.json()).content || ''
-          }
-          setReviewContent({ content, keyTopics: ch?.keyTopics || [], description: ch?.description || '' })
-        })
-        .catch(() => {})
-        .finally(() => setLoadingReview(false))
-    }
-  }, [tab, chapter, reviewContent])
-
   // Only show Notes + Review tabs when in a chapter session
   const TABS: { id: Tab; label: string; icon: typeof BookOpen; count?: number }[] = [
     { id: 'annotations', label: 'Annotations', icon: Pin, count: highlights.length || undefined },
@@ -282,32 +364,7 @@ export function RightPanel({
         )}
 
         {tab === 'review' && (
-          <div className="p-4 space-y-4">
-            {loadingReview ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-8 justify-center">
-                <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                Loading chapter content…
-              </div>
-            ) : reviewContent ? (
-              <>
-                {reviewContent.description && (
-                  <p className="text-xs text-muted-foreground leading-relaxed">{reviewContent.description}</p>
-                )}
-                {reviewContent.keyTopics.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {reviewContent.keyTopics.map((t: string) => (
-                      <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20">{t}</span>
-                    ))}
-                  </div>
-                )}
-                <div className="prose prose-invert prose-xs max-w-none text-xs">
-                  <pre className="whitespace-pre-wrap font-sans text-xs text-foreground/80 leading-relaxed">{reviewContent.content}</pre>
-                </div>
-              </>
-            ) : (
-              <div className="py-8 text-center text-xs text-muted-foreground">Could not load chapter content.</div>
-            )}
-          </div>
+          <ReviewNotes conversationId={conversationId} title={chapter?.title} />
         )}
       </div>
     </div>
