@@ -53,10 +53,24 @@
   * {
     @apply border-border;
   }
+  html,
+  body {
+    height: 100%;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+}
+
+/* Robust full-viewport height. Uses the dynamic viewport (dvh) where supported
+   — so mobile browser chrome doesn't leave a gap or clip the chat input — and
+   falls back to vh on browsers that lack dvh. Do NOT nest this inside another
+   dvh container (Safari/iPadOS can collapse a nested dvh to zero height); inner
+   fills should use h-full to inherit the already-resolved height. */
+.app-h {
+  height: 100vh;
+  height: 100dvh;
 }
 
 /* Custom scrollbar */

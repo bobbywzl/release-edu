@@ -191,7 +191,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden bg-background">
+    <div className="flex app-h overflow-hidden bg-background">
       <Sidebar />
       <main className={`flex-1 overflow-y-auto ${isChat ? '' : 'pb-16 lg:pb-0'}`}>
         {/* Spacer clears the fixed mobile hamburger on normal pages. The chat
