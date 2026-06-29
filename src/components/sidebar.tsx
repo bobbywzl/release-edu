@@ -45,10 +45,18 @@ export function Sidebar() {
 
   const expanded = pinned || hovered
 
-  // Persist pin state
+  // Persist pin state. On touch devices (iPad/tablet) there is no hover, so the
+  // hover-to-expand sidebar would be stuck collapsed and unusable — default it
+  // to expanded there unless the user has explicitly set a preference.
   useEffect(() => {
     const stored = localStorage.getItem(PINNED_KEY)
-    if (stored === 'true') setPinned(true)
+    if (stored === 'true') { setPinned(true); return }
+    if (stored === 'false') return
+    try {
+      // Not on the chat route — there the 3 columns need every pixel.
+      if (!isChat && window.matchMedia?.('(pointer: coarse)')?.matches) setPinned(true)
+    } catch { /* noop */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function togglePin() {
@@ -113,7 +121,7 @@ export function Sidebar() {
         transition={{ duration: 0.18, ease: 'easeInOut' }}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="hidden lg:flex h-screen flex-col border-r border-border bg-card overflow-hidden flex-shrink-0 relative z-30"
+        className="hidden lg:flex h-full flex-col border-r border-border bg-card overflow-hidden flex-shrink-0 relative z-30"
       >
         {/* Header */}
         <div className="h-14 border-b border-border flex items-center px-3 gap-2 flex-shrink-0">

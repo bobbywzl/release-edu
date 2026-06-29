@@ -3201,7 +3201,7 @@ function ChatPageInner() {
   ]
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Mobile backdrop — tap to close the conversations drawer */}
       {isMobile && !leftSidebarCollapsed && (
         <div
