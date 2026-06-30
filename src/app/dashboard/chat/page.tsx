@@ -13,7 +13,7 @@ import {
   Bot, Send, Plus, MessageSquare, Trash2, ChevronRight, ChevronLeft,
   ChevronDown, ChevronUp, Lightbulb, Target, Zap, BookOpen,
   Camera, X, Sparkles, Search, GraduationCap, SearchIcon, ClipboardList, FolderOpen,
-  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX, CheckCircle,
+  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX, CheckCircle, Download,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSpeechRecognition, speak, stopSpeaking, speechSynthesisSupported, voiceLangTag } from '@/lib/use-voice'
@@ -530,6 +530,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
             {problems.map((prob, i) => (
               <ProblemBlock key={`prob-${i}`} {...prob} />
             ))}
+            <ProblemSetActions problems={problems} />
             {quizzes.map((quiz, i) => (
               <QuizBlock
                 key={i}
@@ -559,6 +560,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
             {problems.map((prob, i) => (
               <ProblemBlock key={`prob-${i}`} {...prob} />
             ))}
+            <ProblemSetActions problems={problems} />
             {quizzes.map((quiz, i) => (
               <QuizBlock
                 key={i}
@@ -949,6 +951,56 @@ function parseImageBlocks(text: string): { text: string; images: string[] } {
     return ''
   })
   return { text: cleaned.trim(), images }
+}
+
+// Capstone problem set — download as a clean PDF + submission hint. Renders
+// only once the problem set has been delivered (after the syllabus is taught).
+function ProblemSetActions({ problems }: { problems: ParsedProblem[] }) {
+  const [downloading, setDownloading] = useState(false)
+  if (problems.length === 0) return null
+  async function download() {
+    if (downloading) return
+    setDownloading(true)
+    try {
+      const md = [
+        '# Problem Set',
+        '',
+        '_Work through every problem below. Type your answers directly in the chat, or upload a photo/file of your work using the upload button. Attempt all problems before submitting — your tutor will then review and score each one with feedback._',
+        '',
+        ...problems.flatMap(p => [
+          `## Problem ${p.number || ''}${p.points ? ` — ${p.points} pts` : ''}`.trim(),
+          p.question,
+          '',
+        ]),
+      ].join('\n')
+      const res = await fetch('/api/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Problem Set', markdown: md }),
+      })
+      if (res.ok) {
+        const html = await res.text()
+        const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+        const w = window.open(url, '_blank')
+        if (w) setTimeout(() => { try { w.print() } catch { /* manual print */ } }, 700)
+      }
+    } catch { /* ignore */ } finally {
+      setDownloading(false)
+    }
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <button
+        onClick={download}
+        disabled={downloading}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-accent text-xs font-medium text-foreground transition-colors disabled:opacity-50"
+      >
+        <Download className="w-3.5 h-3.5" />
+        {downloading ? 'Preparing…' : 'Download problem set (PDF)'}
+      </button>
+      <span className="text-[11px] text-muted-foreground">Answer each below — type or upload your work, then send to submit.</span>
+    </div>
+  )
 }
 
 // Session-scoped cache so a concept image isn't re-requested on every React
@@ -2747,29 +2799,64 @@ function ChatPageInner() {
             else if (v === 'partial') newStatuses[key] = 'partial'
             else newStatuses[key] = 'not-understood'
           }
-          setObjectiveStatuses(prev => ({ ...prev, ...newStatuses }))
+          const mergedStatuses = { ...objectiveStatuses, ...newStatuses }
+          setObjectiveStatuses(mergedStatuses)
 
-          // Count quizzes in this response and accumulate
+          // ── DETERMINISTIC PROGRESS — a STATIC rule, not an AI-guessed score ──
+          // Progress 0→80% maps exactly to SYLLABUS completion: 80% == every
+          // objective taught AND understood. Each objective is worth 80/N% of the
+          // bar (a "partial" counts half). The problem-set/review phase owns 80→100.
+          // This is why the problem set can NEVER appear before the syllabus is
+          // fully taught: the bar can't reach 80 until every objective is understood.
+          const total = sessionPlan?.objectives?.length || activeChapterContext.keyTopics?.length || 0
+          const weightOf = (s?: string) => (s === 'understood' ? 1 : s === 'partial' ? 0.5 : 0)
+          let computed = 0
+          if (total > 0) {
+            let sum = 0
+            for (let i = 1; i <= total; i++) sum += weightOf(mergedStatuses[`OBJECTIVE_${i}`])
+            computed = Math.round((sum / total) * 80)
+          }
+          // Monotonic during teaching, hard-capped at 80; once the capstone is
+          // reached (>=80) a later recompute can't pull the bar back down.
+          const newScore = sessionScore >= 80 ? sessionScore : Math.min(80, Math.max(sessionScore, computed))
+          setSessionScore(newScore)
+          setChapterByConvId(prev => (activeId && prev[activeId]) ? { ...prev, [activeId]: { ...prev[activeId], sessionScore: newScore } } : prev)
+
           const quizCount = (full.match(/```quiz\n/g) || []).length
           const newQuizzesGiven = quizCount > 0 ? quizzesGiven + quizCount : quizzesGiven
           if (quizCount > 0) setQuizzesGiven(newQuizzesGiven)
 
-          // Persist objective statuses + reflection only (no score from conversation)
+          // The problem set unlocks ONLY when the whole syllabus is taught (bar hits 80).
+          const crossedCapstone = newScore >= 80 && sessionScore < 80 && !capstoneTriggered
+          if (crossedCapstone) setCapstoneTriggered(true)
+
           const sessionData = {
             objectives: sessionPlan?.objectives?.map((text, i) => ({
               id: `OBJECTIVE_${i + 1}`,
               text,
-              understood: newStatuses[`OBJECTIVE_${i + 1}`] || 'not-understood',
+              understood: mergedStatuses[`OBJECTIVE_${i + 1}`] || 'not-understood',
               evidence: parsedProgress.notes,
             })) || [],
             quizResults: [],
             quizzesGiven: newQuizzesGiven,
+            capstoneTriggered: capstoneTriggered || crossedCapstone,
           }
           fetch(`/api/chapter/${activeChapterContext.id}/session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'update_score', score: sessionScore, sessionData, reflection: parsedReflection }),
+            body: JSON.stringify({ action: 'update_score', score: newScore, sessionData, reflection: parsedReflection }),
           }).catch(() => {})
+
+          if (crossedCapstone && activeId) {
+            setTimeout(() => {
+              sendMessageWithText(
+                `[CAPSTONE] The full syllabus is now taught (progress reached 80%). Output the capstone problem set now per the PHASE 3 instructions: 2–3 applied problems covering ALL objectives, weighted toward demonstrated weak areas, each in a \`\`\`problem block, prefaced with the clear submission instructions.`,
+                activeId,
+                activeChapterContext.id,
+                true,
+              )
+            }, 800)
+          }
         }
       }
 
@@ -3610,42 +3697,28 @@ function ChatPageInner() {
                       setTimeout(() => sendMessage(), 50)
                     }}
                     onQuizScore={(questionId, quizScore) => {
-                      // Only credit score for NEW answers — no duplicate credit
+                      // Quizzes NO LONGER move the progress bar directly. The bar is a
+                      // deterministic function of SYLLABUS completion (see the progress-block
+                      // handler): a quiz answer informs Bob's per-objective assessment and
+                      // awards XP, but progress only advances as objectives are taught.
                       if (!activeChapterContext) return
                       if (answeredQuestionIds.has(questionId)) return
-                      // Mark question as answered
                       const newAnsweredIds = new Set(answeredQuestionIds)
                       newAnsweredIds.add(questionId)
                       setAnsweredQuestionIds(newAnsweredIds)
-                      // Proportional weighting: weight=8pts per question
-                      // < 50% score → 0 pts; >= 50% → (score/100) * 8 pts
-                      const WEIGHT = 8
-                      const points = quizScore < 50 ? 0 : (quizScore / 100) * WEIGHT
-                      const newScore = Math.min(95, sessionScore + points)
-                      setSessionScore(newScore)
-                      setChapterByConvId(prev => {
-                        if (!activeId || !prev[activeId]) return prev
-                        return { ...prev, [activeId]: { ...prev[activeId], sessionScore: newScore } }
-                      })
-                      // Fire capstone pset strictly when score first crosses 80%
-                      const crossedCapstone = newScore >= 80 && sessionScore < 80 && !capstoneTriggered
-                      if (crossedCapstone) {
-                        setCapstoneTriggered(true)
-                      }
-                      // Persist to DB — include answeredQuestionIds and capstoneTriggered
+                      setQuizzesGiven(prev => prev + 1)
                       fetch(`/api/chapter/${activeChapterContext.id}/session`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           action: 'update_score',
-                          score: newScore,
+                          score: sessionScore,
                           sessionData: {
                             objectives: [],
                             quizResults: [{ score: quizScore }],
                             quizzesGiven: quizzesGiven + 1,
-                            conversationScore: newScore,
                             answeredQuestionIds: Array.from(newAnsweredIds),
-                            capstoneTriggered: capstoneTriggered || crossedCapstone,
+                            capstoneTriggered,
                           },
                         }),
                       }).then(r => r.ok ? r.json() : null).then(data => {
@@ -3653,22 +3726,22 @@ function ChatPageInner() {
                           import('@/components/xp-toast').then(m => m.emitXpAwards(data.xpAwards))
                         }
                       }).catch(() => {})
-                      setQuizzesGiven(prev => prev + 1)
-                      // Auto-send capstone trigger after a short delay (lets the quiz response settle)
-                      if (crossedCapstone && activeId) {
-                        setTimeout(() => {
-                          sendMessageWithText(
-                            `[CAPSTONE] Student score reached ${Math.round(newScore)}%. Output the capstone problem set now per Phase 4 instructions. Cover all chapter topics and objectives, weight toward demonstrated weak areas from conversation history, include theory/conceptual/application/synthesis questions, use sub-questions and progressive difficulty. Use \`\`\`problem blocks.`,
-                            activeId,
-                            activeChapterContext.id,
-                            true
-                          )
-                        }, 800)
-                      }
                     }}
                     onSubmissionReview={(review) => {
                       // Auto-save submission to chapter file storage
                       if (!activeChapterContext) return
+                      // The problem-set/review phase owns 80→100: map the graded
+                      // total onto that band so the bar advances with performance.
+                      const reviewScore = Math.max(80, Math.min(100, 80 + Math.round(((Number(review.totalScore) || 0) / 100) * 20)))
+                      if (reviewScore > sessionScore) {
+                        setSessionScore(reviewScore)
+                        setChapterByConvId(prev => (activeId && prev[activeId]) ? { ...prev, [activeId]: { ...prev[activeId], sessionScore: reviewScore } } : prev)
+                        fetch(`/api/chapter/${activeChapterContext.id}/session`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'update_score', score: reviewScore, sessionData: { capstoneTriggered: true } }),
+                        }).catch(() => {})
+                      }
                       const md = [
                         `# ${activeChapterContext.title} — Submission Review`,
                         '',
@@ -3711,7 +3784,7 @@ function ChatPageInner() {
                       setTimeout(() => sendMessage(), 50)
                     } : undefined}
                     lessonMode={isLessonMode}
-                    capstoneUnlocked={sessionScore === 0 || sessionScore >= 80}
+                    capstoneUnlocked={!activeChapterContext || sessionScore >= 80}
                   />
                 ))}
               </AnimatePresence>
@@ -3725,7 +3798,7 @@ function ChatPageInner() {
                       timestamp: new Date(),
                     }}
                     lessonMode={isLessonMode}
-                    capstoneUnlocked={sessionScore === 0 || sessionScore >= 80}
+                    capstoneUnlocked={!activeChapterContext || sessionScore >= 80}
                   />
                   {/* Blinking cursor */}
                   <div className={cn('flex items-end gap-3 -mt-3 mb-2', isLessonMode ? 'ml-2' : 'ml-10')}>

@@ -296,9 +296,19 @@ ${depthBand}
   • Claim the capstone is unlocked or that the student has "reached the threshold"
   • Pretend a quiz answer changed the score by a specific amount
   • Tell the student to look at the progress bar — it's already visible to them
-The student sees a live progress bar above this chat. Trust it. Just teach. If you feel the urge to announce a score, that urge is wrong — write a sentence of teaching instead.`
+The student sees a live progress bar above this chat. Trust it. Just teach. If you feel the urge to announce a score, that urge is wrong — write a sentence of teaching instead.
+
+📐 HOW PROGRESS WORKS (a FIXED, non-negotiable rule — do not fight it): the progress bar maps exactly to SYLLABUS COMPLETION. It reaches 80% only when EVERY objective has been taught AND the student understands it — each of the ${allObjectives.length || 'N'} objectives is worth an equal slice of the 0→80% range. The capstone problem set lives entirely in the 80–100% range. So pace yourself: you have the whole 0→80% band to teach all objectives properly — there is no reward for rushing.
+
+🚫 NO PROBLEM SET — AND NO MENTION OF ONE — UNTIL THE SYLLABUS IS FULLY TAUGHT. You are in the TEACHING phase. You MUST NOT:
+  • Output any \`\`\`problem block (the system hides them before 80% anyway).
+  • Mention, promise, foreshadow, or hint at "the problem set", "the capstone", "the synthesis question before the problem set", "soon we'll apply this", etc. The student must not know a problem set is coming until it actually arrives.
+Your ONLY job right now is to teach the remaining objectives — one at a time, in depth — until each is genuinely understood. When the last objective lands, the system unlocks and delivers the problem set automatically. Until then: teach. Nothing else.`
     } else if (sessionScore >= 80 && sessionScore < 100) {
-      lessonPhase = `PHASE 3 - CAPSTONE PROBLEM SET. The system has authoritatively determined the student is ready for capstone — the actual sessionScore is above the 80% threshold. Output the capstone problem set now (2–3 challenging applied problems using \`\`\`problem blocks). Do NOT re-teach or repeat prior content. Do NOT state the score number yourself; the UI already shows it.`
+      lessonPhase = `PHASE 3 - CAPSTONE PROBLEM SET. The full syllabus has now been taught (progress reached 80%). Output the capstone problem set NOW.
+- FIRST, write ONE short paragraph of clear SUBMISSION INSTRUCTIONS: the student should work through every problem; they can type their answers directly in chat OR upload a photo/file of their work using the upload button; they should attempt all problems before submitting; and you will then review and score each one with feedback. Note that they can download the whole problem set as a clean PDF using the "Download PDF" button shown on the set.
+- THEN output 2–3 challenging applied problems that together cover ALL objectives (weight toward the student's demonstrated weak areas), each in its own \`\`\`problem block with clear POINTS and ACCEPT fields.
+- Do NOT re-teach or repeat prior content. Do NOT state the score number yourself; the UI already shows it.`
     } else {
       lessonPhase = `PHASE 4 - EVALUATION/COMPLETION. The system has marked this session as complete. Evaluate submitted answers or confirm completion. Do NOT re-teach or repeat syllabus. Do NOT state the score number yourself; the UI already shows it.`
     }
@@ -728,13 +738,14 @@ POINTS: [1-10]
 ACCEPT: text | image | file
 \`\`\`
 
-Progress (silent - output after every student response):
+Progress (silent — output after EVERY student response; the system reads this to move the progress bar):
 \`\`\`progress
-SCORE: [0-100]
-OBJECTIVE_1: [understood/partial/not-understood]
-OBJECTIVE_2: [understood/partial/not-understood]
+OBJECTIVE_1: [understood | partial | not-understood]
+OBJECTIVE_2: [understood | partial | not-understood]
+... one line per chapter objective, in order ...
 NOTES: [one line]
 \`\`\`
+Mark an objective "understood" ONLY after you have actually TAUGHT it AND the student has demonstrated grasp (a correct answer or clear explanation on it) — never just because you mentioned it. "partial" = taught but still shaky; "not-understood" = not yet taught or not grasped. The progress bar is COMPUTED from these statuses (every objective understood = 80% = the syllabus is complete and the problem set unlocks), so they must be scrupulously honest — marking objectives understood prematurely fakes progress and is a failure. Do NOT output a SCORE line; the system owns the number.
 
 Submission review (after all problems answered):
 \`\`\`submission-review
