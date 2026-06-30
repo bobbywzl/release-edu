@@ -101,12 +101,17 @@ export function buildSystemPrompt(
   const firstName = studentContext.profile.name?.split(' ')[0] || studentContext.profile.name || 'there'
 
   // Build learner profile string
-  const { age, occupation, education } = studentContext.profile
+  const { age, occupation, education, advancementLevel } = studentContext.profile
   const learnerProfileParts: string[] = []
   if (age) learnerProfileParts.push(`${age} years old`)
   if (occupation) learnerProfileParts.push(occupation.toLowerCase())
   if (education) learnerProfileParts.push(education)
   const learnerProfile = learnerProfileParts.length > 0 ? learnerProfileParts.join(', ') : null
+  // The level the student explicitly chose for this course — teach to it.
+  if (advancementLevel) {
+    parts.push(`## Target Academic Level: ${advancementLevel}
+The student chose a **${advancementLevel}**-level course. Calibrate your teaching depth, rigor, vocabulary, and the difficulty of your questions to this level — roughly: beginner ≈ intro/100-level (build intuition, minimal jargon); intermediate ≈ 200–300-level undergrad (mechanisms and applications with standard terminology); advanced ≈ 400-level/early-grad (rigorous, derivations, edge cases, primary sources); professional ≈ graduate-seminar/practitioner depth. Do not teach below or above the chosen level.`)
+  }
 
   // Identity
   parts.push(`You are Bob — AI mentor for Release EDU. Concise, sharp, Socratic.

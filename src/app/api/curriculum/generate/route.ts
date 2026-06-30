@@ -22,6 +22,8 @@ interface OnboardingProfile {
   learningStyle: string
   personalityTraits: string[]
   aspirations: string
+  /** beginner | intermediate | advanced | professional — desired depth/rigor. */
+  advancementLevel?: string
   educationFrustrations?: string[]
   baselineAssessment: {
     math: number
@@ -101,8 +103,10 @@ CRITICAL INSTRUCTIONS for the "interests" field:
 
 For "aspirations": be specific about what they want to BUILD, not just learn.
 
+For "advancementLevel": the depth/rigor the student asked for — one of exactly "beginner", "intermediate", "advanced", or "professional". Use what they explicitly said; if they did not specify, infer conservatively from their age/background/goals and default to "intermediate".
+
 Return ONLY valid JSON, no markdown fences:
-{"interests":["specific-sub-discipline-1","specific-sub-discipline-2","...at least 4-8"],"strengths":["..."],"weaknesses":["..."],"learningStyle":"visual / hands-on / reading / discussion","personalityTraits":["..."],"aspirations":"specific thing they want to build or achieve","educationFrustrations":["..."],"baselineAssessment":{"math":5,"writing":5,"science":5,"history":5,"criticalThinking":5}}`
+{"interests":["specific-sub-discipline-1","specific-sub-discipline-2","...at least 4-8"],"strengths":["..."],"weaknesses":["..."],"learningStyle":"visual / hands-on / reading / discussion","personalityTraits":["..."],"aspirations":"specific thing they want to build or achieve","advancementLevel":"beginner | intermediate | advanced | professional","educationFrustrations":["..."],"baselineAssessment":{"math":5,"writing":5,"science":5,"history":5,"criticalThinking":5}}`
           }]
         })
         {
@@ -197,16 +201,33 @@ Return ONLY valid JSON, no markdown fences:
     learnerOrgLine = rawMeta.isIndividual
       ? 'learning independently (no formal school/org)'
       : (rawMeta.organization ? `at ${rawMeta.organization}` : null)
+    // Carry a previously-saved level forward (e.g. on Regenerate, where the
+    // profile is rebuilt from the DB and won't carry advancementLevel).
+    if (!profile.advancementLevel && rawMeta.advancementLevel) {
+      profile.advancementLevel = rawMeta.advancementLevel
+    }
   } catch { /* ignore */ }
 
-  // Save profile and mark onboarded
+  // Normalize + default the level once so every downstream use is consistent.
+  {
+    const lvl = (profile.advancementLevel || '').toLowerCase()
+    profile.advancementLevel = ['beginner', 'intermediate', 'advanced', 'professional'].includes(lvl) ? lvl : 'intermediate'
+  }
+
+  // Save profile and mark onboarded. Persist the chosen level into _profileMeta
+  // so regenerations and Bob's teaching keep it.
   try {
+    const sp = await store.getProfile()
+    let rs: Record<string, unknown> = {}
+    try { rs = sp?.roadmapState ? JSON.parse(sp.roadmapState as string) : {} } catch { rs = {} }
+    rs._profileMeta = { ...((rs._profileMeta as Record<string, unknown>) ?? {}), advancementLevel: profile.advancementLevel }
     await store.updateProfile({
       interests: JSON.stringify(profile.interests || []),
       strengths: JSON.stringify(profile.strengths || []),
       weaknesses: JSON.stringify(profile.weaknesses || []),
       learningStyle: profile.learningStyle || 'visual',
       aspirations: profile.aspirations || '',
+      roadmapState: JSON.stringify(rs),
       isOnboarded: true,
     })
   } catch (err) {
@@ -294,6 +315,16 @@ ${learnerProfileLine ? `**Learner Profile:** ${learnerProfileLine} — CRITICAL:
 **Aspirations:** ${profile.aspirations}
 ${profile.educationFrustrations?.length ? `**What they disliked about traditional education (AVOID these in curriculum design):** ${profile.educationFrustrations.join(', ')}` : ''}
 **Baseline Assessment:** Math: ${profile.baselineAssessment.math}/10, Writing: ${profile.baselineAssessment.writing}/10, Science: ${profile.baselineAssessment.science}/10, History: ${profile.baselineAssessment.history}/10, Critical Thinking: ${profile.baselineAssessment.criticalThinking}/10
+**Target Academic Level:** ${profile.advancementLevel || 'intermediate'}
+
+## TARGET ACADEMIC LEVEL — CALIBRATE EVERY CHAPTER TO THIS (the student explicitly chose it)
+The student asked for a **${profile.advancementLevel || 'intermediate'}**-level course. This is the single strongest signal for how hard, how deep, and how professional the chapters should be. Map it to a real university tier and pitch EVERY chapter — topic selection, depth, vocabulary, prerequisites, and the difficulty of the project — to that tier:
+- **beginner** → first-exposure / 100-level intro survey courses (and for young learners, accessible and concrete). Assume no prior background; build intuition first, minimal jargon, lots of examples. Chapters cover the foundational vocabulary and core ideas only.
+- **intermediate** → 200–300-level undergraduate courses. Assume the basics are known; go into mechanisms, methods, and real applications with standard field terminology. Chapters mirror a typical sophomore/junior syllabus.
+- **advanced** → 400-level / senior undergraduate-to-early-graduate courses. Rigorous treatment: proofs/derivations where relevant, primary-source reading, edge cases, current debates. Chapters mirror an honors/capstone or first-year-grad syllabus.
+- **professional** → graduate-seminar / industry-practitioner depth. Cutting-edge, specialized, and directly applicable to professional practice or research. Chapters assume strong fundamentals and go straight to the hard, valuable material — the depth a working expert or PhD student would expect.
+
+Anchor your chapter choices to how REAL universities sequence this subject at the chosen tier (use the existing-curricula research above). Do NOT water an advanced learner down, and do NOT overwhelm a beginner — match the tier exactly. The chosen level OVERRIDES a generic reading of age/occupation when they conflict (a motivated 15-year-old who asked for "advanced" gets advanced; a professional who asked for a "beginner" refresher gets beginner).
 ${memoryBlock}
 
 **Research on their top interest (${topInterest}):**

@@ -11,6 +11,7 @@ export interface StudentContext {
     age: number | null
     occupation: string | null
     education: string | null
+    advancementLevel: string | null // beginner | intermediate | advanced | professional
     learningStage: number // 1-4
     stageName: string
     xp: number
@@ -131,7 +132,7 @@ async function buildContextFromDB(userId: string): Promise<StudentContext> {
   const currentProjects = safeParseJSON<string[]>(profile?.currentProjects, [])
 
   // Pull age + occupation from _profileMeta
-  const roadmapRaw = safeParseJSON<{ _profileMeta?: { birthdate?: string; occupation?: string; education?: string } }>(
+  const roadmapRaw = safeParseJSON<{ _profileMeta?: { birthdate?: string; occupation?: string; education?: string; advancementLevel?: string } }>(
     (profile as { roadmapState?: string | null } | null)?.roadmapState ?? null, {}
   )
   const profileMeta = roadmapRaw._profileMeta
@@ -145,6 +146,7 @@ async function buildContextFromDB(userId: string): Promise<StudentContext> {
   }
   const occupation = profileMeta?.occupation ?? null
   const education = profileMeta?.education ?? null
+  const advancementLevel = profileMeta?.advancementLevel ?? null
 
   const roadmapState = safeParseJSON<{
     completed?: string[]
@@ -208,6 +210,7 @@ async function buildContextFromDB(userId: string): Promise<StudentContext> {
       age,
       occupation,
       education,
+      advancementLevel,
       learningStage: profile?.learningStage ?? 1,
       stageName: STAGE_NAMES[profile?.learningStage ?? 1],
       xp: profile?.xp ?? 0,
@@ -263,6 +266,7 @@ export async function getStudentContext(
         age: null,
         occupation: null,
         education: null,
+        advancementLevel: null,
         learningStage: 1,
         stageName: STAGE_NAMES[1],
         xp: 0,
