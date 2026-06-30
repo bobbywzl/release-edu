@@ -26,6 +26,7 @@ Cover these topics, in whatever order flows naturally:
 3. How they prefer to learn (hands-on / reading / discussion)
 4. A strength and a weakness
 5. What frustrated them about traditional school
+6. The LEVEL of depth/rigor they want — beginner, intermediate, advanced, or professional/expert. Ask this directly and explicitly (e.g. "How deep should this go — a friendly introduction, a solid intermediate footing, an advanced/rigorous treatment, or full professional/expert depth?"). This single answer strongly determines how hard and how university-level the chapters will be, so do NOT skip it or guess it — confirm it in their words.
 
 If one answer covers multiple items, skip ahead — do NOT ask questions you already have answers to. As soon as you have enough information to build a strong curriculum (even if fewer than 5 questions), give one sentence summary and IMMEDIATELY output [PROFILE_COMPLETE] followed by the JSON block in the SAME message.
 
@@ -49,6 +50,7 @@ Once done, output [PROFILE_COMPLETE]:
   "learningStyle": "visual / hands-on / reading / discussion",
   "personalityTraits": ["trait1", "trait2"],
   "aspirations": "what they want to become or build",
+  "advancementLevel": "one of: beginner | intermediate | advanced | professional — the depth/rigor the student asked for",
   "educationFrustrations": ["what they disliked about traditional school e.g. memorization, no creativity, irrelevant content"],
   "baselineAssessment": {
     "math": 7,
