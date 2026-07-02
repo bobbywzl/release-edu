@@ -59,7 +59,7 @@ export interface DbScopedStore {
   createConversation(title: string, context?: string): Promise<Conversation>
   updateConversation(id: string, updates: { title?: string; context?: string }): Promise<Conversation | null>
   deleteConversation(id: string): Promise<boolean>
-  addMessage(conversationId: string, role: string, content: string): Promise<Message>
+  addMessage(conversationId: string, role: string, content: string, metadata?: string): Promise<Message>
 
   // Insights
   getInsights(): Promise<Insight[]>
@@ -234,9 +234,9 @@ function createDbScopedStore(userId: string): DbScopedStore {
       return true
     },
 
-    async addMessage(conversationId: string, role: string, content: string) {
+    async addMessage(conversationId: string, role: string, content: string, metadata?: string) {
       return prisma.message.create({
-        data: { conversationId, role, content },
+        data: { conversationId, role, content, ...(metadata ? { metadata } : {}) },
       })
     },
 

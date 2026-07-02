@@ -13,7 +13,7 @@ import {
   Bot, Send, Plus, MessageSquare, Trash2, ChevronRight, ChevronLeft,
   ChevronDown, ChevronUp, Lightbulb, Target, Zap, BookOpen,
   Camera, X, Sparkles, Search, GraduationCap, SearchIcon, ClipboardList, FolderOpen,
-  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX, CheckCircle, Download,
+  ThumbsUp, ThumbsDown, Paperclip, PanelLeftOpen, PanelRightOpen, Mic, Volume2, VolumeX, CheckCircle, Download, ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSpeechRecognition, speak, stopSpeaking, speechSynthesisSupported, voiceLangTag } from '@/lib/use-voice'
@@ -304,6 +304,16 @@ interface ApiMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  metadata?: string | null
+}
+
+// An uploaded file shown (and openable) inside a chat bubble. `url` is a
+// blob/object URL usable in <img>/window.open; may be absent for very large
+// files where only name+type were persisted.
+interface MsgAttachment {
+  name: string
+  type: string
+  url?: string
 }
 
 interface LocalMessage {
@@ -313,6 +323,44 @@ interface LocalMessage {
   timestamp: Date
   modeSwitch?: ChatMode // marks a mode-switch divider
   hidden?: boolean // hide auto system-instruction messages from UI
+  attachment?: MsgAttachment
+}
+
+// Rebuild an attachment from persisted message metadata. Stored data URLs
+// are converted to blob URLs synchronously (Chrome blocks top-frame data:
+// navigation, blob: opens fine everywhere).
+function attachmentFromMetadata(metadata?: string | null): MsgAttachment | undefined {
+  if (!metadata) return undefined
+  try {
+    const parsed = JSON.parse(metadata) as { attachment?: { name?: string; type?: string; dataUrl?: string } }
+    const att = parsed.attachment
+    if (!att?.name || !att?.type) return undefined
+    let url: string | undefined
+    if (att.dataUrl?.startsWith('data:')) {
+      const base64 = att.dataUrl.slice(att.dataUrl.indexOf(',') + 1)
+      const bin = atob(base64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      url = URL.createObjectURL(new Blob([bytes], { type: att.type }))
+    }
+    return { name: att.name, type: att.type, url }
+  } catch {
+    return undefined
+  }
+}
+
+// Resolve a MIME type for files whose File.type is empty (.py, .csv, .md…).
+const EXT_MIME: Record<string, string> = {
+  txt: 'text/plain', md: 'text/plain', csv: 'text/csv', json: 'application/json',
+  py: 'text/plain', js: 'text/plain', ts: 'text/plain', jsx: 'text/plain', tsx: 'text/plain',
+  html: 'text/html', css: 'text/plain', xml: 'text/xml', yml: 'text/plain', yaml: 'text/plain',
+  sh: 'text/plain', java: 'text/plain', c: 'text/plain', cpp: 'text/plain', h: 'text/plain',
+  rs: 'text/plain', go: 'text/plain', rb: 'text/plain', pdf: 'application/pdf',
+}
+function resolveFileMime(file: File): string | null {
+  if (file.type) return file.type
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  return EXT_MIME[ext] ?? null
 }
 
 // Dynamic time-aware greeting for the empty chat state
@@ -504,20 +552,25 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
         )}
       >
         {isUser ? (
-          (() => {
-            const replyMatch = displayContent.match(/^\[Referring to this specific part of your response: "(.+?)"\]\n\n([\s\S]*)$/)
-            if (replyMatch) {
-              return (
-                <div>
-                  <div className="mb-2 pl-2 border-l-2 border-primary-foreground/30 text-xs text-primary-foreground/70 italic leading-relaxed">
-                    &ldquo;{replyMatch[1]}&rdquo;
+          <>
+            {message.attachment && <MessageAttachment attachment={message.attachment} />}
+            {(() => {
+              // With a visible attachment, the placeholder text is redundant.
+              if (message.attachment && displayContent === '[Image uploaded]') return null
+              const replyMatch = displayContent.match(/^\[Referring to this specific part of your response: "(.+?)"\]\n\n([\s\S]*)$/)
+              if (replyMatch) {
+                return (
+                  <div>
+                    <div className="mb-2 pl-2 border-l-2 border-primary-foreground/30 text-xs text-primary-foreground/70 italic leading-relaxed">
+                      &ldquo;{replyMatch[1]}&rdquo;
+                    </div>
+                    <p className="whitespace-pre-wrap leading-relaxed">{replyMatch[2]}</p>
                   </div>
-                  <p className="whitespace-pre-wrap leading-relaxed">{replyMatch[2]}</p>
-                </div>
-              )
-            }
-            return <p className="whitespace-pre-wrap leading-relaxed">{displayContent}</p>
-          })()
+                )
+              }
+              return <p className="whitespace-pre-wrap leading-relaxed">{displayContent}</p>
+            })()}
+          </>
         ) : hasHighlightSupport ? (
           <HighlightableText
             messageId={message.id}
@@ -1014,6 +1067,64 @@ function ProblemSetActions({ problems }: { problems: ParsedProblem[] }) {
       </button>
       <span className="text-[11px] text-muted-foreground">Answer each below — type or upload your work, then send to submit.</span>
     </div>
+  )
+}
+
+// Uploaded-file attachment inside a chat bubble — visible and openable.
+// Images open a fullscreen lightbox; other files open in a new tab via
+// their blob URL. Chips without a URL (very large files whose bytes weren't
+// persisted) still show name/type.
+function MessageAttachment({ attachment }: { attachment: MsgAttachment }) {
+  const [lightbox, setLightbox] = useState(false)
+  const isImage = attachment.type.startsWith('image/')
+
+  if (isImage && attachment.url) {
+    return (
+      <>
+        <button type="button" onClick={() => setLightbox(true)} className="block mb-2 group/att" title={attachment.name}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={attachment.url}
+            alt={attachment.name}
+            className="max-h-48 max-w-full rounded-lg border border-white/20 group-hover/att:opacity-90 transition-opacity cursor-zoom-in"
+          />
+        </button>
+        {lightbox && (
+          <div
+            className="fixed inset-0 z-[250] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-overlay-in cursor-zoom-out"
+            onClick={e => { e.stopPropagation(); setLightbox(false) }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={attachment.url} alt={attachment.name} className="max-w-full max-h-full rounded-xl animate-modal-in" />
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); setLightbox(false) }}
+              className="absolute top-4 right-4 p-2 rounded-md bg-card/90 border border-border text-foreground hover:bg-card transition-colors"
+              aria-label="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  const icon = attachment.type.startsWith('video/') ? '🎬'
+    : attachment.type === 'application/pdf' ? '📕' : '📄'
+  const chip = (
+    <span className="inline-flex items-center gap-2 rounded-lg border border-white/25 bg-black/10 px-3 py-2 mb-2 max-w-full">
+      <span className="text-lg leading-none">{icon}</span>
+      <span className="text-xs font-medium truncate">{attachment.name}</span>
+      {attachment.url && <ExternalLink className="w-3 h-3 opacity-70 flex-shrink-0" />}
+    </span>
+  )
+  return attachment.url ? (
+    <a href={attachment.url} target="_blank" rel="noreferrer" className="block hover:opacity-85 transition-opacity" title={attachment.name}>
+      {chip}
+    </a>
+  ) : (
+    <div>{chip}</div>
   )
 }
 
@@ -1902,6 +2013,7 @@ function ChatPageInner() {
             const msgs: LocalMessage[] = (data.messages || []).map((m: ApiMessage) => ({
               id: m.id, role: m.role, content: m.content, timestamp: new Date(m.createdAt),
               hidden: isAutoSystemMessage(m.content),
+              attachment: attachmentFromMetadata(m.metadata),
             }))
             setConversations(prev => prev.some(c => c.id === conv.id) ? prev : [conv, ...prev])
             setActiveId(conv.id)
@@ -2088,6 +2200,7 @@ function ChatPageInner() {
             const msgs: LocalMessage[] = (data.messages || []).map((m: ApiMessage) => ({
               id: m.id, role: m.role, content: m.content, timestamp: new Date(m.createdAt),
               hidden: isAutoSystemMessage(m.content),
+              attachment: attachmentFromMetadata(m.metadata),
             }))
             setConversations(prev => prev.some(c => c.id === conv.id) ? prev : [conv, ...prev])
             setActiveId(conv.id)
@@ -2290,6 +2403,7 @@ function ChatPageInner() {
             content: m.content,
             timestamp: new Date(m.createdAt),
             hidden: isAutoSystemMessage(m.content),
+            attachment: attachmentFromMetadata(m.metadata),
           }))
         )
       }
@@ -2537,13 +2651,37 @@ function ChatPageInner() {
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
-    const file = e.dataTransfer.files?.[0]
-    if (!file) return
-    // Accept images and common document types
-    if (file.type.startsWith('image/') || file.type.startsWith('video/') || file.type === 'application/pdf' || file.type.includes('document') || file.type.includes('text')) {
-      const preview = URL.createObjectURL(file)
-      setPendingImage({ file, preview })
+
+    // Folders arrive as zero-type File entries that can't be read — detect
+    // them explicitly and say so, instead of silently doing nothing.
+    const items = Array.from(e.dataTransfer.items ?? [])
+    const hasDirectory = items.some(it => {
+      try {
+        return (it as { webkitGetAsEntry?: () => { isDirectory?: boolean } | null }).webkitGetAsEntry?.()?.isDirectory
+      } catch { return false }
+    })
+    if (hasDirectory) {
+      addToast(tr('chat.folderDropUnsupported'), 'info')
+      return
     }
+
+    const files = Array.from(e.dataTransfer.files ?? [])
+    if (files.length === 0) return
+
+    // One attachment at a time — pick the first supported file and say so.
+    const supported = files.find(f =>
+      f.type.startsWith('image/') || f.type.startsWith('video/') ||
+      f.type === 'application/pdf' || f.type.includes('document') ||
+      f.type.includes('text') || resolveFileMime(f) !== null
+    )
+    if (!supported) {
+      addToast(tr('chat.fileTypeUnsupported'), 'info')
+      return
+    }
+    if (files.length > 1) addToast(tr('chat.oneFileAtATime'), 'info')
+
+    const preview = URL.createObjectURL(supported)
+    setPendingImage({ file: supported, preview })
   }
 
   function clearPendingImage() {
@@ -2555,11 +2693,15 @@ function ChatPageInner() {
     if (!pendingImage || isStreaming) return
 
     const text = input.trim()
+    const resolvedMime = resolveFileMime(pendingImage.file) ?? pendingImage.file.type ?? 'application/octet-stream'
     const userMsg: LocalMessage = {
       id: `temp-${nextTempId++}`,
       role: 'user',
       content: text || '[Image uploaded]',
       timestamp: new Date(),
+      // The attachment renders in the bubble (openable). Keep the object URL
+      // alive for the session — do NOT revoke it here.
+      attachment: { name: pendingImage.file.name, type: resolvedMime, url: pendingImage.preview },
     }
     setMessages(prev => [...prev, userMsg])
     setInput('')
@@ -2568,11 +2710,12 @@ function ChatPageInner() {
     setIsResearching(true)
     userStoppedRef.current = false
     const imageToSend = pendingImage
-    clearPendingImage()
+    setPendingImage(null) // keep the preview URL — the bubble now owns it
 
     try {
       const formData = new FormData()
       formData.append('image', imageToSend.file)
+      formData.append('mime', resolvedMime)
       if (text) formData.append('message', text)
       if (activeId && !activeId.startsWith('temp-')) formData.append('conversationId', activeId)
 
@@ -2828,6 +2971,7 @@ function ChatPageInner() {
                 id: m.id, role: m.role as 'user' | 'assistant' | 'system',
                 content: m.content, timestamp: new Date(m.createdAt),
                 hidden: isAutoSystemMessage(m.content),
+                attachment: attachmentFromMetadata(m.metadata),
               })))
             }
           } catch {}
@@ -3122,6 +3266,7 @@ function ChatPageInner() {
                 id: m.id, role: m.role as 'user' | 'assistant' | 'system',
                 content: m.content, timestamp: new Date(m.createdAt),
                 hidden: isAutoSystemMessage(m.content),
+                attachment: attachmentFromMetadata(m.metadata),
               })))
             }
           } catch {}
@@ -3298,6 +3443,7 @@ function ChatPageInner() {
                 id: m.id, role: m.role as 'user' | 'assistant' | 'system',
                 content: m.content, timestamp: new Date(m.createdAt),
                 hidden: isAutoSystemMessage(m.content),
+                attachment: attachmentFromMetadata(m.metadata),
               })))
             }
           } catch {}
@@ -3888,13 +4034,25 @@ function ChatPageInner() {
           {/* Pending image preview */}
           {pendingImage && (
             <div className="flex items-center gap-2 mb-3 max-w-4xl mx-auto">
-              <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-border flex-shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={pendingImage.preview} alt="Upload preview" className="w-full h-full object-cover" />
+              <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-border flex-shrink-0 bg-muted/40 flex items-center justify-center">
+                {pendingImage.file.type.startsWith('image/') ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={pendingImage.preview} alt="Upload preview" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-2xl select-none">
+                    {pendingImage.file.type.startsWith('video/') ? '🎬'
+                      : (resolveFileMime(pendingImage.file) === 'application/pdf') ? '📕' : '📄'}
+                  </span>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs text-foreground font-medium truncate">{pendingImage.file.name}</p>
-                <p className="text-[10px] text-muted-foreground">{tr("chat.imageWillAnalyze")}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {(pendingImage.file.size / 1024 < 1000
+                    ? `${Math.max(1, Math.round(pendingImage.file.size / 1024))} KB`
+                    : `${(pendingImage.file.size / 1048576).toFixed(1)} MB`)}
+                  {' · '}{tr("chat.imageWillAnalyze")}
+                </p>
               </div>
               <button onClick={clearPendingImage} className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors">
                 <X className="w-4 h-4" />

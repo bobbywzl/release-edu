@@ -102,66 +102,35 @@ export async function POST(req: NextRequest) {
       const lockDate = plan?.lockedAt ? new Date(plan.lockedAt) : null
       const unlockDate = lockDate ? new Date(lockDate.getTime() + 14 * 24 * 60 * 60 * 1000) : null
 
+      // The detailed curriculum sheet is injected in BOTH branches — even
+      // while locked, Bob must be able to OBSERVE the real curriculum
+      // (exact chapters, statuses, remarks) to discuss it accurately.
+      const { buildCurriculumSheet } = await import('@/lib/curriculum-sheet')
+      const curriculumSheet = await buildCurriculumSheet(storeUserId)
+
       if (isLocked) {
         // Hard override - tell Bob the curriculum is locked and it cannot make changes
-        systemPrompt = systemPrompt + `\n\n## ⛔ CURRICULUM IS LOCKED - READ THIS FIRST
+        systemPrompt = systemPrompt + `\n\n${curriculumSheet}\n\n## ⛔ CURRICULUM IS LOCKED - READ THIS FIRST
 
 The student's curriculum was locked on ${lockDate?.toDateString()}. It unlocks on ${unlockDate?.toDateString()}.
 
 **YOU CANNOT MAKE ANY CURRICULUM CHANGES WHILE LOCKED.** This is absolute.
 - Do NOT add tracks, chapters, homework, quizzes, or projects
 - Do NOT modify, rename, reorder, or delete anything
-- Do NOT promise changes or say you'll update things
+- Do NOT promise changes or say you'll update things — promises made now will NOT be applied by the system, so a promise is a lie to the student
 - Do NOT output any curriculum action JSON
 
 If the student asks for any curriculum change, say exactly this:
 "Your curriculum is locked until ${unlockDate?.toDateString()}. No changes can be made during this period - this protects the integrity of your current learning cycle. If you need an emergency change, your Mentor can approve a forced release."
 
-You CAN still: discuss learning strategies, answer questions about subjects, review progress, plan for next cycle. Just no changes.`
+You CAN still: discuss the curriculum in detail using the sheet above, answer questions about subjects, review progress, note what the student wants changed so they can bring it up after unlock, and plan for the next cycle. Just no changes and no promises of changes.`
       } else {
-        // Full interface snapshot for L&C mode
-        const [currentTracks, projects, files, plan] = await Promise.all([
-          prisma.track.findMany({
-            where: { userId: storeUserId },
-            include: {
-              chapters: { select: { id: true, title: true, status: true, sessionScore: true }, orderBy: { order: 'asc' } },
-              projects: { select: { id: true, title: true, description: true, status: true, progress: true } },
-              homeworks: { select: { id: true, title: true, status: true } },
-            },
-            orderBy: { order: 'asc' },
-          }),
-          prisma.subjectProject.findMany({
-            where: { track: { userId: storeUserId } },
-            select: { id: true, title: true, status: true, progress: true },
-            take: 10,
-          }),
-          prisma.linkedFile.findMany({
-            where: { userId: storeUserId },
-            select: { id: true, name: true, workType: true, workId: true },
-            orderBy: { addedAt: 'desc' },
-            take: 20,
-          }),
-          prisma.curriculumPlan.findFirst({
-            where: { userId: storeUserId },
-            select: { version: true, generatedAt: true },
-          }),
-        ])
-
-        const trackSnapshot = currentTracks.length > 0
-          ? currentTracks.map(t => {
-            const completedChapters = t.chapters.filter(c => c.status === 'completed').length
-            const inProgress = t.chapters.filter(c => c.status === 'in-progress')
-            return [
-              `**${t.name}** [${t.type}] - ${completedChapters}/${t.chapters.length} chapters complete`,
-              t.chapters.map(c => `  - ${c.title} [${c.status}${c.sessionScore ? ` ${c.sessionScore}%` : ''}]`).join('\n'),
-              // Title is just the artifact name — include the description so
-              // Bob remembers the full project brief, not only its label.
-              t.projects.length > 0 ? t.projects.map(p => `  📌 Project: "${p.title}" [${p.status}, ${p.progress}%]${p.description ? ` — ${p.description}` : ''}`).join('\n') : '  📌 No project yet',
-              t.homeworks.length > 0 ? `  📝 Homework: ${t.homeworks.map(h => `${h.title} [${h.status}]`).join(', ')}` : '',
-            ].filter(Boolean).join('\n')
-          }).join('\n\n')
-          : '(no tracks - curriculum not yet generated)'
-
+        const files = await prisma.linkedFile.findMany({
+          where: { userId: storeUserId },
+          select: { id: true, name: true, workType: true, workId: true },
+          orderBy: { addedAt: 'desc' },
+          take: 20,
+        })
         const fileSnapshot = files.length > 0
           ? files.map(f => `- ${f.name} [${f.workType || 'general'}]`).join('\n')
           : '(no files uploaded yet)'
@@ -169,22 +138,18 @@ You CAN still: discuss learning strategies, answer questions about subjects, rev
         const interfaceSnapshot = `
 ## FULL INTERFACE SNAPSHOT - Current state of the student's Release EDU dashboard
 
-### Curriculum (v${plan?.version ?? '?'})
-${trackSnapshot}
-
-### Projects (all tracks)
-${projects.length > 0 ? projects.map(p => `- "${p.title}" [${p.status}, ${p.progress}% complete]`).join('\n') : '(no projects)'}
+${curriculumSheet}
 
 ### Uploaded Files (recent)
 ${fileSnapshot}
 
-You have complete visibility of the student's interface. Use this to:
+You have complete visibility of the student's curriculum above — every track, every chapter with its exact title, status, description and key topics, plus the student's documented remarks. Use this to:
 - Answer questions about their progress accurately
-- Make changes that are consistent with what exists
+- LISTEN to what the student asks for and make fitting, concrete changes — when you agree to a change, name the exact tracks/chapters (by their titles from the sheet) you are changing and state clearly that you HAVE made the change ("Done — I've updated..."), because the system applies changes by parsing your confirmation
 - Identify gaps (missing projects, incomplete tracks, etc.)
 - Give specific, grounded advice based on actual state
 
-IMPORTANT: If the student asks to reformat/redesign/restructure, use replace_curriculum - do NOT use create_track which would duplicate. Always check what exists above before acting.`
+IMPORTANT: If the student asks to reformat/redesign/restructure the whole curriculum, use replace_curriculum semantics - do NOT describe creating duplicate tracks. For chapter-level requests (rename, slim down, re-scope, remove a chapter), reference the exact chapter titles from the sheet. Always check what exists above before acting. After confirming a change, tell the student the curriculum page will refresh with the update in a moment.`
 
         systemPrompt = systemPrompt + interfaceSnapshot
       }
@@ -1436,17 +1401,10 @@ async function extractAndApplyCurriculumChanges(
   userId: string,
 ): Promise<void> {
   try {
-    // Fetch current curriculum state before extraction
-    const currentTracks = await prisma.track.findMany({
-      where: { userId },
-      include: { chapters: { select: { id: true, title: true, status: true, order: true } } },
-      orderBy: { order: 'asc' },
-    })
-    const currentCurriculumSummary = currentTracks.length > 0
-      ? currentTracks.map(t =>
-          `- ${t.name} (type: ${t.type}, ${t.chapters.length} chapters, completed: ${t.chapters.filter(c => c.status === 'completed').length}/${t.chapters.length})`
-        ).join('\n')
-      : '(empty - no tracks exist yet)'
+    // The extractor reads the SAME detailed curriculum sheet Bob saw, so
+    // extracted actions can target exact tracks and chapters by title.
+    const { buildCurriculumSheet } = await import('@/lib/curriculum-sheet')
+    const currentCurriculumSummary = await buildCurriculumSheet(userId)
 
     const Anthropic = (await import('@anthropic-ai/sdk')).default
     const client = new Anthropic({ apiKey })
@@ -1455,7 +1413,7 @@ async function extractAndApplyCurriculumChanges(
       // L&C action extraction — structured-output classification task. Haiku
       // is right-sized; Opus reasoning gives no quality lift here.
       model: pickBackgroundModel(),
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [{
         role: 'user',
         content: `You are parsing a conversation between a student and Bob (AI mentor in L&C mode) to extract curriculum changes that Bob agreed to make.
@@ -1505,11 +1463,19 @@ Available action types:
 {"type": "add_project", "trackName": "Track Name", "project": {"title": "Short artifact name — 3-8 words naming WHAT gets built, no explanation", "description": "Comprehensive brief: exactly what the student will build, the scope, accompanying deliverables (write-up, demo, benchmark), and the central challenge"}}
 Only use this for project-type tracks. One project per track max - if a project already exists, propose updating it instead. Titles stay short; ALL detail goes in the description.
 
-7. Delete a specific track:
+8. Delete a specific track:
 {"type": "delete_track", "trackName": "exact track name"}
 
-8. Update a track's metadata (rename, redescribe, recolor):
+9. Update a track's metadata (rename, redescribe, recolor):
 {"type": "update_track", "trackName": "existing track name", "data": {"name": "new name", "description": "new desc", "color": "#hex"}}
+
+10. Update a specific chapter (rename, redescribe, slim down objectives/topics, adjust length, rewrite overview content). Reference the EXACT chapter title from the CURRENT CURRICULUM STATE sheet. One action per chapter:
+{"type": "update_chapter", "trackName": "Track Name", "chapterTitle": "exact existing chapter title", "data": {"title": "new title (optional)", "description": "new desc (optional)", "keyTopics": ["topic1","topic2"], "estimatedMinutes": 45, "content": "rewritten brief overview markdown (optional)"}}
+
+11. Delete a specific chapter:
+{"type": "delete_chapter", "trackName": "Track Name", "chapterTitle": "exact existing chapter title"}
+
+BROAD CONTENT RESTYLES: when Bob agreed to a style change across many chapters (e.g. "slim down each chapter", "fewer objectives per chapter", "tighter descriptions"), emit ONE update_chapter action PER affected chapter of the named track(s), each with the rewritten description/keyTopics reflecting the agreed style. If Bob agreed to apply it to the ENTIRE curriculum and per-chapter rewrites would be too many, cover the track the student is actively discussing first and include the rest as additional update_chapter actions as budget allows — never silently drop the change.
 
 Return ONLY a JSON array. If no confirmed changes, return [].`
       }],
@@ -1525,6 +1491,13 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
     } catch { return }
 
     if (!Array.isArray(parsed) || parsed.length === 0) return
+
+    // Track rows (with chapters) for the apply handlers below.
+    const currentTracks = await prisma.track.findMany({
+      where: { userId },
+      include: { chapters: { select: { id: true, title: true, status: true, order: true } } },
+      orderBy: { order: 'asc' },
+    })
 
     // Real changes are about to be applied — flag the plan as rebuilding so
     // the curriculum page (which polls /api/curriculum/status) can show a
@@ -1782,6 +1755,52 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
               }
             })
             console.log(`[L&C] update_track: updated "${trackName}"`)
+            break
+          }
+
+          case 'update_chapter': {
+            const trackName = action.trackName as string
+            const chapterTitle = action.chapterTitle as string
+            const d = action.data as { title?: string; description?: string; keyTopics?: string[]; estimatedMinutes?: number; content?: string }
+            if (!trackName || !chapterTitle || !d) break
+            const track = currentTracks.find(t => t.name.toLowerCase().includes(trackName.toLowerCase()))
+            if (!track) break
+            // Exact title match first; fall back to substring so lightly
+            // paraphrased titles still resolve.
+            const ch = track.chapters.find(c => c.title.toLowerCase() === chapterTitle.toLowerCase())
+              ?? track.chapters.find(c => c.title.toLowerCase().includes(chapterTitle.toLowerCase()))
+              ?? track.chapters.find(c => chapterTitle.toLowerCase().includes(c.title.toLowerCase()))
+            if (!ch) { console.log(`[L&C] update_chapter: no chapter matching "${chapterTitle}" in "${trackName}"`); break }
+
+            await prisma.chapter.update({
+              where: { id: ch.id },
+              data: {
+                ...(d.title && { title: d.title }),
+                ...(d.description !== undefined && { description: d.description }),
+                ...(Array.isArray(d.keyTopics) && { keyTopics: JSON.stringify(d.keyTopics) }),
+                ...(d.estimatedMinutes && { estimatedMinutes: d.estimatedMinutes }),
+                ...(d.content && { content: d.content }),
+              },
+            })
+            console.log(`[L&C] update_chapter: updated "${ch.title}" in "${track.name}"`)
+            break
+          }
+
+          case 'delete_chapter': {
+            const trackName = action.trackName as string
+            const chapterTitle = action.chapterTitle as string
+            if (!trackName || !chapterTitle) break
+            const track = currentTracks.find(t => t.name.toLowerCase().includes(trackName.toLowerCase()))
+            if (!track) break
+            const ch = track.chapters.find(c => c.title.toLowerCase() === chapterTitle.toLowerCase())
+              ?? track.chapters.find(c => c.title.toLowerCase().includes(chapterTitle.toLowerCase()))
+            if (!ch) { console.log(`[L&C] delete_chapter: no chapter matching "${chapterTitle}" in "${trackName}"`); break }
+            if (ch.status === 'completed') {
+              console.log(`[L&C] delete_chapter: refusing to delete completed chapter "${ch.title}" (progress preservation)`)
+              break
+            }
+            await prisma.chapter.delete({ where: { id: ch.id } })
+            console.log(`[L&C] delete_chapter: deleted "${ch.title}" from "${track.name}"`)
             break
           }
 

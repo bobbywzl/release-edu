@@ -270,6 +270,9 @@ const EN: Dict = {
   'chat.exploring': 'Exploring',
   'chat.workingOn2': 'Working on',
   'chat.imageWillAnalyze': 'Bob will analyze this image',
+  'chat.folderDropUnsupported': 'Folders can\u2019t be attached — drop individual files instead.',
+  'chat.fileTypeUnsupported': 'That file type isn\u2019t supported. Try an image, video, PDF, or text file.',
+  'chat.oneFileAtATime': 'One file at a time — attached the first one.',
   'chat.uploadWorkFile': 'Submit work file for Bob to review',
   'chat.uploadImageAnalyze': 'Upload an image for Bob to analyze',
 
@@ -725,6 +728,9 @@ const ZH: Dict = {
   'chat.exploring': '探索中',
   'chat.workingOn2': '正在进行',
   'chat.imageWillAnalyze': 'Bob 会分析这张图片',
+  'chat.folderDropUnsupported': '暂不支持添加文件夹——请拖入单个文件。',
+  'chat.fileTypeUnsupported': '不支持该文件类型。请使用图片、视频、PDF 或文本文件。',
+  'chat.oneFileAtATime': '一次只能附加一个文件——已附加第一个。',
   'chat.uploadWorkFile': '提交作业文件供 Bob 评阅',
   'chat.uploadImageAnalyze': '上传图片供 Bob 分析',
 

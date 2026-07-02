@@ -632,16 +632,9 @@ function CurriculumStatusCard({
             {tr('curriculum.requestChange')}
           </Button>
         ) : (
-          <>
-            <Link href="/dashboard/chat" className="flex-1">
-              <Button size="sm" className="w-full text-xs bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20">
-                {tr('dashboard.continueLearning')}
-              </Button>
-            </Link>
-            <Button size="sm" variant="ghost" className="text-xs text-muted-foreground/60 hover:text-muted-foreground">
-              {tr('curriculum.requestRelease')}
-            </Button>
-          </>
+          <Button size="sm" variant="ghost" className="text-xs text-muted-foreground/60 hover:text-muted-foreground">
+            {tr('curriculum.requestRelease')}
+          </Button>
         )}
       </div>
     </div>

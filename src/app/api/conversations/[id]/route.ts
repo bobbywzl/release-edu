@@ -25,6 +25,8 @@ export async function GET(
       role: m.role,
       content: m.content,
       createdAt: m.createdAt,
+      // Attachment info (uploaded images/files) rides in metadata.
+      metadata: (m as { metadata?: string | null }).metadata ?? null,
     })),
   })
 }

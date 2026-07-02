@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
   // Parse multipart form data
   let fileBase64 = ''
   let fileMimeType = 'image/jpeg'
+  let fileName = 'attachment'
   let userMessage = ''
   let conversationId: string | undefined
 
@@ -35,7 +36,10 @@ export async function POST(req: NextRequest) {
     if (imageFile) {
       const buffer = await imageFile.arrayBuffer()
       fileBase64 = Buffer.from(buffer).toString('base64')
-      fileMimeType = imageFile.type || 'image/jpeg'
+      // Client may pass a resolved MIME for extension-only files (.py, .csv…)
+      // whose File.type is empty.
+      fileMimeType = (formData.get('mime') as string) || imageFile.type || 'image/jpeg'
+      fileName = imageFile.name || 'attachment'
     }
   } catch {
     return new Response('Invalid form data', { status: 400 })
@@ -61,8 +65,17 @@ export async function POST(req: NextRequest) {
     const newConv = await store.createConversation('Image Analysis')
     conversationId = newConv.id
   }
-  // Save user message
-  await store.addMessage(conversationId, 'user', userMessage || '[Image uploaded]')
+  // Save user message with the attachment in metadata so it stays visible
+  // and openable in the chat after reloads. Data-URL persistence is capped
+  // (~1.5MB binary) — larger files keep name/type only (chip without preview).
+  const attachmentMeta = {
+    attachment: {
+      name: fileName,
+      type: fileMimeType,
+      ...(fileBase64.length < 2_000_000 ? { dataUrl: `data:${fileMimeType};base64,${fileBase64}` } : {}),
+    },
+  }
+  await store.addMessage(conversationId, 'user', userMessage || '[Image uploaded]', JSON.stringify(attachmentMeta))
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   const encoder = new TextEncoder()
