@@ -2893,6 +2893,11 @@ function ChatPageInner() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'update_score', score: newScore, sessionData, reflection: parsedReflection }),
+          }).then(r => r.ok ? r.json() : null).then(data => {
+            // Objective-mastered (and other) awards ding as they land.
+            if (data?.xpAwards?.length) {
+              import('@/components/xp-toast').then(m => m.emitXpAwards(data.xpAwards))
+            }
           }).catch(() => {})
 
           if (crossedCapstone && activeId) {
@@ -3151,6 +3156,10 @@ function ChatPageInner() {
               },
               reflection: parsedReflection2,
             }),
+          }).then(r => r.ok ? r.json() : null).then(data => {
+            if (data?.xpAwards?.length) {
+              import('@/components/xp-toast').then(m => m.emitXpAwards(data.xpAwards))
+            }
           }).catch(() => {})
         }
       }

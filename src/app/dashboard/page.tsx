@@ -13,6 +13,7 @@ import { useStudentData } from '@/lib/student-data'
 import { useLanguage } from '@/lib/i18n'
 import { useCompletionStats } from '@/lib/completion-stats'
 import { StartupGuide } from '@/components/startup-guide'
+import { XpPanel } from '@/components/xp-panel'
 import { STAGE_DESCRIPTIONS, getXPToNextLevel } from '@/lib/utils'
 
 const fadeUp = {
@@ -59,24 +60,25 @@ export default function DashboardPage() {
   const completedProjects = completionStats?.overall.completedProjects ?? 0
   const totalProjects = completionStats?.overall.totalProjects ?? 0
 
+  // XP + streak moved into the richer XpPanel above the stats row.
   const stats = [
-    {
-      label: t('dashboard.totalXP'),
-      value: mockStudent.xp.toLocaleString(),
-      sub: `${t('common.level')} ${mockStudent.level} · ${(xpProgress.needed - xpProgress.current).toLocaleString()} ${t('dashboard.toNext')}`,
-      href: '/dashboard',
-    },
-    {
-      label: t('dashboard.dayStreak'),
-      value: String(mockStudent.streak),
-      sub: t('dashboard.consecutiveDays'),
-      href: '/dashboard',
-    },
     {
       label: t('dashboard.progress'),
       value: `${overallProgress}%`,
       sub: `${completedChapters} / ${totalChapters} ${t('dashboard.chaptersComplete')}`,
       href: '/dashboard/curriculum',
+    },
+    {
+      label: t('dashboard.projectsLabel'),
+      value: `${completedProjects}/${totalProjects}`,
+      sub: t('dashboard.projectsComplete'),
+      href: '/dashboard/projects',
+    },
+    {
+      label: t('common.level'),
+      value: String(mockStudent.level),
+      sub: `${(xpProgress.needed - xpProgress.current).toLocaleString()} ${t('dashboard.toNext')}`,
+      href: '/dashboard',
     },
   ]
 
@@ -114,6 +116,11 @@ export default function DashboardPage() {
       {!isOnboarded && showGuide && (
         <StartupGuide onDismiss={() => setShowGuide(false)} />
       )}
+
+      {/* XP / streak / daily-goal / badges — the daily-return loop */}
+      <motion.div variants={fadeUp}>
+        <XpPanel />
+      </motion.div>
 
       {/* Core stats */}
       <motion.div variants={fadeUp} className="grid grid-cols-3 gap-4">

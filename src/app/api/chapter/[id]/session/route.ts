@@ -124,6 +124,24 @@ Create a structured session plan. Return ONLY valid JSON:
       }
     }
 
+    // Objective-mastery XP — the smallest visible unit of syllabus progress.
+    // Diff against the prior stored objectives (captured before the update
+    // above) so each objective dings exactly once, when it first flips to
+    // 'understood'. This is what makes the progress bar FEEL rewarding.
+    const objectiveXpResults = []
+    try {
+      type Obj = { id?: string; understood?: string }
+      const prevObjs = (existingSessionData.objectives as Obj[] | undefined) ?? []
+      const prevUnderstood = new Set(prevObjs.filter(o => o.understood === 'understood').map(o => o.id))
+      const nowObjs = (body.sessionData?.objectives as Obj[] | undefined) ?? []
+      for (const o of nowObjs) {
+        if (o.id && o.understood === 'understood' && !prevUnderstood.has(o.id)) {
+          const xp = await awardXp(userId, 'objective_mastered')
+          if (xp) objectiveXpResults.push(xp)
+        }
+      }
+    } catch { /* non-critical */ }
+
     // Perseverance XP — reward continued engagement after struggling. We
     // compare the prior reflection's streakWrong (already on disk) with the
     // incoming reflection's streakWrong. If it just crossed into a new tier
@@ -153,7 +171,7 @@ Create a structured session plan. Return ONLY valid JSON:
     // Update streak on activity
     const streakResult = await updateStreak(userId)
 
-    const allXpAwards = [...quizXpResults, ...perseveranceAwards, ...(streakResult.xpAwarded ? [streakResult.xpAwarded] : [])]
+    const allXpAwards = [...quizXpResults, ...objectiveXpResults, ...perseveranceAwards, ...(streakResult.xpAwarded ? [streakResult.xpAwarded] : [])]
     return NextResponse.json({ success: true, score, xpAwards: allXpAwards })
   }
 

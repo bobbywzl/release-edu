@@ -1368,6 +1368,13 @@ Ask: "Does this match what you had in mind?" Adjust based on feedback. Once conf
         // Update streak on every chat interaction (background, don't block)
         void import('@/lib/xp-engine').then(m => m.updateStreak(capturedStoreUserId)).catch(() => {})
 
+        // Time-spent-learning XP: in chapter/project sessions, every 3rd
+        // exchange (6 messages) drips a small conversation award — depth of
+        // engagement earns XP, naturally rate-limited by the conversation.
+        if ((activeChapterId || projectId) && updatedConv && updatedConv.messages.length % 6 === 0) {
+          void import('@/lib/xp-engine').then(m => m.awardXp(capturedStoreUserId, 'conversation')).catch(() => {})
+        }
+
         // Background insight + curriculum action extraction (don't block response)
         const apiKey = anthropicKey
         if (apiKey && fullResponse && !fullResponse.includes("having trouble connecting")) {

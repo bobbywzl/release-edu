@@ -12,6 +12,80 @@ import { useStudentData } from '@/lib/student-data'
 import { useLanguage } from '@/lib/i18n'
 import { useRegeneration } from '@/lib/regeneration'
 
+// ── Achievements (XP badges) ─────────────────────────────────────────────────
+// Earned badges double as competency evidence for universities/employers:
+// each maps to verified learning progress (streaks, chapters mastered,
+// projects shipped), not attendance. Featured badges (starred in the
+// dashboard Badge Case) come first; falls back to the most recent earned.
+
+interface XpBadgeInfo {
+  id: string
+  tier: 'bronze' | 'silver' | 'gold' | 'legendary'
+  icon: string
+  name: { en: string; zh: string }
+  desc: { en: string; zh: string }
+  earned: boolean
+  earnedAt: string | null
+  featured: boolean
+}
+
+const BADGE_TIER_STYLES: Record<XpBadgeInfo['tier'], string> = {
+  bronze: 'border-amber-700/50 bg-amber-700/10',
+  silver: 'border-slate-400/50 bg-slate-400/10',
+  gold: 'border-yellow-400/50 bg-yellow-400/10',
+  legendary: 'border-fuchsia-400/50 bg-fuchsia-400/10',
+}
+
+function AchievementsSection() {
+  const { language, t } = useLanguage()
+  const lang = language === 'zh' ? 'zh' : 'en'
+  const [data, setData] = useState<{ badges: XpBadgeInfo[]; level: number; rank: { en: string; zh: string }; xp: number } | null>(null)
+
+  useEffect(() => {
+    fetch('/api/xp/summary', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (j) setData(j) })
+      .catch(() => {})
+  }, [])
+
+  if (!data) return null
+  const earned = data.badges.filter(b => b.earned)
+  if (earned.length === 0) return null
+  const featured = earned.filter(b => b.featured)
+  const shown = (featured.length > 0 ? featured : earned).slice(0, 4)
+
+  return (
+    <motion.section {...fadeUp} className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Award className="w-4 h-4 text-muted-foreground" />
+          {t('xp.achievements')}
+          <span className="text-[11px] font-normal text-muted-foreground">
+            · {t('common.level')} {data.level} — {data.rank[lang]} · {data.xp.toLocaleString()} XP
+          </span>
+        </h2>
+        <p className="text-[11px] text-muted-foreground mt-0.5">{t('xp.achievementsSub')}</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {shown.map(b => (
+          <div key={b.id} className={`border rounded-lg p-3.5 flex items-start gap-3 ${BADGE_TIER_STYLES[b.tier]}`}>
+            <span className="text-2xl leading-none mt-0.5">{b.icon}</span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground">{b.name[lang]}</p>
+              <p className="text-[11px] text-muted-foreground leading-snug">{b.desc[lang]}</p>
+              {b.earnedAt && (
+                <p className="text-[10px] text-muted-foreground/70 mt-1">
+                  {t('xp.earnedOn')} {new Date(b.earnedAt).toLocaleDateString()}
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </motion.section>
+  )
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface PortfolioSkill {
@@ -574,6 +648,9 @@ export default function PortfolioPage() {
               ))}
             </div>
           </motion.section>
+
+          {/* Achievements — featured XP badges as competency evidence */}
+          <AchievementsSection />
 
           {/* Projects */}
           {Array.isArray(portfolio.projects) && portfolio.projects.length > 0 && (

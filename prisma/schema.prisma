@@ -28,6 +28,7 @@ model User {
   files          LinkedFile[]
   portfolioCache   PortfolioCache?
   curriculumBlocks CurriculumBlock[]
+  userBadges       UserBadge[]
 }
 
 // ── Student Profile ──────────────────────────────────────────
@@ -57,7 +58,29 @@ model StudentProfile {
   // Per-student cap for the counter above. Defaults to 2; admins can raise
   // it from the admin panel to grant extra regenerations where needed.
   manualRegenerationLimit Int @default(2)
+  // ── XP retention loop ──
+  // dailyXp/dailyXpDate: XP earned today, powering the daily-goal ring.
+  // Reset implicitly when dailyXpDate rolls to a new day.
+  dailyXp        Int       @default(0)
+  dailyXpDate    DateTime?
+  // Best streak ever — badge criteria use this so a lost streak never
+  // takes earned badges away.
+  longestStreak  Int       @default(0)
   updatedAt       DateTime @updatedAt
+}
+
+// ── Earned badges (achievements shown on dashboard + portfolio) ──
+model UserBadge {
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId  String   // key into the BADGES catalog (src/lib/badges.ts)
+  earnedAt DateTime @default(now())
+  // Featured badges are surfaced on the portfolio/résumé.
+  featured Boolean  @default(false)
+
+  @@unique([userId, badgeId])
+  @@index([userId])
 }
 
 // ── Mentor Config ────────────────────────────────────────────
