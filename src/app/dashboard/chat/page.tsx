@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useRef, useEffect, useCallback, Suspense } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
@@ -416,7 +416,7 @@ function TypingIndicator() {
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 
-function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight, onUpdateHighlight, onDeleteHighlight, onHighlightClick, focusedHighlightId, onQuizAnswer, onQuizScore, onSubmissionReview, onFeedback, existingFeedback, answeredQuestionIds, onReply, onRegenerate, lessonMode, capstoneUnlocked }: { message: LocalMessage; highlights?: Highlight[]; onAddHighlight?: (data: { messageId: string; selectedText: string; startOffset: number; endOffset: number; color: string; comment: string | null }) => Promise<Highlight | undefined>; onUpdateHighlight?: (id: string, data: { comment?: string; color?: string }) => void; onDeleteHighlight?: (id: string) => void; onHighlightClick?: (id: string) => void; focusedHighlightId?: string | null; onQuizAnswer?: (answer: string) => void; onQuizScore?: (questionId: string, score: number) => void; onSubmissionReview?: (review: ParsedSubmissionReview) => void; onFeedback?: (messageId: string, rating: 1 | -1) => void; existingFeedback?: number | null; answeredQuestionIds?: Set<string>; onReply?: (quotedText: string) => void; onRegenerate?: () => void; lessonMode?: boolean; capstoneUnlocked?: boolean }) {
+function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight, onUpdateHighlight, onDeleteHighlight, onHighlightClick, focusedHighlightId, onQuizAnswer, onQuizScore, onSubmissionReview, onFeedback, existingFeedback, answeredQuestionIds, onReply, onRegenerate, lessonMode, capstoneUnlocked, imageContext }: { message: LocalMessage; highlights?: Highlight[]; onAddHighlight?: (data: { messageId: string; selectedText: string; startOffset: number; endOffset: number; color: string; comment: string | null }) => Promise<Highlight | undefined>; onUpdateHighlight?: (id: string, data: { comment?: string; color?: string }) => void; onDeleteHighlight?: (id: string) => void; onHighlightClick?: (id: string) => void; focusedHighlightId?: string | null; onQuizAnswer?: (answer: string) => void; onQuizScore?: (questionId: string, score: number) => void; onSubmissionReview?: (review: ParsedSubmissionReview) => void; onFeedback?: (messageId: string, rating: 1 | -1) => void; existingFeedback?: number | null; answeredQuestionIds?: Set<string>; onReply?: (quotedText: string) => void; onRegenerate?: () => void; lessonMode?: boolean; capstoneUnlocked?: boolean; imageContext?: string }) {
   const isUser = message.role === 'user'
   // Parse quiz blocks from assistant messages
   const { text: cleanContent, quizzes } = !isUser
@@ -465,6 +465,9 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
   }, [review, onSubmissionReview])
 
   const hasHighlightSupport = !isUser && msgHighlights && onAddHighlight && onUpdateHighlight && onDeleteHighlight
+  // Diagram pin annotations need a real (persisted) message id.
+  const canAnnotateDiagrams = hasHighlightSupport
+    && message.id !== 'streaming' && !message.id.startsWith('temp-') && !message.id.startsWith('archived-')
 
   return (
     <motion.div
@@ -542,7 +545,17 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
             ))}
             {review && <SubmissionReviewBlock review={review} />}
             {mermaidDiagrams.map((chart, i) => (
-              <MermaidDiagram key={`mermaid-${i}`} chart={chart} />
+              <MermaidDiagram
+                key={`mermaid-${i}`}
+                chart={chart}
+                annotation={canAnnotateDiagrams ? {
+                  messageId: message.id,
+                  diagramIndex: i,
+                  annotations: msgHighlights!,
+                  onAdd: onAddHighlight!,
+                  onDelete: onDeleteHighlight!,
+                } : undefined}
+              />
             ))}
             {chartBlocks.map((raw, i) => (
               <DataChart key={`chart-${i}`} raw={raw} />
@@ -551,7 +564,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
               <FuncPlot key={`funcplot-${i}`} raw={raw} />
             ))}
             {imageBlocks.map((p, i) => (
-              <GeneratedImage key={`img-${i}`} prompt={p} context={displayContent} />
+              <GeneratedImage key={`img-${i}`} prompt={p} context={imageContext ?? displayContent} />
             ))}
           </HighlightableText>
         ) : (
@@ -581,7 +594,7 @@ function MessageBubbleImpl({ message, highlights: msgHighlights, onAddHighlight,
               <FuncPlot key={`funcplot-${i}`} raw={raw} />
             ))}
             {imageBlocks.map((p, i) => (
-              <GeneratedImage key={`img-${i}`} prompt={p} context={displayContent} />
+              <GeneratedImage key={`img-${i}`} prompt={p} context={imageContext ?? displayContent} />
             ))}
           </>
         )}
@@ -667,6 +680,7 @@ const MessageBubble = React.memo(MessageBubbleImpl, (prev, next) => {
   if (prev.existingFeedback !== next.existingFeedback) return false
   if (prev.lessonMode !== next.lessonMode) return false
   if (prev.capstoneUnlocked !== next.capstoneUnlocked) return false
+  if (prev.imageContext !== next.imageContext) return false
   // Highlight array equality by length + identity check on each item (cheap).
   const a = prev.highlights ?? []
   const b = next.highlights ?? []
@@ -1702,6 +1716,33 @@ function ChatPageInner() {
   // doesn't leave a giant DOM mounted on the new one.
   useEffect(() => { setVisibleWindow(MESSAGE_WINDOW) }, [activeId])
 
+  // Grounding context for AI-generated concept images: the last few messages
+  // BEFORE each message. Built only from PRECEDING content (never the
+  // message's own — which is partial while streaming), so the server's
+  // image cache key is identical during the stream and after reload.
+  const buildImageContext = useCallback((visible: LocalMessage[], endIdx: number) => {
+    const parts: string[] = []
+    for (let j = Math.max(0, endIdx - 3); j < endIdx; j++) {
+      const m = visible[j]
+      const clean = m.content.replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 350)
+      if (clean) parts.push(`${m.role === 'user' ? 'Student' : 'Tutor'}: ${clean}`)
+    }
+    return parts.join('\n')
+  }, [])
+  const imageContextByMessageId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (let i = 0; i < nonHiddenMessages.length; i++) {
+      map.set(nonHiddenMessages[i].id, buildImageContext(nonHiddenMessages, i))
+    }
+    return map
+  }, [nonHiddenMessages, buildImageContext])
+  // The streaming bubble's context = everything before it (ends at the
+  // user's latest question) — matches what the persisted message will get.
+  const streamingImageContext = useMemo(
+    () => buildImageContext(nonHiddenMessages, nonHiddenMessages.length),
+    [nonHiddenMessages, buildImageContext],
+  )
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   // Set when the user clicks Stop. Distinguishes a user-initiated abort
@@ -2525,6 +2566,7 @@ function ChatPageInner() {
     setIsStreaming(true)
     setStreamingContent('')
     setIsResearching(true)
+    userStoppedRef.current = false
     const imageToSend = pendingImage
     clearPendingImage()
 
@@ -2534,7 +2576,8 @@ function ChatPageInner() {
       if (text) formData.append('message', text)
       if (activeId && !activeId.startsWith('temp-')) formData.append('conversationId', activeId)
 
-      const response = await fetch('/api/chat/image', { method: 'POST', body: formData })
+      abortRef.current = new AbortController()
+      const response = await fetch('/api/chat/image', { method: 'POST', body: formData, signal: abortRef.current.signal })
       setIsResearching(false)
 
       if (!response.ok || !response.body) throw new Error('Image upload error')
@@ -2551,26 +2594,31 @@ function ChatPageInner() {
       try {
         full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
       } catch (err) {
-        // Keep whatever streamed before the failure; only error out if we
-        // got nothing at all.
+        // Keep whatever streamed before the failure/stop; only error out if
+        // we got nothing at all AND the user didn't stop it themselves.
         full = getActiveChatStream(streamKey)?.content ?? ''
-        if (!full) throw err
+        if (!full && !userStoppedRef.current) throw err
       }
 
-      setMessages(prev => [...prev, {
-        id: `temp-${nextTempId++}`,
-        role: 'assistant',
-        content: full,
-        timestamp: new Date(),
-      }])
+      if (full) {
+        setMessages(prev => [...prev, {
+          id: `temp-${nextTempId++}`,
+          role: 'assistant',
+          content: full + (userStoppedRef.current ? '\n\n_(stopped)_' : ''),
+          timestamp: new Date(),
+        }])
+      }
     } catch {
       setIsResearching(false)
-      setMessages(prev => [...prev, {
-        id: `temp-${nextTempId++}`,
-        role: 'assistant',
-        content: "I couldn't process that image. Try uploading it again or describe what you see.",
-        timestamp: new Date(),
-      }])
+      // A user-initiated stop is not a processing failure — stay quiet.
+      if (!userStoppedRef.current) {
+        setMessages(prev => [...prev, {
+          id: `temp-${nextTempId++}`,
+          role: 'assistant',
+          content: "I couldn't process that image. Try uploading it again or describe what you see.",
+          timestamp: new Date(),
+        }])
+      }
     } finally {
       setIsStreaming(false)
       setStreamingContent('')
@@ -2984,6 +3032,7 @@ function ChatPageInner() {
     setInput('')
     setIsStreaming(true)
     setStreamingContent('')
+    userStoppedRef.current = false
 
     try {
       const requestBody: Record<string, unknown> = {
@@ -3005,9 +3054,11 @@ function ChatPageInner() {
         }
       }
 
+      abortRef.current = new AbortController()
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortRef.current.signal,
         body: JSON.stringify(requestBody),
       })
 
@@ -3041,10 +3092,10 @@ function ChatPageInner() {
       try {
         full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
       } catch (err) {
-        // Keep whatever streamed before the failure; only error out if we
-        // got nothing at all.
+        // Keep whatever streamed before the failure/stop; only error out if
+        // we got nothing at all and it wasn't a user-initiated stop.
         full = getActiveChatStream(streamKey)?.content ?? ''
-        if (!full) throw err
+        if (!full && !userStoppedRef.current) throw err
       }
 
       setMessages(prev => [...prev, {
@@ -3136,12 +3187,15 @@ function ChatPageInner() {
         }, 3000)
       }
     } catch {
-      setMessages(prev => [...prev, {
-        id: `temp-${nextTempId++}`,
-        role: 'assistant',
-        content: "I'm having trouble connecting right now. Please try again in a moment.",
-        timestamp: new Date(),
-      }])
+      // A user-initiated stop is not a connection failure — stay quiet.
+      if (!userStoppedRef.current) {
+        setMessages(prev => [...prev, {
+          id: `temp-${nextTempId++}`,
+          role: 'assistant',
+          content: "I'm having trouble connecting right now. Please try again in a moment.",
+          timestamp: new Date(),
+        }])
+      }
     } finally {
       setIsStreaming(false)
       setStreamingContent('')
@@ -3163,11 +3217,14 @@ function ChatPageInner() {
     setInput('')
     setIsStreaming(true)
     setStreamingContent('')
+    userStoppedRef.current = false
 
     try {
+      abortRef.current = new AbortController()
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortRef.current.signal,
         body: JSON.stringify({
           conversationId: convId.startsWith('temp-') ? undefined : convId,
           message: text,
@@ -3207,10 +3264,10 @@ function ChatPageInner() {
       try {
         full = await pumpChatStream(streamKey, response.body, p => setStreamingContent(p))
       } catch (err) {
-        // Keep whatever streamed before the failure; only error out if we
-        // got nothing at all.
+        // Keep whatever streamed before the failure/stop; only error out if
+        // we got nothing at all and it wasn't a user-initiated stop.
         full = getActiveChatStream(streamKey)?.content ?? ''
-        if (!full) throw err
+        if (!full && !userStoppedRef.current) throw err
       }
 
       setMessages(prev => [...prev, {
@@ -3251,12 +3308,15 @@ function ChatPageInner() {
         }).catch(() => {})
       }
     } catch {
-      setMessages(prev => [...prev, {
-        id: `temp-${nextTempId++}`,
-        role: 'assistant',
-        content: "I'm having trouble connecting right now. Please try again in a moment.",
-        timestamp: new Date(),
-      }])
+      // A user-initiated stop is not a connection failure — stay quiet.
+      if (!userStoppedRef.current) {
+        setMessages(prev => [...prev, {
+          id: `temp-${nextTempId++}`,
+          role: 'assistant',
+          content: "I'm having trouble connecting right now. Please try again in a moment.",
+          timestamp: new Date(),
+        }])
+      }
     } finally {
       setIsStreaming(false)
       setStreamingContent('')
@@ -3785,6 +3845,7 @@ function ChatPageInner() {
                     } : undefined}
                     lessonMode={isLessonMode}
                     capstoneUnlocked={!activeChapterContext || sessionScore >= 80}
+                    imageContext={imageContextByMessageId.get(msg.id)}
                   />
                 ))}
               </AnimatePresence>
@@ -3799,6 +3860,7 @@ function ChatPageInner() {
                     }}
                     lessonMode={isLessonMode}
                     capstoneUnlocked={!activeChapterContext || sessionScore >= 80}
+                    imageContext={streamingImageContext}
                   />
                   {/* Blinking cursor */}
                   <div className={cn('flex items-end gap-3 -mt-3 mb-2', isLessonMode ? 'ml-2' : 'ml-10')}>
@@ -3807,27 +3869,6 @@ function ChatPageInner() {
                 </div>
               )}
               {isStreaming && !streamingContent && <TypingIndicator />}
-              {/* Stop generating button */}
-              {isStreaming && (
-                <div className="flex justify-center py-2">
-                  <button
-                    onClick={() => {
-                      // Mark this as a user-initiated stop BEFORE aborting,
-                      // so the streaming loop's catch can preserve the
-                      // partial output instead of erasing it.
-                      userStoppedRef.current = true
-                      abortRef.current?.abort()
-                      // Do NOT clear streamingContent here — the loop's
-                      // finalizer will move it into a permanent assistant
-                      // message and then clear it.
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-accent text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <div className="w-2.5 h-2.5 rounded-sm bg-foreground/60" />
-                    {tr('chat.stopGenerating')}
-                  </button>
-                </div>
-              )}
             </>
           )}
           <div ref={messagesEndRef} />
@@ -3920,7 +3961,6 @@ function ChatPageInner() {
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={pendingImage ? tr('chat.imagePlaceholder') : (isMobile ? tr('chat.placeholderShort', 'Ask Bob anything…') : tr('chat.placeholder'))}
-              disabled={isStreaming}
               rows={1}
               className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] lg:text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all disabled:opacity-50 h-12 min-h-[48px] max-h-[140px]"
             />
@@ -3955,13 +3995,31 @@ function ChatPageInner() {
                 <Mic className="w-4 h-4" />
               </button>
             )}
-            <button
-              onClick={sendMessage}
-              disabled={(!input.trim() && !pendingImage) || isStreaming}
-              className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+            {isStreaming ? (
+              /* Claude-style: the send button becomes a stop button while
+                 Bob is generating. Clicking it keeps the partial output. */
+              <button
+                onClick={() => {
+                  // Mark this as a user-initiated stop BEFORE aborting, so
+                  // the streaming loop's catch preserves the partial output.
+                  userStoppedRef.current = true
+                  abortRef.current?.abort()
+                }}
+                title={tr('chat.stopGenerating')}
+                aria-label={tr('chat.stopGenerating')}
+                className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                <div className="w-3 h-3 rounded-[2px] bg-primary-foreground" />
+              </button>
+            ) : (
+              <button
+                onClick={sendMessage}
+                disabled={!input.trim() && !pendingImage}
+                className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            )}
           </div>
           <p className="hidden lg:block text-center text-[10px] text-muted-foreground mt-2">
             {chatMode === 'tutoring' && tr('chat.footer.tutoring')}

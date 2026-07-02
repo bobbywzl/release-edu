@@ -45,7 +45,9 @@ function applyHighlightsToDOM(
   })
   container.normalize()
 
-  const msgHighlights = [...highlights.filter(h => h.messageId === messageId)]
+  // Diagram pin annotations (selectedText starts with '📍 ') live on the
+  // diagram overlay, not in the prose — never paint them as text marks.
+  const msgHighlights = [...highlights.filter(h => h.messageId === messageId && !h.selectedText.startsWith('📍 '))]
     .sort((a, b) => a.startOffset - b.startOffset)
 
   if (msgHighlights.length === 0) return
@@ -255,7 +257,7 @@ export function HighlightableText({ text, children, messageId, highlights, focus
   // Text-mode segment rendering (non-wrap mode)
   function renderSegments() {
     if (!text) return null
-    const msgHighlights = highlights.filter(h => h.messageId === messageId)
+    const msgHighlights = highlights.filter(h => h.messageId === messageId && !h.selectedText.startsWith('📍 '))
     if (msgHighlights.length === 0) return <span>{text}</span>
 
     const sorted = [...msgHighlights].sort((a, b) => a.startOffset - b.startOffset)
