@@ -169,6 +169,8 @@ const EN: Dict = {
   'curriculum.regenRemainingPrefix': '',
   'curriculum.regenRemaining': 'regenerations remaining for this curriculum.',
   'curriculum.regenInProgress': 'Claude is regenerating your curriculum (this takes ~60–90 seconds)…',
+  'curriculum.chatRebuilding': 'Bob is reconstructing your curriculum…',
+  'curriculum.chatRebuildingBody': 'The changes you requested in chat are being applied. This page will refresh automatically when they land.',
   // Insights + footer
   'curriculum.whatBobKnows': 'What Bob Knows About You',
   'curriculum.insights': 'insights',
@@ -602,6 +604,8 @@ const ZH: Dict = {
   'curriculum.regenRemainingPrefix': '还剩 ',
   'curriculum.regenRemaining': '次本课程的重新生成机会。',
   'curriculum.regenInProgress': 'Claude 正在重新生成你的课程（大约需要 60–90 秒）…',
+  'curriculum.chatRebuilding': 'Bob 正在重构你的课程……',
+  'curriculum.chatRebuildingBody': '你在聊天中提出的修改正在应用。完成后本页将自动刷新。',
   // Insights + footer
   'curriculum.whatBobKnows': 'Bob 对你的了解',
   'curriculum.insights': '条洞察',

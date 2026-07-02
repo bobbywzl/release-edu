@@ -1502,9 +1502,22 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
 
     if (!Array.isArray(parsed) || parsed.length === 0) return
 
+    // Real changes are about to be applied — flag the plan as rebuilding so
+    // the curriculum page (which polls /api/curriculum/status) can show a
+    // "Bob is reconstructing your curriculum" banner and auto-refresh when
+    // the flag clears. Best-effort: never let the flag block the changes.
+    try {
+      await prisma.curriculumPlan.upsert({
+        where: { userId },
+        create: { userId, rebuildingAt: new Date() },
+        update: { rebuildingAt: new Date() },
+      })
+    } catch { /* non-critical (schema lag) */ }
+
     const { dbStore: store } = await import('@/lib/db-store')
     const userStore = store.forUser(userId)
 
+    try {
     for (const action of parsed) {
       try {
         switch (action.type) {
@@ -1789,6 +1802,13 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
       } catch (err) {
         console.error(`[L&C] Failed to apply action ${action.type}:`, err)
       }
+    }
+    } finally {
+      // Rebuild finished (or failed) — clear the flag so the curriculum
+      // page's banner disappears and it pulls the fresh curriculum.
+      try {
+        await prisma.curriculumPlan.updateMany({ where: { userId }, data: { rebuildingAt: null } })
+      } catch { /* non-critical */ }
     }
   } catch (err) {
     console.error('[L&C] Curriculum extraction error:', err)
