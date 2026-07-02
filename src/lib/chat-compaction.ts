@@ -160,10 +160,10 @@ CONCEPTS BOB MENTIONED BUT DID NOT TEACH
 — anything that came up but wasn't fully delivered. NOT quiz-eligible.
 
 STUDENT'S DEMONSTRATED UNDERSTANDING
-— what they got right and in what form (recall vs application vs synthesis).
+— what they got right and in what form (recall vs application vs synthesis). These two sections later drive quiz and problem-set targeting, so name SPECIFIC concepts and the student's advantage on each: "can apply Bayes' rule in unseen scenarios" beats "good at probability".
 
 STUDENT'S STRUGGLES / PERSISTENT GAPS
-— specific concepts they got wrong, partial, or asked Bob to re-explain. Carry forward STUCK_ON from prior reflections.
+— specific concepts they got wrong, partial, or asked Bob to re-explain, and HOW they fail (memorized-but-can't-transfer, confuses X with Y, breaks on edge cases). Carry forward STUCK_ON from prior reflections.
 
 STUDENT PERFORMANCE STATE
 — most recent streak/difficulty signals: e.g. "STREAK_CORRECT=2, CURRENT_DIFFICULTY=3, NEXT_DIFFICULTY=3".

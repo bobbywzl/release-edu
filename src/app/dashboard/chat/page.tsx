@@ -2903,7 +2903,7 @@ function ChatPageInner() {
           if (crossedCapstone && activeId) {
             setTimeout(() => {
               sendMessageWithText(
-                `[CAPSTONE] The full syllabus is now taught (progress reached 80%). Output the capstone problem set now per the PHASE 3 instructions: 2–3 applied problems covering ALL objectives, weighted toward demonstrated weak areas, each in a \`\`\`problem block, prefaced with the clear submission instructions.`,
+                `[CAPSTONE] The full syllabus is now taught (progress reached 80%). Output the capstone problem set now per the PHASE 3 instructions. Before writing it, silently ask: what questions differentiate a student who memorized this chapter from one who truly understands it? Combine those differentiators with this student's documented weak areas. Then: 2–3 applied problems covering ALL objectives, weighted toward demonstrated weak areas, each in a \`\`\`problem block, prefaced with the clear submission instructions.`,
                 activeId,
                 activeChapterContext.id,
                 true,
