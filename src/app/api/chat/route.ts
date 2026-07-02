@@ -438,7 +438,7 @@ e.g. "can you draw that", "show me", "graph that function", "make a diagram", "v
 
 **TRIGGER 2 — The concept demonstrably fails as prose.** A narrow set of cases:
 - **funcplot**: the lesson hinges on the SHAPE of a function (where it peaks, where it crosses zero, asymptotic behavior, comparison of two curves). "Damped oscillation goes up and down getting smaller" is fine as prose; "what does e^(-x) * sin(x) actually look like" is funcplot-worthy.
-- **mermaid**: the lesson is about a process with BRANCHING or PARALLEL paths that prose cannot linearize cleanly — decision flows with multiple branches, state machines, or pipelines with feedback loops. A simple A → B → C → D sequence is NOT viz-worthy; just write the sentence.
+- **mermaid**: ONLY for text-precise branching logic where the exact wording of every node matters — decision flows with multiple branches, state machines, or code-like pipelines with feedback loops. A simple A → B → C → D sequence is NOT viz-worthy; just write the sentence. For conceptual relationship webs, cycles, and "how the ideas connect" visuals, prefer \`image\` — it renders as a clean illustrated graphic grounded in the lesson.
 - **chart**: the lesson is about QUANTITATIVE COMPARISONS where the relative sizes matter (e.g. "soil carbon is 60% organic matter, 30% mineral, 10% water" → maybe a pie). A single number or trend description does NOT need a chart.
 - **KaTeX**: any actual equation, derivative, integral, summation, matrix, or symbolic expression. Math notation is ALWAYS preferred over plain-text equations — this is the one viz mode that should be used freely.
 
@@ -460,7 +460,8 @@ e.g. "can you draw that", "show me", "graph that function", "make a diagram", "v
 - One viz per message maximum, except when the student explicitly asked for multiple.
 
 WHEN to use a visualization:
-- Teaching a *process or structure* (cell, algorithm, system architecture, food web, supply chain) → mermaid diagram
+- Teaching a *concept, structure, or cycle* (cell, food web, supply chain, carbon cycle) → image (illustrated, grounded in the chat)
+- Teaching *branching logic where exact node text matters* (algorithm, state machine, decision flow) → mermaid diagram
 - Teaching a *math function* (parabola, sine wave, exponential decay, logistic curve) → funcplot
 - Teaching *quantitative comparisons* (market shares, historical data, distributions) → chart
 - Teaching *equations or formulas* → KaTeX (already supported via $...$ and $$...$$)
@@ -517,23 +518,23 @@ DATA: [{"name":"Services","value":77},{"name":"Industry","value":19},{"name":"Ag
 
 4) **KaTeX math** — inline \`$E = mc^2$\` or display \`$$\\int_0^\\infty e^{-x^2}\\,dx = \\tfrac{\\sqrt{\\pi}}{2}$$\`. Use whenever you write an equation, derivative, integral, summation, matrix, or any symbolic expression. Never write equations in plain text when KaTeX is available.
 
-5) **\`\`\`image** — a realistic, AI-GENERATED PICTURE/ILLUSTRATION of a concept (NOT a flowchart — that's mermaid). Use this when a *pictorial* image conveys what prose and diagrams cannot: a physical structure, a biological form, an anatomical or cross-section view, a spatial scene, an apparatus/setup, or a vivid logical sequence shown as a labeled illustration. The prompt should name the subject, the key parts to label, and request a clean textbook style. Example:
+5) **\`\`\`image** — an AI-GENERATED ILLUSTRATION (rendered by Gemini "Nano Banana 2", automatically grounded in the recent chat so it references exactly what you and the student just discussed). This is the PREFERRED renderer for conceptual visuals: concept maps, cycles (carbon cycle, water cycle), relationship webs, physical/biological structures, anatomical or cross-section views, spatial scenes, apparatus/setups, and labeled logical sequences. The prompt should name the subject, the key parts to label, and request a clean textbook style. Example:
 
 \`\`\`image
 PROMPT: A labeled cross-section of healthy soil showing the horizons (O, A, B, C), with fungal hyphae threading between soil particles and earthworm burrows. Clean textbook diagram style, light background, clear labels.
 \`\`\`
 
-**IMAGE — USE VERY SPARINGLY (this calls a paid image model).**
-- Generate an image ONLY for the single most important, central, visually-clarified concept of a chapter — or when the student explicitly asks for a picture/image/illustration/"show me what it looks like". This is YOUR judgment: most chapters warrant ZERO generated images; a typical chapter warrants AT MOST one.
-- Prefer mermaid for processes/relationships and funcplot for math curves. Reach for \`image\` only when a realistic illustration genuinely beats a diagram (e.g. "what does a plant cell actually look like", "the structure of the human heart", "a cross-section of a volcano").
-- Never use it decoratively, never more than once per reply, and never for something a sentence or a mermaid diagram already handles.
+**IMAGE — STILL A PAID CALL, SO STAY DISCIPLINED.**
+- An image must earn its place via the two triggers above (student asked, or the concept fails as prose). Within those triggers it is the default choice for conceptual/illustrative visuals — the most important, central concepts of a chapter, cycles and relationship webs, and "show me what it looks like" requests.
+- At most ONE generated image per reply. Never decorative, never for something a sentence already handles.
+- mermaid remains better ONLY when the exact text of every node must be readable (decision trees, state machines, code pipelines); funcplot for curves; chart for data.
 
 CHOOSING THE RIGHT VIZ:
-- Process / pipeline / decision flow / network of relationships → mermaid
+- Conceptual visual — concept map, cycle, relationship web, structure, cross-section, scene, labeled illustration → image (Nano Banana 2, grounded in the chat)
+- Text-precise branching logic where node wording must be exact (decision tree, state machine, code pipeline) → mermaid
 - Continuous mathematical curve / function behavior / asymptotes / roots → funcplot
 - Discrete comparison / histogram / share-of-total → chart
 - An equation, formula, or symbolic expression appearing in prose → KaTeX
-- A realistic picture of a physical/biological/spatial structure that a diagram can't capture (or when the student asks to "see" it) → image — but sparingly (paid)
 
 DO NOT:
 - Output ASCII art for diagrams. If a diagram is genuinely needed, use mermaid; otherwise use prose.
@@ -1501,9 +1502,22 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
 
     if (!Array.isArray(parsed) || parsed.length === 0) return
 
+    // Real changes are about to be applied — flag the plan as rebuilding so
+    // the curriculum page (which polls /api/curriculum/status) can show a
+    // "Bob is reconstructing your curriculum" banner and auto-refresh when
+    // the flag clears. Best-effort: never let the flag block the changes.
+    try {
+      await prisma.curriculumPlan.upsert({
+        where: { userId },
+        create: { userId, rebuildingAt: new Date() },
+        update: { rebuildingAt: new Date() },
+      })
+    } catch { /* non-critical (schema lag) */ }
+
     const { dbStore: store } = await import('@/lib/db-store')
     const userStore = store.forUser(userId)
 
+    try {
     for (const action of parsed) {
       try {
         switch (action.type) {
@@ -1788,6 +1802,13 @@ Return ONLY a JSON array. If no confirmed changes, return [].`
       } catch (err) {
         console.error(`[L&C] Failed to apply action ${action.type}:`, err)
       }
+    }
+    } finally {
+      // Rebuild finished (or failed) — clear the flag so the curriculum
+      // page's banner disappears and it pulls the fresh curriculum.
+      try {
+        await prisma.curriculumPlan.updateMany({ where: { userId }, data: { rebuildingAt: null } })
+      } catch { /* non-critical */ }
     }
   } catch (err) {
     console.error('[L&C] Curriculum extraction error:', err)

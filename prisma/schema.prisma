@@ -162,6 +162,9 @@ model CurriculumPlan {
   lastUpdatedAt     DateTime @updatedAt
   lockedAt          DateTime?
   completedAt       DateTime? // moment all tracks flipped to completed
+  // Set while a chat-requested (L&C) reconstruction is being applied in the
+  // background; the curriculum page polls this to show a rebuilding banner.
+  rebuildingAt      DateTime?
 }
 
 // ── Tracks (subjects) ────────────────────────────────────────

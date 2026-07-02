@@ -698,6 +698,36 @@ export default function CurriculumPage() {
   const regenerating = curriculumRegen.running
   const router = useRouter()
 
+  // Chat-driven reconstructions (Curriculum/L&C mode with Bob) happen as a
+  // server-side background job — invisible to the client-side regeneration
+  // manager. Poll the DB-backed status so this page shows a rebuilding
+  // banner while Bob's changes apply, and refreshes itself when they land.
+  const [chatRebuilding, setChatRebuilding] = useState(false)
+  const wasChatRebuilding = useRef(false)
+  useEffect(() => {
+    let stopped = false
+    async function check() {
+      try {
+        const res = await fetch('/api/curriculum/status', { cache: 'no-store' })
+        if (!res.ok || stopped) return
+        const j = await res.json() as { rebuilding?: boolean }
+        const now = !!j.rebuilding
+        if (stopped) return
+        setChatRebuilding(now)
+        if (wasChatRebuilding.current && !now) {
+          // The rebuild just finished — pull the fresh curriculum.
+          refreshCurriculumOverview()
+          refreshStudentData()
+          refreshCompletionStats()
+        }
+        wasChatRebuilding.current = now
+      } catch { /* transient — keep polling */ }
+    }
+    check()
+    const id = setInterval(check, 5_000)
+    return () => { stopped = true; clearInterval(id) }
+  }, [])
+
   // Detect a fallback curriculum so we can prompt the user to regenerate
   // with Claude. We match both the OLD phase-label titles (still in some
   // users' DBs from before the prompt rewrite) and the NEW "Building Blocks
@@ -918,6 +948,17 @@ export default function CurriculumPage() {
 
       {/* Curriculum Status */}
       <CurriculumStatusCard plan={plan} allModules={allModules} />
+
+      {/* Chat-requested reconstruction in progress (L&C mode with Bob) */}
+      {chatRebuilding && (
+        <div className="border border-primary/40 bg-primary/10 rounded-xl p-4 flex items-center gap-3">
+          <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">{tr('curriculum.chatRebuilding')}</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">{tr('curriculum.chatRebuildingBody')}</p>
+          </div>
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -98,30 +98,27 @@ export default function LoginPage() {
             <p className="text-sm text-muted-foreground mt-3">
               <span className="text-foreground font-semibold">AI-powered personalized learning</span> — at your own pace.
             </p>
-            <div className="mt-5 space-y-2.5 text-left max-w-xs mx-auto">
-              <div className="flex items-start gap-2.5">
-                <BookOpen className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-muted-foreground leading-snug">
-                  <span className="text-foreground font-semibold">Any topic → a full curriculum</span>, built for your level
-                </p>
+            {/* Value props — 2×2 blocks, big and instantly scannable */}
+            <div className="mt-6 grid grid-cols-2 gap-3 text-left">
+              <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
+                <BookOpen className="w-5 h-5 text-foreground" />
+                <p className="text-base font-bold text-foreground leading-snug">Any topic → a full course</p>
+                <p className="text-xs text-muted-foreground">Built for your level</p>
               </div>
-              <div className="flex items-start gap-2.5">
-                <MessageSquare className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-muted-foreground leading-snug">
-                  <span className="text-foreground font-semibold">An AI chat mentor</span> that teaches you one-on-one
-                </p>
+              <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
+                <MessageSquare className="w-5 h-5 text-foreground" />
+                <p className="text-base font-bold text-foreground leading-snug">1-on-1 AI mentor</p>
+                <p className="text-xs text-muted-foreground">Learn by chatting</p>
               </div>
-              <div className="flex items-start gap-2.5">
-                <Hammer className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-muted-foreground leading-snug">
-                  <span className="text-foreground font-semibold">Projects &amp; assignments</span> to learn by building
-                </p>
+              <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
+                <Hammer className="w-5 h-5 text-foreground" />
+                <p className="text-base font-bold text-foreground leading-snug">Learn by building</p>
+                <p className="text-xs text-muted-foreground">Real projects, not exams</p>
               </div>
-              <div className="flex items-start gap-2.5">
-                <Award className="w-4 h-4 text-foreground mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-muted-foreground leading-snug">
-                  <span className="text-foreground font-semibold">An insights-based résumé</span> for universities &amp; employers
-                </p>
+              <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
+                <Award className="w-5 h-5 text-foreground" />
+                <p className="text-base font-bold text-foreground leading-snug">A résumé that proves it</p>
+                <p className="text-xs text-muted-foreground">For universities &amp; employers</p>
               </div>
             </div>
           </motion.div>
