@@ -426,6 +426,8 @@ function TreeCanvasInner() {
   const [settling, setSettling] = useState(true)
   const settledRef = useRef(false)
   const draggedPos = useRef<Map<string, { x: number; y: number }>>(new Map())
+  // Parent/children maps for the drag constraint below.
+  const relRef = useRef<{ parent: Map<string, string | null>; children: Map<string, string[]> }>({ parent: new Map(), children: new Map() })
 
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeData>([])
 
@@ -447,13 +449,42 @@ function TreeCanvasInner() {
     load()
   }, [params.id, load])
 
-  // Track user drags so refetches don't snap nodes back.
+  useEffect(() => {
+    if (!tree) return
+    const parent = new Map<string, string | null>()
+    const children = new Map<string, string[]>()
+    for (const n of tree.nodes) {
+      parent.set(n.id, n.parentId)
+      if (n.parentId) {
+        if (!children.has(n.parentId)) children.set(n.parentId, [])
+        children.get(n.parentId)!.push(n.id)
+      }
+    }
+    relRef.current = { parent, children }
+  }, [tree])
+
+  // Drag freely in x — but the HIERARCHY is inviolable: a node may never
+  // sink below its parent nor rise above its children. y is clamped live
+  // while dragging, so levels always read correctly.
+  const MIN_LEVEL_GAP = 110
   const handleNodesChange: typeof onNodesChange = useCallback(changes => {
+    const current = new Map(flow.getNodes().map(n => [n.id, n.position]))
     for (const c of changes) {
-      if (c.type === 'position' && c.position) draggedPos.current.set(c.id, c.position)
+      if (c.type === 'position' && c.position) {
+        const pid = relRef.current.parent.get(c.id)
+        if (pid) {
+          const py = current.get(pid)?.y
+          if (py !== undefined) c.position.y = Math.min(c.position.y, py - MIN_LEVEL_GAP)
+        }
+        for (const kid of relRef.current.children.get(c.id) ?? []) {
+          const ky = current.get(kid)?.y
+          if (ky !== undefined) c.position.y = Math.max(c.position.y, ky + MIN_LEVEL_GAP)
+        }
+        draggedPos.current.set(c.id, c.position)
+      }
     }
     onNodesChange(changes)
-  }, [onNodesChange])
+  }, [flow, onNodesChange])
 
   // Build flow nodes from the tree. First load: float in scattered, then
   // settle into place (CSS transition while `settling`).
