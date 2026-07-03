@@ -7,6 +7,8 @@ export const dynamic = 'force-dynamic'
  *   { action: 'learning' }           — mark node as being worked on
  *   { action: 'annotate', text }     — append a user annotation to the explainer
  *   { action: 'notes', text }        — save the student's editable per-node notes
+ *   { action: 'add_child', title, summary? } — student manually adds a child node
+ *   { action: 'delete' }             — delete this node AND its descendants (root protected)
  *
  * NOTE: there is deliberately NO action to set status to 'understood' —
  * mastery is AI-verified only (see ./verify).
@@ -21,7 +23,7 @@ export async function PATCH(
 ) {
   const { id, nodeId } = await params
   const userId = await getUserId()
-  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string }
+  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string; title?: string; summary?: string }
 
   // Ownership check through the tree.
   const node = await prisma.treeNode.findFirst({
@@ -44,6 +46,38 @@ export async function PATCH(
       if (node.status === 'understood') return NextResponse.json({ ok: true })
       await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'learning' } })
       return NextResponse.json({ ok: true })
+    }
+    case 'add_child': {
+      const title = (body.title ?? '').trim()
+      if (!title) return NextResponse.json({ error: 'Title required' }, { status: 400 })
+      const siblings = await prisma.treeNode.count({ where: { parentId: nodeId } })
+      const created = await prisma.treeNode.create({
+        data: {
+          treeId: id, parentId: nodeId, kind: 'component',
+          title: title.slice(0, 120), summary: (body.summary ?? '').trim().slice(0, 500),
+          pending: false, order: siblings,
+        },
+      })
+      return NextResponse.json({ ok: true, node: created })
+    }
+    case 'delete': {
+      if (!node.parentId) return NextResponse.json({ error: 'The root problem cannot be deleted' }, { status: 400 })
+      // Children reference parents by id without a cascading FK — collect the
+      // whole subtree and delete it in one sweep so no orphans remain.
+      const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
+      const toDelete = new Set<string>([nodeId])
+      let grew = true
+      while (grew) {
+        grew = false
+        for (const n of all) {
+          if (n.parentId && toDelete.has(n.parentId) && !toDelete.has(n.id)) {
+            toDelete.add(n.id)
+            grew = true
+          }
+        }
+      }
+      await prisma.treeNode.deleteMany({ where: { id: { in: Array.from(toDelete) } } })
+      return NextResponse.json({ ok: true, deleted: toDelete.size })
     }
     case 'notes': {
       await prisma.treeNode.update({

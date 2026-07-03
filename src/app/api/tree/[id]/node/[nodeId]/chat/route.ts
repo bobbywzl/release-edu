@@ -25,6 +25,14 @@ interface Reflection {
   gapDepth: 'none' | 'partial' | 'deep'
   streakWrong: number    // consecutive confused/incorrect turns
   directive: string      // Bob's next move
+  // Discovery: repeated questions circling a field the tree doesn't cover
+  // yet → suggest a new node (the student approves via a button in chat).
+  suggestNode?: { title: string; summary: string } | null
+  // The discussion actually belongs to a different existing node.
+  moveToNodeId?: string | null
+  moveToTitle?: string | null
+  // Concrete real-world execution progress detected in the student's message.
+  projectProgress?: string | null
 }
 
 function safeParse<T>(str: string | null | undefined, fallback: T): T {
@@ -42,6 +50,9 @@ function safeParse<T>(str: string | null | undefined, fallback: T): T {
 async function haikuReflect(
   apiKey: string,
   nodeTitle: string,
+  nodeId: string,
+  treeSketch: string,
+  recentUserMsgs: string[],
   lastBobMsg: string,
   studentMsg: string,
   prior: Reflection | null,
@@ -52,16 +63,28 @@ async function haikuReflect(
     const { pickBackgroundModel } = await import('@/lib/chat-model-router')
     const result = await client.messages.create({
       model: pickBackgroundModel(),
-      max_tokens: 300,
+      max_tokens: 500,
       messages: [{
         role: 'user',
-        content: `Fast tutoring read. Concept under study: "${nodeTitle}".
-Tutor's last message (context): "${lastBobMsg.slice(0, 500)}"
-Student's new message: "${studentMsg.slice(0, 500)}"
+        content: `Fast tutoring read. Concept under study: "${nodeTitle}" (node id ${nodeId}).
+
+THE FULL TREE (every node has an id-less sketch; titles are unique enough to reference):
+${treeSketch.slice(0, 2500)}
+
+Student's recent questions in this node (oldest first):
+${recentUserMsgs.slice(-4).map(m => `- "${m.slice(0, 200)}"`).join('\n') || '(first question)'}
+Tutor's last message (context): "${lastBobMsg.slice(0, 400)}"
+Student's NEW message: "${studentMsg.slice(0, 500)}"
 Prior wrong-streak: ${prior?.streakWrong ?? 0}
 
 Assess and return ONLY JSON:
-{"state": "one-line read of where the student is right now", "gapDepth": "none|partial|deep", "streakWrong": <prior+1 if this message shows confusion/an incorrect idea, else 0>, "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)"}`,
+{"state": "one-line read of where the student is right now",
+ "gapDepth": "none|partial|deep",
+ "streakWrong": <prior+1 if this message shows confusion/an incorrect idea, else 0>,
+ "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)",
+ "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers: {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
+ "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
+ "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>}`,
       }],
     })
     try {
@@ -124,13 +147,37 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!isIntro) await store.addMessage(conv!.id, 'user', message.trim())
 
   // Contextual thinking (Haiku) before Bob speaks — persisted on the
-  // conversation so the wrong-streak survives across turns.
+  // conversation so the wrong-streak survives across turns. The same pass
+  // watches for DISCOVERY: repeated questions circling an uncovered field
+  // (→ suggest a new node) or a discussion that belongs to another node
+  // (→ recommend moving). Suggestions render as approve buttons in chat.
   let reflectionBlock = ''
+  let suggestion: { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string } | null = null
   if (!isIntro) {
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
-    const r = await haikuReflect(apiKey, node.title, lastBob, message.trim(), prior)
+    const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
+    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior)
     if (r) {
+      if (r.projectProgress) {
+        // Flag real execution progress on this node — shown in the list
+        // view and node panel as the project's build log.
+        void (async () => {
+          try {
+            const row = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { progressLog: true } })
+            const log = safeParse<Array<{ text: string; source: string; createdAt: string }>>(row?.progressLog, [])
+            log.push({ text: r.projectProgress!.slice(0, 300), source: 'chat', createdAt: new Date().toISOString() })
+            await prisma.treeNode.update({ where: { id: nodeId }, data: { progressLog: JSON.stringify(log.slice(-30)) } })
+          } catch { /* non-critical */ }
+        })()
+      }
+      if (r.suggestNode?.title) {
+        suggestion = { type: 'add', title: r.suggestNode.title.slice(0, 120), summary: (r.suggestNode.summary ?? '').slice(0, 300) }
+      } else if (r.moveToTitle) {
+        const target = tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase() === r.moveToTitle!.toLowerCase())
+          ?? tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase().includes(r.moveToTitle!.toLowerCase()))
+        if (target) suggestion = { type: 'move', nodeId: target.id, title: target.title }
+      }
       reflectionBlock = `
 
 ## CONTEXTUAL READ (your silent pre-pass — act on it, never mention it)
@@ -146,6 +193,26 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
     }
   }
 
+  // The student's uploaded evidence for this node — Bob reads actual file
+  // content (text files excerpted; images/binaries listed by name).
+  let filesBlock = ''
+  try {
+    const nodeFiles = await prisma.linkedFile.findMany({
+      where: { userId, workType: 'tree-node', workId: nodeId },
+      select: { name: true, mimeType: true, content: true },
+      orderBy: { addedAt: 'desc' },
+      take: 5,
+    })
+    if (nodeFiles.length > 0) {
+      filesBlock = `\n## THE STUDENT'S FILES ON THIS NODE (their real work — read and reference it)\n` + nodeFiles.map(f => {
+        const isText = !(f.content ?? '').startsWith('data:')
+        return isText
+          ? `### ${f.name}\n${(f.content ?? '').slice(0, 2000)}${(f.content ?? '').length > 2000 ? '\n…(truncated)' : ''}`
+          : `### ${f.name} (binary/image — content not inlined)`
+      }).join('\n\n')
+    }
+  } catch { /* non-critical */ }
+
   const path = nodePath(tree.nodes, nodeId)
   const systemPrompt = `You are Bob, the student's expert mentor inside Release EDU's problem-mastery tree.
 
@@ -159,6 +226,7 @@ ${sketchTree(tree.nodes)}
 The student is working on the node: "${node.title}" — ${node.summary}
 Path from root: ${path.map(n => `"${n.title}"`).join(' → ')}
 ${node.explainer ? `\nThe node's explainer (already shown to the student):\n${node.explainer.slice(0, 2500)}` : ''}
+${filesBlock}
 
 ## HOW TO TEACH HERE
 - Everything you say serves ONE goal: this student genuinely understanding THIS node in service of the root problem.
@@ -218,6 +286,12 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
       } catch (err) {
         console.error('[tree] node chat failed:', err)
         if (!full) controller.enqueue(encoder.encode("I'm having trouble connecting right now. Please try again in a moment."))
+      }
+
+      // Discovery card — sent to the client as a trailing machine marker,
+      // never persisted as message content.
+      if (suggestion) {
+        try { controller.enqueue(encoder.encode(`\n\n[[TREE_SUGGEST]]${JSON.stringify(suggestion)}`)) } catch { /* closed */ }
       }
 
       if (full) {

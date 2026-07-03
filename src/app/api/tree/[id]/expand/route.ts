@@ -19,8 +19,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'nodeId and question are required' }, { status: 400 })
   }
   try {
-    const proposals = await proposeExpansion(userId, id, nodeId, question.trim(), lang)
-    return NextResponse.json({ proposals })
+    const result = await proposeExpansion(userId, id, nodeId, question.trim(), lang)
+    return NextResponse.json(result)
   } catch (err) {
     console.error('[tree] expand failed:', err)
     return NextResponse.json({ error: 'Could not propose branches right now.' }, { status: 502 })

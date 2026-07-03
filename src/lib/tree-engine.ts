@@ -98,8 +98,7 @@ async function studentGrounding(userId: string): Promise<string> {
 // ── Seeding ──────────────────────────────────────────────────────────────
 
 interface SeedNode { title: string; summary: string }
-interface SeedSolution extends SeedNode { components: SeedNode[] }
-interface SeedResult { framing: string; rootSummary: string; solutions: SeedSolution[] }
+interface SeedResult { framing: string; rootSummary: string; solutions: SeedNode[] }
 
 /**
  * Create a new tree: root (the problem) + candidate solution branches +
@@ -134,7 +133,7 @@ THE PROBLEM: "${problem}"
 ${sessionDirectives(session)}
 ${grounding}
 
-The tree model: the problem is the ROOT. Base branches are the CANDIDATE SOLUTIONS (real, distinct approaches an expert would weigh — 1 to 3 of them; use 1 only when the problem genuinely has a single canonical resolution). Each solution's children are its first-level COMPONENTS: the parts of that solution a beginner would NOT understand yet (2-4 per solution). Do NOT go deeper — deeper branches grow later from the student's own questions.
+The tree model: the problem is the ROOT. Base branches are the CANDIDATE SOLUTIONS or FOUNDING CONCEPTS that answer it (real, distinct approaches or conceptual pillars an expert would name — 1 to 3; use 1 only when the problem has a single canonical resolution). Generate ONLY the root and these first branches — NOTHING deeper. The whole point of this product is that deeper nodes are pain points the student DISCOVERS through their own questions while working; the tree must never grow ahead of their curiosity.
 
 Every node needs:
 - "title": 2-6 words, the concept's name
@@ -146,7 +145,7 @@ Also write:
 
 
 Return ONLY JSON:
-{"framing": "...", "rootSummary": "...", "solutions": [{"title": "...", "summary": "...", "components": [{"title": "...", "summary": "..."}]}]}`,
+{"framing": "...", "rootSummary": "...", "solutions": [{"title": "...", "summary": "..."}]}`,
     }],
   })
 
@@ -172,23 +171,16 @@ Return ONLY JSON:
       order: 0,
     },
   })
+  // Seed stops at the solution branches — every deeper node is a pain point
+  // the student discovers through their own questions.
   for (let s = 0; s < seed.solutions.length; s++) {
     const sol = seed.solutions[s]
-    const solNode = await prisma.treeNode.create({
+    await prisma.treeNode.create({
       data: {
         treeId: tree.id, parentId: root.id, kind: 'solution',
         title: sol.title.slice(0, 120), summary: sol.summary ?? '', order: s,
       },
     })
-    for (let c = 0; c < (sol.components ?? []).length; c++) {
-      const comp = sol.components[c]
-      await prisma.treeNode.create({
-        data: {
-          treeId: tree.id, parentId: solNode.id, kind: 'component',
-          title: comp.title.slice(0, 120), summary: comp.summary ?? '', order: c,
-        },
-      })
-    }
   }
   return tree.id
 }
@@ -235,13 +227,21 @@ export function nodePath(nodes: TreeNode[], nodeId: string): TreeNode[] {
 
 // ── Expansion (grows only with permission) ───────────────────────────────
 
+export interface ExpansionResult {
+  proposals: TreeNode[]
+  /** When the ask is too vague to propose well, Bob asks this instead. */
+  clarify?: string
+}
+
 /**
  * The student asked a question at a node. Propose 1-4 child nodes that
  * answer it — persisted as pending=true ghosts the student must approve.
+ * If the question is too vague to branch well, returns a clarifying
+ * question instead of guessing.
  */
 export async function proposeExpansion(
   userId: string, treeId: string, nodeId: string, question: string, lang?: string,
-): Promise<TreeNode[]> {
+): Promise<ExpansionResult> {
   const tree = await getTreeWithNodes(userId, treeId)
   if (!tree) throw new Error('Tree not found')
   const node = tree.nodes.find(n => n.id === nodeId)
@@ -262,22 +262,33 @@ ${sketchTree(tree.nodes)}
 TARGET NODE: "${node.title}" — ${node.summary}
 STUDENT'S QUESTION: "${question.slice(0, 500)}"
 
-Propose 1-4 NEW child nodes under the target node. Each must be a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution).
+If the question is CLEAR enough to branch on, propose 1-4 NEW child nodes under the target node. Each must be a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution).
+
+If the question is TOO VAGUE or could branch in several very different directions, do NOT guess — ask ONE precise clarifying question instead (student-facing, warm but direct).
 
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON:
-[{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}]`,
+Return ONLY JSON — one of:
+{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}]}
+{"clarify": "your one clarifying question"}`,
     }],
   })
 
   void recordUsage(result, userId, SONNET, 'tree-expand')
   const text = (result.content[0] as { text?: string })?.text ?? ''
-  const proposals = extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text) ?? []
+  const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; clarify?: string }>(text)
+    // Tolerate a bare array (older shape).
+    ?? { proposals: extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text) ?? [] }
+
+  if (parsed.clarify && !(parsed.proposals?.length)) {
+    return { proposals: [], clarify: parsed.clarify }
+  }
+
   const existingCount = tree.nodes.filter(n => n.parentId === nodeId).length
   const created: TreeNode[] = []
-  for (let i = 0; i < Math.min(4, proposals.length); i++) {
-    const p = proposals[i]
+  const list = parsed.proposals ?? []
+  for (let i = 0; i < Math.min(4, list.length); i++) {
+    const p = list[i]
     if (!p?.title) continue
     created.push(await prisma.treeNode.create({
       data: {
@@ -288,7 +299,7 @@ Return ONLY JSON:
       },
     }))
   }
-  return created
+  return { proposals: created }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────
