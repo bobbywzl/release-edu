@@ -85,11 +85,17 @@ function formatUsd(n: number): string {
 }
 
 const FEATURE_LABELS: Record<string, string> = {
-  tutoring: 'Tutoring chat', chapter: 'Lesson sessions (legacy)', onboarding: 'Onboarding',
-  research: 'Research (Gemini)', reflection: 'Reflection blocks', insight: 'Insight extraction',
-  title: 'Title generation', curriculum: 'Curriculum gen (legacy)', quiz: 'Quiz eval',
-  capstone: 'Capstone eval', compaction: 'Chat compaction', image: 'Image/file analysis',
-  portfolio: 'Portfolio', project: 'Projects', other: 'Other',
+  // Tree EDU
+  'tree-seed': 'Tree seeding', 'tree-expand': 'Branch proposals',
+  'tree-explainer': 'Node explainers', 'tree-verify': 'Mastery verification',
+  'node-chat': 'Workspace chat (Bob)', reflection: 'Contextual thinking (Haiku)',
+  onboarding: 'Onboarding', insight: 'Insight memory', title: 'Title generation',
+  portfolio: 'Portfolio', image: 'Image/file analysis', other: 'Other',
+  // Legacy (pre-pivot telemetry rows)
+  tutoring: 'Tutoring chat (legacy)', chapter: 'Lesson sessions (legacy)',
+  research: 'Research (legacy)', curriculum: 'Curriculum gen (legacy)',
+  quiz: 'Quiz eval (legacy)', capstone: 'Capstone eval (legacy)',
+  compaction: 'Chat compaction (legacy)', project: 'Projects (legacy)',
 }
 
 export default function AdminDashboardPage() {

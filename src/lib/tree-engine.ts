@@ -54,6 +54,14 @@ export function sessionDirectives(tree: SessionFields, fallbackLang?: string): s
   return parts.join('\n')
 }
 
+
+async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify') {
+  try {
+    const { recordAnthropicUsage } = await import('@/lib/usage')
+    recordAnthropicUsage(result.usage as Parameters<typeof recordAnthropicUsage>[0], { userId, model, feature })
+  } catch { /* non-critical */ }
+}
+
 async function anthropic() {
   const Anthropic = (await import('@anthropic-ai/sdk')).default
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -142,6 +150,7 @@ Return ONLY JSON:
     }],
   })
 
+  void recordUsage(result, userId, OPUS, 'tree-seed')
   const text = (result.content[0] as { text?: string })?.text ?? ''
   const seed = extractJSON<SeedResult>(text)
   if (!seed?.solutions?.length) throw new Error('Seed generation failed')
@@ -262,6 +271,7 @@ Return ONLY JSON:
     }],
   })
 
+  void recordUsage(result, userId, SONNET, 'tree-expand')
   const text = (result.content[0] as { text?: string })?.text ?? ''
   const proposals = extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text) ?? []
   const existingCount = tree.nodes.filter(n => n.parentId === nodeId).length
@@ -321,6 +331,7 @@ ${sessionDirectives(tree, lang)}`,
     }],
   })
 
+  void recordUsage(result, userId, OPUS, 'tree-explainer')
   const explainer = (result.content[0] as { text?: string })?.text?.trim() ?? ''
   if (explainer) {
     await prisma.treeNode.update({ where: { id: nodeId }, data: { explainer } })
@@ -356,6 +367,7 @@ ${sessionDirectives(tree, lang)}
 Return ONLY JSON: {"questions": ["...", "..."]}`,
     }],
   })
+  void recordUsage(result, userId, SONNET, 'tree-verify')
   const parsed = extractJSON<VerifyQuestions>((result.content[0] as { text?: string })?.text ?? '')
   if (!parsed?.questions?.length) throw new Error('Verification generation failed')
   return { questions: parsed.questions.slice(0, 3) }
@@ -387,6 +399,7 @@ ${sessionDirectives(tree, lang)}
 Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedback": "2-3 sentences: what they got right, what to revisit"}`,
     }],
   })
+  void recordUsage(result, userId, SONNET, 'tree-verify')
   const parsed = extractJSON<VerifyJudgement>((result.content[0] as { text?: string })?.text ?? '')
   if (!parsed) throw new Error('Judging failed')
 

@@ -64,6 +64,10 @@ Assess and return ONLY JSON:
 {"state": "one-line read of where the student is right now", "gapDepth": "none|partial|deep", "streakWrong": <prior+1 if this message shows confusion/an incorrect idea, else 0>, "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)"}`,
       }],
     })
+    try {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId: null, model: pickBackgroundModel(), feature: 'reflection' })
+    } catch { /* non-critical */ }
     const text = (result.content[0] as { text?: string })?.text ?? ''
     const match = text.match(/\{[\s\S]*\}/)
     return match ? (JSON.parse(match[0]) as Reflection) : null
@@ -205,6 +209,12 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
             controller.enqueue(encoder.encode(event.delta.text))
           }
         }
+        // Cost telemetry for the streamed turn.
+        try {
+          const final = await response.finalMessage()
+          const { recordAnthropicUsage } = await import('@/lib/usage')
+          recordAnthropicUsage(final.usage, { userId, model: OPUS, feature: 'node-chat' })
+        } catch { /* non-critical */ }
       } catch (err) {
         console.error('[tree] node chat failed:', err)
         if (!full) controller.enqueue(encoder.encode("I'm having trouble connecting right now. Please try again in a moment."))

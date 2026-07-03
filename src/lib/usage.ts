@@ -7,9 +7,11 @@
 import prisma from '@/lib/prisma'
 
 export type UsageFeature =
-  | 'tutoring' | 'onboarding' | 'research' | 'reflection' | 'insight'
-  | 'title' | 'curriculum' | 'chapter' | 'quiz' | 'capstone' | 'compaction'
-  | 'image' | 'portfolio' | 'project' | 'other'
+  // ── Tree EDU features ──
+  | 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'node-chat'
+  | 'onboarding' | 'reflection' | 'insight' | 'title' | 'portfolio' | 'image' | 'other'
+  // ── Legacy (pre-pivot data still in the telemetry table) ──
+  | 'tutoring' | 'research' | 'curriculum' | 'chapter' | 'quiz' | 'capstone' | 'compaction' | 'project'
 
 export type UsageProvider = 'anthropic' | 'google'
 
