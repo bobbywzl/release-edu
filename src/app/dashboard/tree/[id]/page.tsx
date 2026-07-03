@@ -463,28 +463,70 @@ function TreeCanvasInner() {
     relRef.current = { parent, children }
   }, [tree])
 
-  // Drag freely in x — but the HIERARCHY is inviolable: a node may never
-  // sink below its parent nor rise above its children. y is clamped live
-  // while dragging, so levels always read correctly.
+  // Branch physics while dragging:
+  // - HIERARCHY is inviolable: a node stays above its parent (min level gap).
+  // - STRINGS have tension: an edge can never stretch past MAX_STRING — the
+  //   dragged node is held back by its parent's string, and each descendant
+  //   gets tugged along the moment its own string goes taut. The result is
+  //   the whole subtree trailing the dragged node like a hanging mobile —
+  //   slack first, then a natural, flexible follow.
   const MIN_LEVEL_GAP = 110
+  const MAX_STRING = 400
   const handleNodesChange: typeof onNodesChange = useCallback(changes => {
-    const current = new Map(flow.getNodes().map(n => [n.id, n.position]))
+    const current = new Map(flow.getNodes().map(n => [n.id, { ...n.position }]))
+    const extraMoves = new Map<string, { x: number; y: number }>()
+
+    const clampToParent = (pos: { x: number; y: number }, pp: { x: number; y: number }) => {
+      // Above the parent, always.
+      pos.y = Math.min(pos.y, pp.y - MIN_LEVEL_GAP)
+      // String tension: project back inside the string's reach.
+      const dx = pos.x - pp.x
+      const dy = pos.y - pp.y
+      const dist = Math.hypot(dx, dy)
+      if (dist > MAX_STRING) {
+        const k = MAX_STRING / dist
+        pos.x = pp.x + dx * k
+        pos.y = Math.min(pp.y + dy * k, pp.y - MIN_LEVEL_GAP)
+      }
+      return pos
+    }
+
     for (const c of changes) {
       if (c.type === 'position' && c.position) {
+        // The dragged node strains against its own parent's string.
         const pid = relRef.current.parent.get(c.id)
-        if (pid) {
-          const py = current.get(pid)?.y
-          if (py !== undefined) c.position.y = Math.min(c.position.y, py - MIN_LEVEL_GAP)
-        }
-        for (const kid of relRef.current.children.get(c.id) ?? []) {
-          const ky = current.get(kid)?.y
-          if (ky !== undefined) c.position.y = Math.max(c.position.y, ky + MIN_LEVEL_GAP)
-        }
+        const pp = pid ? current.get(pid) : undefined
+        if (pp) c.position = clampToParent({ ...c.position }, pp)
+        current.set(c.id, { ...c.position })
         draggedPos.current.set(c.id, c.position)
+
+        // Cascade through the subtree: each child is pulled only when its
+        // string tightens; its movement may tighten its children's strings
+        // in turn — BFS downward.
+        const queue: string[] = [c.id]
+        while (queue.length) {
+          const parentId = queue.shift()!
+          const parentPos = current.get(parentId)
+          if (!parentPos) continue
+          for (const kid of relRef.current.children.get(parentId) ?? []) {
+            const kidPos = current.get(kid)
+            if (!kidPos) continue
+            const next = clampToParent({ ...kidPos }, parentPos)
+            if (next.x !== kidPos.x || next.y !== kidPos.y) {
+              current.set(kid, next)
+              extraMoves.set(kid, next)
+              draggedPos.current.set(kid, next)
+            }
+            queue.push(kid)
+          }
+        }
       }
     }
     onNodesChange(changes)
-  }, [flow, onNodesChange])
+    if (extraMoves.size > 0) {
+      setNodes(nds => nds.map(n => (extraMoves.has(n.id) ? { ...n, position: extraMoves.get(n.id)! } : n)))
+    }
+  }, [flow, onNodesChange, setNodes])
 
   // Build flow nodes from the tree. First load: float in scattered, then
   // settle into place (CSS transition while `settling`).
