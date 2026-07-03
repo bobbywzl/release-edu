@@ -55,14 +55,8 @@ const ssKey = (kind: RegenKind) => `regen-inflight-${kind}`
 
 async function refreshAllData() {
   try {
-    const [sd, cs, co] = await Promise.all([
-      import('@/lib/student-data'),
-      import('@/lib/completion-stats'),
-      import('@/lib/curriculum-overview'),
-    ])
+    const sd = await import('@/lib/student-data')
     sd.refreshStudentData()
-    cs.refreshCompletionStats()
-    co.refreshCurriculumOverview()
   } catch { /* non-critical */ }
 }
 

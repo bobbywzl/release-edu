@@ -51,6 +51,7 @@ export type XpSource =
   | 'project_milestone'
   | 'project_completed'
   | 'perseverance'
+  | 'objective_mastered'
 
 interface XpAwardResult {
   awarded: number
@@ -93,7 +94,35 @@ const XP_TABLE: Record<XpSource, { base: number; label: string }> = {
   // part of learning, and the system should reinforce continued effort, not
   // just correct answers. Tier scaled by streakWrong: see calculateXp.
   perseverance:        { base: 10,  label: 'Perseverance' },
+  // Objective mastered: the smallest visible unit of syllabus progress — the
+  // deterministic progress bar advancing IS this event. Rewarding it makes
+  // every step of a lesson land with a ding, not just chapter completion.
+  objective_mastered:  { base: 20,  label: 'Objective Mastered' },
 }
+
+// ── Daily goal + ranks (retention layer) ──
+
+// Duolingo-style daily target: reachable in one honest lesson session
+// (~2 quiz answers + 1 objective), so "goal met" is a daily habit, not a chore.
+export const DAILY_GOAL_XP = 60
+
+// Named rank tiers give levels identity (Duolingo leagues / Khan avatars):
+// the current rank appears on the dashboard and the portfolio/résumé.
+const RANKS: Array<{ minLevel: number; en: string; zh: string }> = [
+  { minLevel: 40, en: 'Sage',       zh: '贤者' },
+  { minLevel: 30, en: 'Master',     zh: '大师' },
+  { minLevel: 20, en: 'Expert',     zh: '专家' },
+  { minLevel: 15, en: 'Adept',      zh: '能手' },
+  { minLevel: 10, en: 'Scholar',    zh: '学者' },
+  { minLevel: 5,  en: 'Apprentice', zh: '学徒' },
+  { minLevel: 1,  en: 'Novice',     zh: '新手' },
+]
+
+export function getRank(level: number): { en: string; zh: string } {
+  return RANKS.find(r => level >= r.minLevel) ?? RANKS[RANKS.length - 1]
+}
+
+export { getLevel as getLevelForXp }
 
 export function calculateXp(
   source: XpSource,
@@ -154,6 +183,29 @@ export function calculateXp(
   return Math.round(xp)
 }
 
+// ── Daily XP accounting ──
+// Powers the daily-goal ring. Rolls over automatically when the stored date
+// is not today. Best-effort: never lets the retention layer break an award.
+async function bumpDailyXp(userId: string, amount: number): Promise<void> {
+  if (amount <= 0) return
+  try {
+    const row = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { dailyXp: true, dailyXpDate: true },
+    })
+    if (!row) return
+    const today = new Date().toDateString()
+    const sameDay = row.dailyXpDate && new Date(row.dailyXpDate).toDateString() === today
+    await prisma.studentProfile.update({
+      where: { userId },
+      data: {
+        dailyXp: sameDay ? (row.dailyXp ?? 0) + amount : amount,
+        dailyXpDate: new Date(),
+      },
+    })
+  } catch { /* schema lag — non-critical */ }
+}
+
 // ── Award XP (writes to DB) ──
 
 export async function awardXp(
@@ -185,6 +237,7 @@ export async function awardXp(
     where: { userId },
     data: { xp: newTotal },
   })
+  await bumpDailyXp(userId, awarded)
 
   return {
     awarded,
@@ -234,6 +287,7 @@ export async function awardXpBatch(
       where: { userId },
       data: { xp: runningTotal },
     })
+    await bumpDailyXp(userId, runningTotal - profile.xp)
   }
 
   return results
@@ -265,13 +319,26 @@ export async function updateStreak(userId: string): Promise<{ streak: number; xp
 
   const newStreak = isConsecutive ? profile.streak + 1 : 1
 
-  await prisma.studentProfile.update({
-    where: { userId },
-    data: { streak: newStreak },
-  })
+  try {
+    // Track the best-ever streak too — badge criteria read longestStreak so
+    // a broken streak never revokes earned badges.
+    const prev = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { longestStreak: true },
+    })
+    await prisma.studentProfile.update({
+      where: { userId },
+      data: { streak: newStreak, longestStreak: Math.max(newStreak, prev?.longestStreak ?? 0) },
+    })
+  } catch {
+    // Schema lag — fall back to updating only the streak.
+    await prisma.studentProfile.update({ where: { userId }, data: { streak: newStreak } })
+  }
 
-  // Award streak XP
+  // Award streak XP + the first-session-of-the-day bonus (a new day reaching
+  // this point IS the first session — the cheap dopamine hit for showing up).
   const xpAwarded = await awardXp(userId, 'daily_streak', { streakDays: newStreak, streak: newStreak })
+  await awardXp(userId, 'first_session', { streak: newStreak }).catch(() => null)
 
   return { streak: newStreak, xpAwarded }
 }

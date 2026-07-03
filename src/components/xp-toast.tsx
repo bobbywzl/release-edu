@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Zap, Trophy, Star, TrendingUp, Heart } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useT } from '@/lib/i18n'
+import { useT, useLanguage } from '@/lib/i18n'
+import { playXpDing, playLevelUp, playBadgeUnlock } from '@/lib/sfx'
 
 interface XpEvent {
   id: string
@@ -11,6 +12,14 @@ interface XpEvent {
   label: string
   levelUp: boolean
   newLevel: number
+}
+
+export interface BadgeEvent {
+  id: string
+  tier: 'bronze' | 'silver' | 'gold' | 'legendary'
+  icon: string
+  name: { en: string; zh: string }
+  desc: { en: string; zh: string }
 }
 
 // ── Global XP Event Bus ──
@@ -27,6 +36,16 @@ export function emitXpAwards(awards: Array<{ awarded: number; label: string; lev
   // Stagger so multiple awards animate sequentially
   awards.forEach((a, i) => {
     setTimeout(() => emitXpEvent(a), i * 600)
+  })
+}
+
+// ── Badge unlock bus — same pattern, separate celebration ──
+type BadgeListener = (badge: BadgeEvent) => void
+const badgeListeners = new Set<BadgeListener>()
+
+export function emitBadgeEvents(badges: BadgeEvent[]) {
+  badges.forEach((b, i) => {
+    setTimeout(() => badgeListeners.forEach(fn => fn(b)), i * 2600)
   })
 }
 
@@ -123,6 +142,74 @@ function LevelUpOverlay({ level, onDone }: { level: number; onDone: () => void }
   )
 }
 
+// ── Badge Unlock Overlay ──
+const TIER_STYLES: Record<BadgeEvent['tier'], { ring: string; glow: string; label: string }> = {
+  bronze:    { ring: 'from-amber-700 via-amber-600 to-amber-800',    glow: 'shadow-[0_0_40px_rgba(180,83,9,0.5)]',    label: 'text-amber-500' },
+  silver:    { ring: 'from-slate-300 via-slate-400 to-slate-500',    glow: 'shadow-[0_0_40px_rgba(148,163,184,0.5)]', label: 'text-slate-300' },
+  gold:      { ring: 'from-yellow-300 via-amber-400 to-orange-500',  glow: 'shadow-[0_0_50px_rgba(250,204,21,0.6)]',  label: 'text-yellow-400' },
+  legendary: { ring: 'from-fuchsia-400 via-purple-500 to-indigo-500', glow: 'shadow-[0_0_60px_rgba(192,38,211,0.6)]', label: 'text-fuchsia-400' },
+}
+
+function BadgeUnlockOverlay({ badge, onDone }: { badge: BadgeEvent; onDone: () => void }) {
+  const t = useT()
+  const { language } = useLanguage()
+  const lang = language === 'zh' ? 'zh' : 'en'
+  const tier = TIER_STYLES[badge.tier]
+  useEffect(() => {
+    const timer = setTimeout(onDone, 3200)
+    return () => clearTimeout(timer)
+  }, [onDone])
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[300] flex items-center justify-center pointer-events-none"
+    >
+      <motion.div
+        initial={{ scale: 0, rotate: -15 }}
+        animate={{ scale: [0, 1.25, 1], rotate: [-15, 6, 0] }}
+        transition={{ duration: 0.55, ease: 'backOut' }}
+        className="flex flex-col items-center gap-3"
+      >
+        <div className={cn('relative w-28 h-28 rounded-full bg-gradient-to-br flex items-center justify-center', tier.ring, tier.glow)}>
+          <span className="text-5xl select-none">{badge.icon}</span>
+          {/* Sparkle burst */}
+          {Array.from({ length: 10 }).map((_, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, scale: 0 }}
+              animate={{
+                opacity: [0, 1, 0],
+                scale: [0, 1, 0.4],
+                x: Math.cos((i * Math.PI * 2) / 10) * 76,
+                y: Math.sin((i * Math.PI * 2) / 10) * 76,
+              }}
+              transition={{ duration: 1.1, delay: 0.25 + i * 0.04 }}
+              className="absolute top-1/2 left-1/2 w-2 h-2 -ml-1 -mt-1 rounded-full bg-white"
+            />
+          ))}
+        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="text-center"
+        >
+          <div className={cn('text-xs font-bold uppercase tracking-[0.2em] mb-1', tier.label)}>
+            {t('xp.badgeUnlocked')}
+          </div>
+          <div className="text-3xl font-black text-white drop-shadow-[0_0_16px_rgba(255,255,255,0.25)]">
+            {badge.name[lang]}
+          </div>
+          <div className="text-sm text-white/70 mt-1">{badge.desc[lang]}</div>
+        </motion.div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ── XP Toast Banner ──
 function XpToastBanner({ event, onDone }: { event: XpEvent; onDone: () => void }) {
   const t = useT()
@@ -208,12 +295,14 @@ function XpToastBanner({ event, onDone }: { event: XpEvent; onDone: () => void }
 export function XpToastProvider() {
   const [toasts, setToasts] = useState<XpEvent[]>([])
   const [levelUp, setLevelUp] = useState<{ level: number } | null>(null)
+  const [badgeUnlock, setBadgeUnlock] = useState<BadgeEvent | null>(null)
   const [floaters, setFloaters] = useState<Array<{ id: string; amount: number; x: number; y: number }>>([])
 
   useEffect(() => {
     const handler: XpListener = (event) => {
-      // Add toast
+      // Add toast + the reward ding (the sound IS the habit loop)
       setToasts(prev => [...prev, event])
+      playXpDing()
 
       // Floating number near the XP display in sidebar
       setFloaters(prev => [
@@ -226,14 +315,20 @@ export function XpToastProvider() {
         },
       ])
 
-      // Level up overlay
+      // Level up overlay + fanfare
       if (event.levelUp) {
-        setTimeout(() => setLevelUp({ level: event.newLevel }), 400)
+        setTimeout(() => { setLevelUp({ level: event.newLevel }); playLevelUp() }, 400)
       }
     }
 
+    const badgeHandler: BadgeListener = (badge) => {
+      setBadgeUnlock(badge)
+      playBadgeUnlock()
+    }
+
     listeners.add(handler)
-    return () => { listeners.delete(handler) }
+    badgeListeners.add(badgeHandler)
+    return () => { listeners.delete(handler); badgeListeners.delete(badgeHandler) }
   }, [])
 
   const removeToast = useCallback((id: string) => {
@@ -264,6 +359,13 @@ export function XpToastProvider() {
       <AnimatePresence>
         {levelUp && (
           <LevelUpOverlay level={levelUp.level} onDone={() => setLevelUp(null)} />
+        )}
+      </AnimatePresence>
+
+      {/* Badge unlock overlay */}
+      <AnimatePresence>
+        {badgeUnlock && (
+          <BadgeUnlockOverlay badge={badgeUnlock} onDone={() => setBadgeUnlock(null)} />
         )}
       </AnimatePresence>
     </>

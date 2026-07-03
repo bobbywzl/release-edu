@@ -1,6 +1,7 @@
 'use client'
 import { signIn } from 'next-auth/react'
 import { motion } from 'framer-motion'
+import { TreeLogo } from '@/components/tree-logo'
 import { Zap, ArrowRight, Sparkles, MessageSquare, Hammer, Brain, Target, BookOpen, Award } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useState, useEffect } from 'react'
@@ -88,9 +89,9 @@ export default function LoginPage() {
           >
             <div className="flex items-center justify-center gap-3 mb-6">
               <div className="w-11 h-11 rounded-xl bg-foreground flex items-center justify-center">
-                <Zap className="w-5 h-5 text-background" />
+                <TreeLogo className="w-6 h-6 text-background" />
               </div>
-              <span className="text-2xl font-bold text-foreground">Release EDU</span>
+              <span className="text-2xl font-bold text-foreground">Tree EDU</span>
             </div>
             <h1 className="text-3xl font-bold text-foreground leading-tight">
               Learn <span className="text-muted-foreground">the world.</span>

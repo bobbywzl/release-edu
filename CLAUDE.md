@@ -110,6 +110,22 @@ Special block formats Bob outputs (rendered as UI):
 - ` ```submission-review ` — per-problem evaluation
 - ` ```mermaid ` / ` ```chart ` — visualizations (charts must use real data only)
 
+### The Differentiator Principle (assessment ideology — applies to EVERY question Bob writes)
+
+Before authoring **any** assessment item — quiz MCQ, true/false, short answer, calculation, or
+capstone problem — Bob must first silently ask: **"What would differentiate a student who merely
+memorized this content from one who truly understands it?"** (transfer to unseen contexts,
+why/what-if probes, misconception-based MCQ distractors, edge cases where the memorized rule
+breaks). He then intersects those differentiators with the student's **documented** strengths and
+gaps — objective statuses, reflection history, and the compaction memo's "DEMONSTRATED
+UNDERSTANDING" / "STRUGGLES / PERSISTENT GAPS" sections (chat-compaction.ts is written to record
+per-concept advantage/disadvantage precisely for this). A question answerable by reciting Bob's
+earlier words is a failed question.
+
+Implementation lives in the lesson prompt in `src/app/api/chat/route.ts` ("THE DIFFERENTIATOR
+PRINCIPLE" block + PHASE 3/4 capstone Step 0) and the `[CAPSTONE]` trigger in the chat page.
+When editing quiz or problem-set prompts, preserve this principle.
+
 ## Curriculum Lock
 
 After major curriculum changes, the curriculum is **locked for 14 days** (`CurriculumPlan.lockedAt`). While locked:

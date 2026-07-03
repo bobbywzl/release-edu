@@ -28,6 +28,56 @@ model User {
   files          LinkedFile[]
   portfolioCache   PortfolioCache?
   curriculumBlocks CurriculumBlock[]
+  userBadges       UserBadge[]
+  problemTrees     ProblemTree[]
+}
+
+// ── Problem Trees (the core learning object of the Tree pivot) ──
+// A tree grows from one ROOT problem: base branches are candidate solutions,
+// deeper branches are the components of a solution a beginner wouldn't
+// understand, leaves are specific technical knowledge / pain points.
+// NOTE: legacy curriculum models (Track/Chapter/...) below are kept in the
+// schema while production Release EDU shares this database — `prisma db push`
+// on a preview build must not drop live tables. Remove them only when the
+// pivot replaces production.
+
+model ProblemTree {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String   // the problem statement, verbatim from the student
+  framing     String?  // AI-refined problem framing (one paragraph)
+  status      String   @default("active") // active | completed | archived
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  nodes       TreeNode[]
+
+  @@index([userId])
+}
+
+model TreeNode {
+  id          String   @id @default(cuid())
+  treeId      String
+  tree        ProblemTree @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  parentId    String?  // null = root
+  kind        String   @default("component") // root | solution | component | leaf
+  title       String
+  summary     String   // 1-2 line simplified description shown on the node
+  explainer   String?  // full AI comprehensive explainer (markdown), generated on demand
+  status      String   @default("not-understood") // not-understood | learning | understood
+  // AI-proposed nodes await the student's explicit permission before joining
+  // the tree. pending=true renders as a ghost node with approve/reject.
+  pending     Boolean  @default(false)
+  // JSON array of user annotations on the explainer: [{text, createdAt}]
+  annotations String?
+  // The student's own editable freeform notes for this node (markdown)
+  notes       String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([treeId])
+  @@index([parentId])
 }
 
 // ── Student Profile ──────────────────────────────────────────
@@ -57,7 +107,29 @@ model StudentProfile {
   // Per-student cap for the counter above. Defaults to 2; admins can raise
   // it from the admin panel to grant extra regenerations where needed.
   manualRegenerationLimit Int @default(2)
+  // ── XP retention loop ──
+  // dailyXp/dailyXpDate: XP earned today, powering the daily-goal ring.
+  // Reset implicitly when dailyXpDate rolls to a new day.
+  dailyXp        Int       @default(0)
+  dailyXpDate    DateTime?
+  // Best streak ever — badge criteria use this so a lost streak never
+  // takes earned badges away.
+  longestStreak  Int       @default(0)
   updatedAt       DateTime @updatedAt
+}
+
+// ── Earned badges (achievements shown on dashboard + portfolio) ──
+model UserBadge {
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId  String   // key into the BADGES catalog (src/lib/badges.ts)
+  earnedAt DateTime @default(now())
+  // Featured badges are surfaced on the portfolio/résumé.
+  featured Boolean  @default(false)
+
+  @@unique([userId, badgeId])
+  @@index([userId])
 }
 
 // ── Mentor Config ────────────────────────────────────────────

@@ -674,30 +674,24 @@ export default function OnboardingPage() {
     }
   }
 
-  // Shared: call curriculum generation API with a hard timeout, then redirect.
-  // Sets the `onboarding-completing` session flag for the full window so the
-  // layout's redirect guard stands down — otherwise a stale studentData cache
-  // (isOnboarded:false) bounces us back to /dashboard/setup mid-transition.
-  async function generateAndRedirect(body: Record<string, unknown>) {
+  // Shared: plant the student's FIRST problem tree from their final answer,
+  // then redirect to it. Sets the `onboarding-completing` session flag for
+  // the full window so the layout's redirect guard stands down.
+  async function generateAndRedirect(body: { problem?: string }) {
     setStage('generating')
     setPhase(4)
     try { sessionStorage.setItem('onboarding-completing', String(Date.now())) } catch { /* SSR safe */ }
 
-    async function finalRedirect(delay: number) {
+    async function finalRedirect(delay: number, dest = '/dashboard/tree') {
       // Make sure the client cache is fresh BEFORE navigating, so the
       // dashboard layout sees isOnboarded:true on first render.
       try {
         const sd = await import('@/lib/student-data')
         sd.refreshStudentData()
-        // Also force-refresh derived caches.
-        const cs = await import('@/lib/completion-stats')
-        const co = await import('@/lib/curriculum-overview')
-        cs.refreshCompletionStats()
-        co.refreshCurriculumOverview()
       } catch { /* non-fatal */ }
       setStage('redirecting')
       setTimeout(() => {
-        router.push('/dashboard')
+        router.push(dest)
         // Clear the lock a beat after navigation so the destination
         // gets a clean read of the now-fresh data.
         setTimeout(() => {
@@ -706,61 +700,54 @@ export default function OnboardingPage() {
       }, delay)
     }
 
-    // 160s budget matches the route's 150s overall server budget + 10s
-    // network/parse buffer. Lower values aborted before Claude finished and
-    // forced the user into the generic-fallback curriculum.
     const timeoutId = setTimeout(() => {
-      console.warn('[Onboarding] Curriculum generation timed out — forcing redirect')
+      console.warn('[Onboarding] Tree seeding timed out — forcing redirect')
       void finalRedirect(1500)
-    }, 160_000)
+    }, 130_000)
 
     try {
-      const res = await fetch('/api/curriculum/generate', {
+      if (!body.problem) throw new Error('no problem statement')
+      const res = await fetch('/api/tree', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ problem: body.problem, lang: language }),
       })
       clearTimeout(timeoutId)
-
-      if (!res.ok) throw new Error('Generation failed')
-      const data = await res.json() as { plan: { profileSummary: string; primaryInterests: string[]; primaryStrengths: string[]; tracks: Array<{ name: string; color: string }> } }
-      setGeneratedPlan(data.plan)
-      setStage('summary')
-      // Briefly let the user see the summary, then push forward.
-      setTimeout(() => { void finalRedirect(1500) }, 4000)
+      if (!res.ok) throw new Error('Seeding failed')
+      const data = await res.json() as { id: string }
+      void finalRedirect(1200, `/dashboard/tree/${data.id}`)
     } catch {
       clearTimeout(timeoutId)
-      // Generation failed but profile + isOnboarded may already be set
-      // server-side. Force forward anyway — never leave the user stuck.
-      void finalRedirect(2000)
+      // Seeding failed but profile + isOnboarded may already be set
+      // server-side. Land on the tree page where they can plant manually.
+      void finalRedirect(1500)
     }
   }
 
   async function handleBuildFromConversation() {
-    const history = messages.map(m => `[${m.role}]: ${m.content}`).join('\n\n')
-    await generateAndRedirect({ conversationHistory: history })
+    // Heuristic fallback: use the student's last substantial message as the
+    // problem statement if the structured profile never arrived.
+    const lastUser = [...messages].reverse().find(m => m.role === 'user' && m.content.trim().length > 10)
+    await generateAndRedirect({ problem: lastUser?.content.trim() })
   }
 
   async function handleProfileComplete(responseText: string) {
     const profileMatch = responseText.match(/\[PROFILE_COMPLETE\]\s*(\{[\s\S]*\})/)
-    const history = messages.map(m => `[${m.role}]: ${m.content}`).join('\n\n')
 
     if (!profileMatch) {
-      // JSON extraction failed — fall back to conversation-based extraction
-      await generateAndRedirect({ conversationHistory: history })
+      await handleBuildFromConversation()
       return
     }
 
-    let profile: OnboardingProfile
+    let profile: OnboardingProfile & { problem?: string }
     try {
-      profile = JSON.parse(profileMatch[1]) as OnboardingProfile
+      profile = JSON.parse(profileMatch[1]) as OnboardingProfile & { problem?: string }
     } catch {
-      // JSON parse failed — fall back to conversation-based extraction
-      await generateAndRedirect({ conversationHistory: history })
+      await handleBuildFromConversation()
       return
     }
 
-    await generateAndRedirect({ profile, conversationHistory: history })
+    await generateAndRedirect({ problem: profile.problem })
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {

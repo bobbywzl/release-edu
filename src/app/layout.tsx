@@ -15,7 +15,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Release EDU — Student Dashboard",
+  title: "Tree EDU — Problem-Mastery Learning",
   description: "Personalized career-oriented learning powered by AI and Mentors",
 };
 
