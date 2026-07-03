@@ -48,6 +48,14 @@ function WorkspaceInner() {
   const [notesSaved, setNotesSaved] = useState(false)
   const [files, setFiles] = useState<NodeFileRow[]>([])
   const [verify, setVerify] = useState<null | { phase: 'loading' | 'answering' | 'judging' | 'done'; questions?: string[]; answers?: string[]; passed?: boolean; feedback?: string }>(null)
+  // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
+  const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
+  const [suggestionBusy, setSuggestionBusy] = useState(false)
+  // Grow-branch box (also available here, not just on the canvas).
+  const [growQ, setGrowQ] = useState('')
+  const [growBusy, setGrowBusy] = useState(false)
+  const [growClarify, setGrowClarify] = useState<string | null>(null)
+  const [growDone, setGrowDone] = useState<number | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -91,7 +99,7 @@ function WorkspaceInner() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
-  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]) }, [nodeId])
+  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null) }, [nodeId])
 
   // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
   // first-open trigger — Bob speaks without a student bubble appearing.
@@ -117,6 +125,13 @@ function WorkspaceInner() {
         if (done) break
         full += decoder.decode(value, { stream: true })
         setStreamText(full)
+      }
+      // Discovery marker rides at the end of the stream — strip it from the
+      // visible message and surface it as an approve/dismiss card.
+      const markerIdx = full.indexOf('[[TREE_SUGGEST]]')
+      if (markerIdx !== -1) {
+        try { setSuggestion(JSON.parse(full.slice(markerIdx + 16))) } catch { /* malformed — ignore */ }
+        full = full.slice(0, markerIdx).trimEnd()
       }
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: full }])
     } catch {
@@ -193,6 +208,42 @@ function WorkspaceInner() {
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.files) setFiles(d.files) })
       .catch(() => {})
+  }
+
+  async function approveSuggestion() {
+    if (!suggestion || suggestion.type !== 'add' || !treeId || !nodeId || suggestionBusy) return
+    setSuggestionBusy(true)
+    try {
+      await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add_child', title: suggestion.title, summary: suggestion.summary }),
+      })
+      setSuggestion(null)
+      loadTree()
+    } finally {
+      setSuggestionBusy(false)
+    }
+  }
+
+  async function growFromWorkspace() {
+    const q = growQ.trim()
+    if (!q || growBusy || !treeId || !nodeId) return
+    setGrowBusy(true)
+    setGrowClarify(null)
+    setGrowDone(null)
+    try {
+      const res = await fetch(`/api/tree/${treeId}/expand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodeId, question: q, lang: language }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (body.clarify) setGrowClarify(body.clarify)
+      else if (Array.isArray(body.proposals)) { setGrowDone(body.proposals.length); setGrowQ('') }
+    } finally {
+      setGrowBusy(false)
+    }
   }
 
   async function startVerify() {
@@ -308,7 +359,7 @@ function WorkspaceInner() {
             {streaming && streamText && (
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
-                  <MarkdownRenderer content={streamText} />
+                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0]} />
                   <span className="inline-block w-0.5 h-4 bg-primary animate-pulse rounded-full align-middle ml-0.5" />
                 </div>
               </div>
@@ -317,6 +368,60 @@ function WorkspaceInner() {
               <div className="flex items-center gap-2 text-muted-foreground text-sm px-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> Bob…
               </div>
+            )}
+
+            {/* Discovery card — Bob found a hole worth a new node, or the
+                discussion belongs elsewhere. Nothing happens without a click. */}
+            {suggestion && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="max-w-[92%] border border-emerald-400/40 bg-emerald-500/[0.08] rounded-2xl rounded-bl-sm px-4 py-3"
+              >
+                {suggestion.type === 'add' ? (
+                  <>
+                    <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sprout className="w-3.5 h-3.5" /> {t('workspace.suggestAddTitle')}
+                    </p>
+                    <p className="text-sm font-bold text-foreground mt-1.5">{suggestion.title}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{suggestion.summary}</p>
+                    <div className="flex gap-2 mt-2.5">
+                      <button
+                        onClick={approveSuggestion}
+                        disabled={suggestionBusy}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-medium hover:bg-emerald-500/30 transition-colors disabled:opacity-50"
+                      >
+                        {suggestionBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sprout className="w-3 h-3" />}
+                        {t('workspace.suggestAdd')}
+                      </button>
+                      <button
+                        onClick={() => setSuggestion(null)}
+                        className="px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      >
+                        {t('workspace.suggestDismiss')}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider">{t('workspace.suggestMoveTitle')}</p>
+                    <p className="text-sm font-bold text-foreground mt-1.5">{suggestion.title}</p>
+                    <div className="flex gap-2 mt-2.5">
+                      <button
+                        onClick={() => { const target = suggestion; setSuggestion(null); router.push(`/dashboard/workspace?tree=${treeId}&node=${target.nodeId}`) }}
+                        className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                      >
+                        {t('workspace.suggestGo')}
+                      </button>
+                      <button
+                        onClick={() => setSuggestion(null)}
+                        className="px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      >
+                        {t('workspace.suggestDismiss')}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </motion.div>
             )}
             <div ref={endRef} />
           </div>
@@ -374,6 +479,36 @@ function WorkspaceInner() {
                     {explainerLoading ? t('workspace.explainerLoading') : t('workspace.generateExplainer')}
                   </button>
                 )}
+              </div>
+
+              {/* Grow this branch — also available here, not just on the canvas */}
+              <div className="border border-emerald-400/30 rounded-xl p-3 space-y-2 bg-emerald-500/[0.04]">
+                <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Sprout className="w-3.5 h-3.5 text-emerald-400" /> {t('tree.growBranch')}
+                </p>
+                <textarea
+                  value={growQ}
+                  onChange={e => setGrowQ(e.target.value)}
+                  placeholder={t('tree.growPlaceholder')}
+                  rows={2}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
+                {growClarify && (
+                  <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.clarifyLabel')}</span> {growClarify}</p>
+                )}
+                {growDone !== null && (
+                  <Link href={`/dashboard/tree/${treeId}`} className="block text-[11px] text-emerald-300 hover:underline">
+                    {t('workspace.growProposed').replace('{n}', String(growDone))}
+                  </Link>
+                )}
+                <button
+                  onClick={growFromWorkspace}
+                  disabled={!growQ.trim() || growBusy}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-medium py-2 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
+                >
+                  {growBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sprout className="w-3.5 h-3.5" />}
+                  {growBusy ? t('tree.proposing') : t('tree.propose')}
+                </button>
               </div>
 
               {/* Tabs: Notes (editable) · Annotations · Files — all retained per node */}

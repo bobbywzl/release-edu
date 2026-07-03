@@ -1,25 +1,31 @@
 'use client'
 /**
- * The interactive problem tree — a summative logic diagram.
+ * The interactive problem tree.
  *
- * Root (the problem) on the left, solutions branching right, components and
- * leaves beyond. Every node carries its own simplified description. Pending
- * (AI-proposed) nodes render as dashed ghosts with approve/reject — the tree
- * only grows with the student's permission. Clicking a node opens a side
- * panel; deep work happens in the Workspace (Bob chat + notes + files).
+ * GRAPH VIEW — a living, hand-drawn tree: root on the ground, cursive
+ * branches sweeping upward, bud nodes that breathe. Nodes float in and
+ * settle on first load, and can be dragged freely (branches follow live,
+ * Obsidian-style). Pending (AI-proposed) nodes are dashed ghosts with
+ * approve/reject — the tree only grows with the student's permission.
+ *
+ * LIST VIEW — the same tree as a searchable, collapsible list ordered by
+ * distance from the root; each item lazily loads the node's full workspace
+ * record: conversation, notes, annotations, files, and project-progress
+ * flags.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ReactFlow, {
-  Background, Controls, Handle, Position, ReactFlowProvider, useReactFlow,
+  Background, Controls, Handle, Position, ReactFlowProvider, useReactFlow, useNodesState,
   type Node as FlowNode, type Edge as FlowEdge, type NodeProps, type EdgeProps,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import {
-  ArrowLeft, Check, X, Sprout, MessageSquare, ShieldCheck,
-  Loader2, GitBranch,
+  ArrowLeft, Check, X, Sprout, MessageSquare, ShieldCheck, Loader2, GitBranch,
+  Search, ChevronDown, ChevronRight, Trash2, Plus, FileText, Flag, List, Network,
 } from 'lucide-react'
+import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -32,6 +38,9 @@ interface TreeNodeData {
   status: string
   pending: boolean
   explainer: string | null
+  notes: string | null
+  annotations: string | null
+  progressLog: string | null
 }
 
 interface TreeData {
@@ -42,13 +51,17 @@ interface TreeData {
   nodes: TreeNodeData[]
 }
 
+function parseArr<T>(str: string | null | undefined): T[] {
+  if (!str) return []
+  try { const v = JSON.parse(str); return Array.isArray(v) ? v : [] } catch { return [] }
+}
+
 // ── Organic tree layout — grows UPWARD, hand-drawn feel ─────────────────
-// Root sits on the ground, branches sweep up and out. A deterministic
-// per-node jitter (hashed from the id) breaks the grid so the tree reads
-// as sketched, not plotted — same node always lands in the same place.
-const Y_GAP = 190
-const X_GAP = 230
-const NODE_W = 200
+// Vertical and branching: tight horizontal packing, tall levels, and
+// depth-scaled scatter so levels never read as flat rows.
+const Y_GAP = 235
+const X_GAP = 185
+const NODE_W = 190
 
 // Deterministic pseudo-random in [-1, 1] from a string.
 function jitter(id: string, salt: number): number {
@@ -79,9 +92,9 @@ function layoutTree(nodes: TreeNodeData[]): { pos: Map<string, { x: number; y: n
       const xs = children.map(c => place(c, depth + 1))
       x = (Math.min(...xs) + Math.max(...xs)) / 2
     }
-    // Organic drift: deeper branches wander more; the root stays grounded.
-    const dx = depth === 0 ? 0 : jitter(node.id, 7) * 46
-    const dy = depth === 0 ? 0 : jitter(node.id, 13) * 34
+    // Organic drift, growing with depth — branches wander like real wood.
+    const dx = depth === 0 ? 0 : jitter(node.id, 7) * (26 + depth * 10)
+    const dy = depth === 0 ? 0 : jitter(node.id, 13) * (18 + depth * 22)
     pos.set(node.id, { x: x + dx, y: -depth * Y_GAP + dy })
     return x
   }
@@ -89,13 +102,19 @@ function layoutTree(nodes: TreeNodeData[]): { pos: Map<string, { x: number; y: n
   return { pos, depth: depthMap }
 }
 
+/** BFS depth order for the list view. */
+function depthOrder(nodes: TreeNodeData[]): Array<{ node: TreeNodeData; depth: number }> {
+  const { depth } = layoutTree(nodes)
+  return nodes
+    .map(node => ({ node, depth: depth.get(node.id) ?? 0 }))
+    .sort((a, b) => a.depth - b.depth || a.node.title.localeCompare(b.node.title))
+}
+
 // ── Cursive branch edge — a swept cubic curve, thick at the trunk ───────
 function BranchEdge({ id, sourceX, sourceY, targetX, targetY, data, style }: EdgeProps<{ depth?: number; pending?: boolean }>) {
   const depth = data?.depth ?? 2
   const bow = jitter(id, 3) * 55 + (targetX - sourceX) * 0.22
   const midY = (sourceY + targetY) / 2
-  // Sweep out sideways near the parent, curl back in toward the child —
-  // the cursive stroke of a hand-drawn branch.
   const path = `M ${sourceX} ${sourceY} C ${sourceX + bow} ${midY + 22}, ${targetX - bow * 0.55} ${midY - 22}, ${targetX} ${targetY}`
   const width = Math.max(1.4, 5.5 - depth * 1.3)
   return (
@@ -114,9 +133,7 @@ function BranchEdge({ id, sourceX, sourceY, targetX, targetY, data, style }: Edg
 
 const edgeTypes = { branch: BranchEdge }
 
-// ── Custom node — a living dot on the branch tip, label beneath ─────────
-// Like the sketch: the tree is drawn by its branches; nodes are small
-// glowing buds at the junctions, not boxes on a grid.
+// ── Custom node — a living bud on the branch tip, label beneath ─────────
 
 const DOT_FILL: Record<string, string> = {
   root: 'bg-primary shadow-[0_0_18px_hsl(var(--primary)/0.55)]',
@@ -146,16 +163,13 @@ interface FlowNodeData {
 
 function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
   const n = data.node
-  // Each bud breathes on its own rhythm — deterministic per node.
   const breatheDelay = `${(Math.abs(jitter(n.id, 5)) * 3).toFixed(2)}s`
   const breatheDur = `${(3 + Math.abs(jitter(n.id, 9)) * 2).toFixed(2)}s`
   return (
     <div className="flex flex-col items-center" style={{ width: NODE_W }}>
-      {/* Handles sit invisibly at the bud's center so branches meet the dot */}
       <Handle type="source" position={Position.Top} className="!opacity-0 !pointer-events-none !w-1 !h-1" style={{ top: 10 }} />
       <Handle type="target" position={Position.Bottom} className="!opacity-0 !pointer-events-none !w-1 !h-1" style={{ top: 14, bottom: 'auto' }} />
 
-      {/* The bud */}
       <div className="h-7 flex items-center justify-center">
         <span
           className={cn(
@@ -174,12 +188,11 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
         />
       </div>
 
-      {/* Label — title + one whispered line of summary */}
       <div className="mt-1 text-center select-none">
         <p className={cn('text-[12px] font-bold leading-tight', n.pending ? 'text-muted-foreground italic' : 'text-foreground')}>
           {n.title}
         </p>
-        <p className="text-[10px] text-muted-foreground/80 leading-snug line-clamp-2 mt-0.5 max-w-[190px] mx-auto">
+        <p className="text-[10px] text-muted-foreground/80 leading-snug line-clamp-2 mt-0.5 max-w-[180px] mx-auto">
           {n.summary}
         </p>
       </div>
@@ -206,6 +219,194 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
 
 const nodeTypes = { painPoint: PainPointNode }
 
+// ── List view — the tree as a searchable, depth-ordered record ──────────
+
+interface NodeRecord {
+  messages?: Array<{ id: string; role: string; content: string }>
+  files?: Array<{ id: string; name: string }>
+  loading: boolean
+}
+
+function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }) {
+  const { t } = useLanguage()
+  const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [records, setRecords] = useState<Record<string, NodeRecord>>({})
+
+  const ordered = useMemo(() => depthOrder(tree.nodes.filter(n => !n.pending)), [tree.nodes])
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? ordered.filter(({ node }) =>
+        node.title.toLowerCase().includes(q)
+        || node.summary.toLowerCase().includes(q)
+        || (node.notes ?? '').toLowerCase().includes(q))
+    : ordered
+
+  async function toggle(nodeId: string) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) { next.delete(nodeId); return next }
+      next.add(nodeId)
+      return next
+    })
+    if (!records[nodeId] && !expanded.has(nodeId)) {
+      setRecords(prev => ({ ...prev, [nodeId]: { loading: true } }))
+      const [chat, files] = await Promise.all([
+        fetch(`/api/tree/${tree.id}/node/${nodeId}/chat`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch(`/api/files/upload?workType=tree-node&workId=${nodeId}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+      ])
+      setRecords(prev => ({
+        ...prev,
+        [nodeId]: { loading: false, messages: chat?.messages ?? [], files: files?.files ?? [] },
+      }))
+    }
+  }
+
+  let lastDepth = -1
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-3xl mx-auto p-4 lg:p-6 space-y-3">
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={t('tree.searchPlaceholder')}
+            className="w-full bg-background border border-border rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </div>
+
+        {filtered.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-8">{t('tree.searchEmpty')}</p>
+        )}
+
+        {filtered.map(({ node, depth }) => {
+          const showHeader = depth !== lastDepth
+          lastDepth = depth
+          const isOpen = expanded.has(node.id)
+          const rec = records[node.id]
+          const annotations = parseArr<{ text: string; createdAt: string }>(node.annotations)
+          const progress = parseArr<{ text: string; source: string; createdAt: string }>(node.progressLog)
+          return (
+            <div key={node.id}>
+              {showHeader && !q && (
+                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mt-4 mb-2">
+                  {depth === 0 ? t('tree.levelRoot') : `${t('tree.levelLabel')} ${depth}`}
+                </p>
+              )}
+              <div className="border border-border rounded-xl bg-card overflow-hidden">
+                <button
+                  onClick={() => toggle(node.id)}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-3 text-left hover:bg-accent/50 transition-colors"
+                >
+                  {isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                  <StatusDot status={node.status} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-foreground truncate">{node.title}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{node.summary}</p>
+                  </div>
+                  {progress.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-300 flex-shrink-0" title={t('tree.progressFlags')}>
+                      <Flag className="w-3 h-3" /> {progress.length}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground/60 uppercase flex-shrink-0">{node.kind}</span>
+                </button>
+
+                {isOpen && (
+                  <div className="border-t border-border px-4 py-3 space-y-4 bg-background/40">
+                    <Link
+                      href={`/dashboard/workspace?tree=${tree.id}&node=${node.id}`}
+                      className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" /> {t('tree.openWorkspace')}
+                    </Link>
+
+                    {/* Project progress flags */}
+                    {progress.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Flag className="w-3 h-3" /> {t('tree.progressFlags')}</p>
+                        <div className="space-y-1">
+                          {progress.map((p, i) => (
+                            <p key={i} className="text-xs text-foreground/90 border-l-2 border-emerald-400/60 bg-emerald-400/[0.06] rounded-r-md px-2.5 py-1.5">
+                              {p.text}
+                              <span className="block text-[10px] text-muted-foreground/60 mt-0.5">{new Date(p.createdAt).toLocaleDateString()} · {p.source}</span>
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Notes */}
+                    {node.notes && (
+                      <div>
+                        <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">{t('workspace.tabNotes')}</p>
+                        <div className="text-xs border border-border rounded-lg p-2.5 bg-card/60"><MarkdownRenderer content={node.notes} /></div>
+                      </div>
+                    )}
+
+                    {/* Annotations */}
+                    {annotations.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">{t('workspace.annotations')}</p>
+                        <div className="space-y-1">
+                          {annotations.map((a, i) => (
+                            <p key={i} className="text-xs text-foreground/90 border-l-2 border-amber-400/60 bg-amber-400/[0.06] rounded-r-md px-2.5 py-1.5">{a.text}</p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Files */}
+                    {rec?.files && rec.files.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">{t('workspace.files')}</p>
+                        <div className="space-y-1">
+                          {rec.files.map(f => (
+                            <p key={f.id} className="text-xs text-foreground flex items-center gap-1.5">
+                              <FileText className="w-3.5 h-3.5 text-muted-foreground" /> {f.name}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Full conversation */}
+                    <div>
+                      <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">{t('tree.listConversation')}</p>
+                      {rec?.loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                      {!rec?.loading && (!rec?.messages || rec.messages.length === 0) && (
+                        <p className="text-xs text-muted-foreground">{t('tree.listNoConversation')}</p>
+                      )}
+                      <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                        {rec?.messages?.map(m => (
+                          <div
+                            key={m.id}
+                            className={cn(
+                              'rounded-xl px-3 py-2 text-[13px]',
+                              m.role === 'user' ? 'bg-primary/10 border border-primary/20 ml-6' : 'bg-card border border-border mr-6',
+                            )}
+                          >
+                            {m.role === 'user'
+                              ? <p className="whitespace-pre-wrap text-foreground/90">{m.content}</p>
+                              : <MarkdownRenderer content={m.content} />}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────
 
 function TreeCanvasInner() {
@@ -214,9 +415,19 @@ function TreeCanvasInner() {
   const { t, language } = useLanguage()
   const flow = useReactFlow()
   const [tree, setTree] = useState<TreeData | null>(null)
+  const [view, setView] = useState<'graph' | 'list'>('graph')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [growQuestion, setGrowQuestion] = useState('')
   const [growing, setGrowing] = useState(false)
+  const [growClarify, setGrowClarify] = useState<string | null>(null)
+  const [addingChild, setAddingChild] = useState(false)
+  const [childTitle, setChildTitle] = useState('')
+  const [childSummary, setChildSummary] = useState('')
+  const [settling, setSettling] = useState(true)
+  const settledRef = useRef(false)
+  const draggedPos = useRef<Map<string, { x: number; y: number }>>(new Map())
+
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeData>([])
 
   const load = useCallback(async () => {
     try {
@@ -236,21 +447,54 @@ function TreeCanvasInner() {
     load()
   }, [params.id, load])
 
-  const { flowNodes, flowEdges } = useMemo(() => {
-    if (!tree) return { flowNodes: [] as FlowNode<FlowNodeData>[], flowEdges: [] as FlowEdge[] }
+  // Track user drags so refetches don't snap nodes back.
+  const handleNodesChange: typeof onNodesChange = useCallback(changes => {
+    for (const c of changes) {
+      if (c.type === 'position' && c.position) draggedPos.current.set(c.id, c.position)
+    }
+    onNodesChange(changes)
+  }, [onNodesChange])
+
+  // Build flow nodes from the tree. First load: float in scattered, then
+  // settle into place (CSS transition while `settling`).
+  useEffect(() => {
+    if (!tree) return
     const { pos, depth } = layoutTree(tree.nodes)
-    const flowNodes: FlowNode<FlowNodeData>[] = tree.nodes.map(n => ({
+    const target = (n: TreeNodeData) => draggedPos.current.get(n.id) ?? pos.get(n.id) ?? { x: 0, y: 0 }
+    const mk = (n: TreeNodeData, p: { x: number; y: number }): FlowNode<FlowNodeData> => ({
       id: n.id,
       type: 'painPoint',
-      position: pos.get(n.id) ?? { x: 0, y: 0 },
+      position: p,
       data: {
         node: n,
         onApprove: id => act(id, 'approve'),
         onReject: id => act(id, 'reject'),
         approveLabel: t('tree.addToTree'),
       },
-    }))
-    const flowEdges: FlowEdge[] = tree.nodes
+    })
+
+    if (!settledRef.current) {
+      settledRef.current = true
+      // Scatter → settle. The scatter is deterministic so replays feel alive
+      // but never chaotic.
+      setNodes(tree.nodes.map(n => mk(n, {
+        x: (pos.get(n.id)?.x ?? 0) + jitter(n.id, 21) * 340,
+        y: (pos.get(n.id)?.y ?? 0) + jitter(n.id, 33) * 260,
+      })))
+      setTimeout(() => {
+        setNodes(tree.nodes.map(n => mk(n, target(n))))
+        setTimeout(() => setSettling(false), 950)
+      }, 60)
+    } else {
+      setNodes(tree.nodes.map(n => mk(n, target(n))))
+    }
+    void depth
+  }, [tree, act, t, setNodes])
+
+  const flowEdges = useMemo(() => {
+    if (!tree) return [] as FlowEdge[]
+    const { depth } = layoutTree(tree.nodes)
+    return tree.nodes
       .filter(n => n.parentId)
       .map(n => ({
         id: `e-${n.parentId}-${n.id}`,
@@ -260,27 +504,59 @@ function TreeCanvasInner() {
         data: { depth: depth.get(n.id) ?? 2, pending: n.pending },
         style: { stroke: n.pending ? 'hsl(var(--muted-foreground))' : 'hsl(var(--primary))' },
       }))
-    return { flowNodes, flowEdges }
-  }, [tree, act, t])
+  }, [tree])
 
   const selected = tree?.nodes.find(n => n.id === selectedId) ?? null
+  const selectedProgress = parseArr<{ text: string; createdAt: string }>(selected?.progressLog)
   const understood = tree?.nodes.filter(n => !n.pending && n.status === 'understood').length ?? 0
   const total = tree?.nodes.filter(n => !n.pending).length ?? 0
 
   async function grow() {
     if (!selected || !growQuestion.trim() || growing) return
     setGrowing(true)
+    setGrowClarify(null)
     try {
-      await fetch(`/api/tree/${params.id}/expand`, {
+      const res = await fetch(`/api/tree/${params.id}/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nodeId: selected.id, question: growQuestion.trim(), lang: language }),
       })
-      setGrowQuestion('')
+      const body = await res.json().catch(() => ({}))
+      if (body.clarify) setGrowClarify(body.clarify)
+      else setGrowQuestion('')
       await load()
     } finally {
       setGrowing(false)
     }
+  }
+
+  async function addChild() {
+    if (!selected || !childTitle.trim() || addingChild) return
+    setAddingChild(true)
+    try {
+      await fetch(`/api/tree/${params.id}/node/${selected.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add_child', title: childTitle.trim(), summary: childSummary.trim() }),
+      })
+      setChildTitle('')
+      setChildSummary('')
+      await load()
+    } finally {
+      setAddingChild(false)
+    }
+  }
+
+  async function deleteNode() {
+    if (!selected || selected.parentId === null) return
+    if (!confirm(t('tree.deleteNodeConfirm'))) return
+    await fetch(`/api/tree/${params.id}/node/${selected.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete' }),
+    }).catch(() => {})
+    setSelectedId(null)
+    await load()
   }
 
   if (!tree) {
@@ -300,6 +576,21 @@ function TreeCanvasInner() {
         </Link>
         <Sprout className="w-4 h-4 text-emerald-400 flex-shrink-0" />
         <h1 className="text-sm font-bold text-foreground truncate flex-1">{tree.title}</h1>
+        {/* View toggle */}
+        <div className="flex rounded-lg border border-border overflow-hidden flex-shrink-0">
+          <button
+            onClick={() => setView('graph')}
+            className={cn('px-2.5 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors', view === 'graph' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}
+          >
+            <Network className="w-3.5 h-3.5" /> {t('tree.viewGraph')}
+          </button>
+          <button
+            onClick={() => setView('list')}
+            className={cn('px-2.5 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors', view === 'list' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground')}
+          >
+            <List className="w-3.5 h-3.5" /> {t('tree.viewList')}
+          </button>
+        </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="w-28 h-1.5 rounded-full bg-muted overflow-hidden">
             <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: total ? `${(understood / total) * 100}%` : '0%' }} />
@@ -308,107 +599,165 @@ function TreeCanvasInner() {
         </div>
       </div>
 
-      {/* Canvas + panel */}
-      <div className="flex-1 flex min-h-0">
-        <div className="flex-1 min-w-0 relative">
-          <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
-            onPaneClick={() => setSelectedId(null)}
-            fitView
-            fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-            minZoom={0.2}
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable
-            nodesConnectable={false}
-          >
-            <Background gap={24} size={1} />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-          {/* The ground the tree grows from */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-emerald-500/[0.08] to-transparent" />
+      {view === 'list' ? (
+        <div className="flex-1 min-h-0">
+          <ListView tree={tree} onChanged={load} />
         </div>
+      ) : (
+        <div className="flex-1 flex min-h-0">
+          <div className={cn('flex-1 min-w-0 relative', settling && 'tree-settling')}>
+            <ReactFlow
+              nodes={nodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={handleNodesChange}
+              onNodeClick={(_, node) => setSelectedId(node.id)}
+              onPaneClick={() => setSelectedId(null)}
+              fitView
+              fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+              minZoom={0.15}
+              proOptions={{ hideAttribution: true }}
+              nodesDraggable
+              nodesConnectable={false}
+            >
+              <Background gap={24} size={1} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+            {/* The ground the tree grows from */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-emerald-500/[0.08] to-transparent" />
+          </div>
 
-        {/* Node side panel */}
-        {selected && (
-          <div className="w-80 flex-shrink-0 border-l border-border bg-card/60 backdrop-blur-sm p-4 overflow-y-auto space-y-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <StatusDot status={selected.pending ? '' : selected.status} />
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{selected.kind}{selected.pending ? ` · ${t('tree.pendingLabel')}` : ''}</span>
+          {/* Node side panel */}
+          {selected && (
+            <div className="w-80 flex-shrink-0 border-l border-border bg-card/60 backdrop-blur-sm p-4 overflow-y-auto space-y-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <StatusDot status={selected.pending ? '' : selected.status} />
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{selected.kind}{selected.pending ? ` · ${t('tree.pendingLabel')}` : ''}</span>
+                  {!selected.pending && selected.parentId !== null && (
+                    <button
+                      onClick={deleteNode}
+                      title={t('tree.deleteNode')}
+                      className="ml-auto p-1.5 rounded-md text-muted-foreground/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <h2 className="text-base font-bold text-foreground leading-snug">{selected.title}</h2>
+                <p className="text-xs text-muted-foreground leading-relaxed mt-1.5">{selected.summary}</p>
               </div>
-              <h2 className="text-base font-bold text-foreground leading-snug">{selected.title}</h2>
-              <p className="text-xs text-muted-foreground leading-relaxed mt-1.5">{selected.summary}</p>
-            </div>
 
-            {!selected.pending && (
-              <>
-                <button
-                  onClick={() => {
-                    // Smooth zoom into the node, then hand off to the Workspace.
-                    try {
-                      flow.fitView({ nodes: [{ id: selected.id }], duration: 550, maxZoom: 1.75 })
-                    } catch { /* instance not ready — just navigate */ }
-                    setTimeout(() => router.push(`/dashboard/workspace?tree=${tree.id}&node=${selected.id}`), 560)
-                  }}
-                  className="flex items-center justify-center gap-2 w-full rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  {t('tree.openWorkspace')}
-                </button>
-                {selected.status === 'understood' && (
-                  <p className="text-xs text-emerald-400 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5" /> {t('tree.verified')}
-                  </p>
-                )}
-
-                {/* Grow: ask a question → AI proposes child nodes as ghosts */}
-                <div className="border border-border rounded-xl p-3 space-y-2">
-                  <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                    <GitBranch className="w-3.5 h-3.5 text-emerald-400" />
-                    {t('tree.growBranch')}
-                  </p>
-                  <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.growHint')}</p>
-                  <textarea
-                    value={growQuestion}
-                    onChange={e => setGrowQuestion(e.target.value)}
-                    placeholder={t('tree.growPlaceholder')}
-                    rows={2}
-                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
+              {!selected.pending && (
+                <>
                   <button
-                    onClick={grow}
-                    disabled={!growQuestion.trim() || growing}
-                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-medium py-2 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
+                    onClick={() => {
+                      try {
+                        flow.fitView({ nodes: [{ id: selected.id }], duration: 550, maxZoom: 1.75 })
+                      } catch { /* instance not ready — just navigate */ }
+                      setTimeout(() => router.push(`/dashboard/workspace?tree=${tree.id}&node=${selected.id}`), 560)
+                    }}
+                    className="flex items-center justify-center gap-2 w-full rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors"
                   >
-                    {growing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sprout className="w-3.5 h-3.5" />}
-                    {growing ? t('tree.proposing') : t('tree.propose')}
+                    <MessageSquare className="w-4 h-4" />
+                    {t('tree.openWorkspace')}
+                  </button>
+                  {selected.status === 'understood' && (
+                    <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5" /> {t('tree.verified')}
+                    </p>
+                  )}
+
+                  {/* Project progress flags */}
+                  {selectedProgress.length > 0 && (
+                    <div className="border border-emerald-400/30 rounded-xl p-3">
+                      <p className="text-xs font-bold text-emerald-300 flex items-center gap-1.5 mb-1.5">
+                        <Flag className="w-3.5 h-3.5" /> {t('tree.progressFlags')}
+                      </p>
+                      <div className="space-y-1">
+                        {selectedProgress.slice(-4).map((p, i) => (
+                          <p key={i} className="text-[11px] text-foreground/90 leading-snug">• {p.text}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Grow: ask a question → AI proposes child nodes as ghosts */}
+                  <div className="border border-border rounded-xl p-3 space-y-2">
+                    <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <GitBranch className="w-3.5 h-3.5 text-emerald-400" />
+                      {t('tree.growBranch')}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.growHint')}</p>
+                    <textarea
+                      value={growQuestion}
+                      onChange={e => setGrowQuestion(e.target.value)}
+                      placeholder={t('tree.growPlaceholder')}
+                      rows={2}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
+                    />
+                    {growClarify && (
+                      <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.clarifyLabel')}</span> {growClarify}</p>
+                    )}
+                    <button
+                      onClick={grow}
+                      disabled={!growQuestion.trim() || growing}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-medium py-2 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
+                    >
+                      {growing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sprout className="w-3.5 h-3.5" />}
+                      {growing ? t('tree.proposing') : t('tree.propose')}
+                    </button>
+                  </div>
+
+                  {/* Manual add child */}
+                  <div className="border border-border rounded-xl p-3 space-y-2">
+                    <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <Plus className="w-3.5 h-3.5 text-primary" /> {t('tree.addChild')}
+                    </p>
+                    <input
+                      value={childTitle}
+                      onChange={e => setChildTitle(e.target.value)}
+                      placeholder={t('tree.addChildTitle')}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+                    />
+                    <input
+                      value={childSummary}
+                      onChange={e => setChildSummary(e.target.value)}
+                      placeholder={t('tree.addChildSummary')}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+                    />
+                    <button
+                      onClick={addChild}
+                      disabled={!childTitle.trim() || addingChild}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary/10 border border-primary/40 text-primary text-xs font-medium py-2 hover:bg-primary/20 transition-colors disabled:opacity-40"
+                    >
+                      {addingChild ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {t('tree.addChildSave')}
+                    </button>
+                  </div>
+                </>
+              )}
+              {selected.pending && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => act(selected.id, 'approve')}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-sm font-medium py-2.5 hover:bg-emerald-500/30 transition-colors"
+                  >
+                    <Check className="w-4 h-4" /> {t('tree.addToTree')}
+                  </button>
+                  <button
+                    onClick={() => { act(selected.id, 'reject'); setSelectedId(null) }}
+                    className="inline-flex items-center justify-center rounded-xl bg-red-500/15 border border-red-400/30 text-red-300 px-4 hover:bg-red-500/25 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
-              </>
-            )}
-            {selected.pending && (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => act(selected.id, 'approve')}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-sm font-medium py-2.5 hover:bg-emerald-500/30 transition-colors"
-                >
-                  <Check className="w-4 h-4" /> {t('tree.addToTree')}
-                </button>
-                <button
-                  onClick={() => { act(selected.id, 'reject'); setSelectedId(null) }}
-                  className="inline-flex items-center justify-center rounded-xl bg-red-500/15 border border-red-400/30 text-red-300 px-4 hover:bg-red-500/25 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

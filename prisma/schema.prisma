@@ -76,6 +76,10 @@ model TreeNode {
   annotations String?
   // The student's own editable freeform notes for this node (markdown)
   notes       String?
+  // JSON array of detected project-execution progress flags:
+  // [{text, source: 'chat'|'file', createdAt}] — appended when Bob detects
+  // concrete progress toward building the product/answering the problem.
+  progressLog String?
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

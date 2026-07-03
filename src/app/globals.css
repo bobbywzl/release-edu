@@ -168,3 +168,8 @@
   to { stroke-dashoffset: -26; }
 }
 .branch-pending { animation: branch-pending-dash 1.6s linear infinite; }
+
+/* First-load float-in: nodes scatter then glide into place */
+.tree-settling .react-flow__node {
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
