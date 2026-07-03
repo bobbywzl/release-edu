@@ -5,20 +5,19 @@ import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Bot,
-  FolderOpen, Settings, Zap, ChevronRight, History,
-  Menu, X, ChevronLeft, Sparkles, LogOut, Award, Pin, PinOff,
+  Settings, Zap, ChevronRight,
+  Menu, X, ChevronLeft, LogOut, Award, Pin, PinOff, Sprout,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TreeLogo } from '@/components/tree-logo'
 import { useStudentData } from '@/lib/student-data'
 import { useT } from '@/lib/i18n'
 
 const navItems = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'nav.dashboard' },
-  { href: '/dashboard/chat', icon: Bot, key: 'nav.bob' },
-  { href: '/dashboard/curriculum', icon: Sparkles, key: 'nav.curriculum' },
-  { href: '/dashboard/projects', icon: FolderOpen, key: 'nav.projects' },
+  { href: '/dashboard/tree', icon: Sprout, key: 'nav.tree' },
+  { href: '/dashboard/workspace', icon: Bot, key: 'nav.workspace' },
   { href: '/dashboard/portfolio', icon: Award, key: 'nav.portfolio' },
-  { href: '/dashboard/history', icon: History, key: 'nav.history' },
   { href: '/dashboard/settings', icon: Settings, key: 'nav.settings' },
 ]
 
@@ -30,7 +29,7 @@ export function Sidebar() {
   // The chat is immersive on mobile (no bottom nav), so the hamburger is its
   // only nav affordance there. Everywhere else the bottom nav handles it, so
   // the hamburger is hidden to reduce clutter.
-  const isChat = pathname === '/dashboard/chat'
+  const isChat = pathname === '/dashboard/workspace' || /^\/dashboard\/tree\/.+/.test(pathname)
   const [pinned, setPinned] = useState(false) // permanently expanded
   const [hovered, setHovered] = useState(false) // expanded on hover
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -126,7 +125,7 @@ export function Sidebar() {
         {/* Header */}
         <div className="h-14 border-b border-border flex items-center px-3 gap-2 flex-shrink-0">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-            <Zap className="w-4 h-4 text-primary-foreground" />
+            <TreeLogo className="w-4.5 h-4.5 text-primary-foreground" />
           </div>
           <AnimatePresence>
             {expanded && (
@@ -252,7 +251,7 @@ export function Sidebar() {
             <div className="h-14 border-b border-border flex items-center px-4 justify-between flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                  <Zap className="w-4 h-4 text-primary-foreground" />
+                  <TreeLogo className="w-4.5 h-4.5 text-primary-foreground" />
                 </div>
                 <div className="font-bold text-foreground text-sm">{t("nav.appName")}</div>
               </div>

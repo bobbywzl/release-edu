@@ -42,11 +42,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isSetupPath = pathname === '/dashboard/setup'
   const isOnboardingFlow = isOnboardingPath || isSetupPath
   const isChrome = pathname === '/dashboard/portfolio/print'
-  // The Bob chat is an immersive, full-screen experience on mobile: it manages
-  // its own panels (conversations + right panel as drawers) and its own height,
-  // so we drop the shared mobile chrome (top spacer, bottom nav, bottom padding)
-  // for that route only. Desktop is unaffected.
-  const isChat = pathname === '/dashboard/chat'
+  // The Workspace and the tree canvas are immersive, full-height experiences:
+  // they manage their own panels and height, so we drop the shared mobile
+  // chrome (top spacer, bottom nav, bottom padding) for those routes.
+  const isChat = pathname === '/dashboard/workspace' || /^\/dashboard\/tree\/.+/.test(pathname)
 
   useEffect(() => {
     const sync = () => {
@@ -90,93 +89,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     isOnboardingFlow, isOnboardingPath, isSetupPath, router,
   ])
 
-  // Early-exit: if curriculum data arrives mid-recovery (the server finished
-  // saving and the cache refreshed), drop the transition screen immediately.
-  useEffect(() => {
-    if (recovering && studentData.hasCurriculum) setRecovering(false)
-  }, [recovering, studentData.hasCurriculum])
-
-  // Stuck-state auto-recovery. A user is `isOnboarded` but has no real
-  // curriculum tracks — an earlier `/api/curriculum/generate` call crashed
-  // or timed out before persisting the plan. Fires once per session on any
-  // dashboard page so the user never sees the default-template flash.
-  //
-  // SAFETY: hard 12s timeout + periodic poll for `hasCurriculum`. We never
-  // hold the loading screen waiting on a slow/hung server. If the user really
-  // has no curriculum after the timeout, the dashboard's empty-state UI
-  // handles it and they can manually retry via Bob.
-  useEffect(() => {
-    if (recoveryAttempted.current) return
-    if (isChrome || isOnboardingFlow) return
-    if (studentLoading) return
-    if (resetActive || onboardingTransition) return
-    if (!studentData.isOnboarded) return
-    if (studentData.hasCurriculum) return
-
-    recoveryAttempted.current = true
-    setRecovering(true)
-    try { sessionStorage.setItem('onboarding-completing', String(Date.now())) } catch { /* SSR safe */ }
-
-    const HARD_TIMEOUT_MS = 12_000
-    const POLL_INTERVAL_MS = 1500
-    let cancelled = false
-
-    const exit = () => {
-      if (cancelled) return
-      cancelled = true
-      try { sessionStorage.removeItem('onboarding-completing') } catch { /* SSR safe */ }
-      setRecovering(false)
-    }
-
-    // Fire the regeneration request without blocking the UI. We don't await
-    // it — the poll below will detect when tracks land in the DB.
-    void (async () => {
-      try {
-        await fetch('/api/curriculum/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-        })
-      } catch (err) {
-        console.error('[Layout recovery] curriculum generation failed:', err)
-      }
-      // Whether the call succeeded, errored, or hung past the timeout, force
-      // a fresh fetch so the empty-state UI gets accurate data on exit.
-      try {
-        const [sd, cs, co] = await Promise.all([
-          import('@/lib/student-data'),
-          import('@/lib/completion-stats'),
-          import('@/lib/curriculum-overview'),
-        ])
-        sd.refreshStudentData()
-        cs.refreshCompletionStats()
-        co.refreshCurriculumOverview()
-      } catch { /* non-fatal */ }
-    })()
-
-    // Poll for curriculum existence. Exits as soon as the server-side save
-    // lands AND the client cache picks it up.
-    const pollId = setInterval(() => {
-      if (cancelled) return clearInterval(pollId)
-      void import('@/lib/student-data').then(m => m.refreshStudentData()).catch(() => {})
-    }, POLL_INTERVAL_MS)
-
-    // Hard timeout — never strand the user on the loading screen.
-    const timeoutId = setTimeout(() => {
-      console.warn('[Layout recovery] timeout — exiting transition screen and showing dashboard')
-      clearInterval(pollId)
-      exit()
-    }, HARD_TIMEOUT_MS)
-
-    return () => {
-      cancelled = true
-      clearInterval(pollId)
-      clearTimeout(timeoutId)
-    }
-  }, [
-    isChrome, isOnboardingFlow, studentLoading, resetActive, onboardingTransition,
-    studentData.isOnboarded, studentData.hasCurriculum,
-  ])
+  // (The legacy curriculum auto-recovery effect is gone with the Tree pivot —
+  // a user with no trees simply sees the Tree page's empty state.)
 
   if (isChrome) {
     return <>{children}</>

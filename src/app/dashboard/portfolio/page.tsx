@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Award, RefreshCw, FileText, ChevronDown, ChevronUp,
   Sparkles, TrendingUp, Target, BarChart3, Star, Zap, BookOpen,
 } from 'lucide-react'
+import { TreeLogo } from '@/components/tree-logo'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { useStudentData } from '@/lib/student-data'
@@ -80,6 +82,48 @@ function AchievementsSection() {
               )}
             </div>
           </div>
+        ))}
+      </div>
+    </motion.section>
+  )
+}
+
+// ── The Forest — completed problem trees (mastered problems) ────────────────
+
+function ForestSection() {
+  const { t } = useLanguage()
+  const [trees, setTrees] = useState<Array<{ id: string; title: string; status: string; nodeCount: number; understoodCount: number; updatedAt: string }> | null>(null)
+
+  useEffect(() => {
+    fetch('/api/tree', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.trees) setTrees(d.trees) })
+      .catch(() => {})
+  }, [])
+
+  const completed = (trees ?? []).filter(tr => tr.status === 'completed')
+  if (completed.length === 0) return null
+
+  return (
+    <motion.section {...fadeUp} className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <TreeLogo className="w-4 h-4 text-emerald-400" />
+          {t('portfolio.forest')}
+        </h2>
+        <p className="text-[11px] text-muted-foreground mt-0.5">{t('portfolio.forestSub')}</p>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {completed.map(tree => (
+          <Link key={tree.id} href={`/dashboard/tree/${tree.id}`} className="block group">
+            <div className="border border-emerald-400/30 bg-emerald-500/[0.05] rounded-xl p-4 text-center hover:border-emerald-400/60 transition-colors">
+              <TreeLogo className="w-9 h-9 text-emerald-400 mx-auto" />
+              <p className="text-xs font-semibold text-foreground mt-2 line-clamp-2 leading-snug group-hover:text-emerald-300 transition-colors">{tree.title}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {tree.nodeCount} {t('dashboard.nodes')} · {new Date(tree.updatedAt).toLocaleDateString()}
+              </p>
+            </div>
+          </Link>
         ))}
       </div>
     </motion.section>
@@ -648,6 +692,9 @@ export default function PortfolioPage() {
               ))}
             </div>
           </motion.section>
+
+          {/* The Forest — problems mastered end-to-end */}
+          <ForestSection />
 
           {/* Achievements — featured XP badges as competency evidence */}
           <AchievementsSection />

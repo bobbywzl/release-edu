@@ -38,46 +38,13 @@ export function CommandPalette() {
     const navigate = (href: string) => () => { router.push(href); setOpen(false) }
     const pages: CommandItem[] = [
       { id: 'nav-dashboard', label: t('nav.dashboard'), description: t('cmd.goOverview'), icon: LayoutDashboard, action: navigate('/dashboard'), category: 'Navigation' },
-      { id: 'nav-progress', label: t('dashboard.yourProgress'), description: t('cmd.viewStats'), icon: BarChart3, action: navigate('/dashboard/progress'), category: 'Navigation' },
-      { id: 'nav-chat', label: t('nav.bob'), description: t('cmd.chatMentor'), icon: Bot, action: navigate('/dashboard/chat'), category: 'Navigation' },
-      { id: 'nav-projects', label: t('nav.projects'), description: t('cmd.manageProjects'), icon: FolderOpen, action: navigate('/dashboard/projects'), category: 'Navigation' },
+      { id: 'nav-tree', label: t('nav.tree'), description: t('tree.subtitle'), icon: BookOpen, action: navigate('/dashboard/tree'), category: 'Navigation' },
+      { id: 'nav-workspace', label: t('nav.workspace'), description: t('cmd.chatMentor'), icon: Bot, action: navigate('/dashboard/workspace'), category: 'Navigation' },
+      { id: 'nav-portfolio', label: t('nav.portfolio'), description: t('cmd.viewStats'), icon: BarChart3, action: navigate('/dashboard/portfolio'), category: 'Navigation' },
       { id: 'nav-settings', label: t('nav.settings'), description: t('cmd.accountPrefs'), icon: Settings, action: navigate('/dashboard/settings'), category: 'Navigation' },
     ]
 
-    const concepts: CommandItem[] = mockKnowledgeNodes
-      .filter(n => n.status !== 'locked')
-      .map(n => ({
-        id: `concept-${n.id}`,
-        label: n.label,
-        description: n.subject + ' · ' + n.status,
-        icon: BookOpen,
-        action: navigate('/dashboard/curriculum'),
-        category: 'Concepts',
-        keywords: [n.subject, n.status, n.description],
-      }))
-
-    const projects: CommandItem[] = mockProjects.map(p => ({
-      id: `proj-${p.id}`,
-      label: p.title,
-      description: p.subject + ' · ' + p.status + ' · ' + p.progress + '%',
-      icon: FolderOpen,
-      action: navigate(`/dashboard/projects/${p.id}`),
-      category: 'Projects',
-      keywords: p.tags,
-    }))
-
-    const actions: CommandItem[] = [
-      {
-        id: 'action-xp',
-        label: t('cmd.viewXP'),
-        description: t('cmd.xpDesc'),
-        icon: Zap,
-        action: navigate('/dashboard/progress'),
-        category: 'Actions',
-      },
-    ]
-
-    return [...pages, ...projects, ...concepts, ...actions]
+    return pages
   }, [router, t])
 
   const allItems = buildItems()
