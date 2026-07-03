@@ -17,19 +17,33 @@ export async function GET() {
           },
         },
         _count: {
-          select: { conversations: true, insights: true, tracks: true },
+          select: { conversations: true, insights: true, problemTrees: true },
         },
-        tracks: {
-          select: { id: true, name: true, color: true },
-        },
-        curriculumPlan: {
-          select: { id: true, version: true, generatedAt: true, lockedAt: true },
+        // Tree pivot: each problem tree is a learning session.
+        problemTrees: {
+          select: {
+            id: true, title: true, status: true, difficulty: true, language: true,
+            nodes: { select: { status: true, pending: true } },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
     })
 
-    return NextResponse.json({ users })
+    return NextResponse.json({
+      users: users.map(u => ({
+        ...u,
+        problemTrees: u.problemTrees.map(t => {
+          const real = t.nodes.filter(n => !n.pending)
+          return {
+            id: t.id, title: t.title, status: t.status, difficulty: t.difficulty, language: t.language,
+            nodeCount: real.length,
+            understoodCount: real.filter(n => n.status === 'understood').length,
+            nodes: undefined,
+          }
+        }),
+      })),
+    })
   } catch (error) {
     console.error('Admin users API error:', error)
     return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 })

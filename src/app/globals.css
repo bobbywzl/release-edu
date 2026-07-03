@@ -155,3 +155,16 @@
 }
 .animate-overlay-in { animation: overlay-fade-in 0.18s ease-out both; }
 .animate-modal-in   { animation: modal-zoom-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Living tree — buds breathe on their own rhythm */
+@keyframes node-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.node-breathe { animation: node-breathe 4s ease-in-out infinite; }
+
+/* Proposed branches shimmer while awaiting approval */
+@keyframes branch-pending-dash {
+  to { stroke-dashoffset: -26; }
+}
+.branch-pending { animation: branch-pending-dash 1.6s linear infinite; }

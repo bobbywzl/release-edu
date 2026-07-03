@@ -25,6 +25,35 @@ function langDirective(lang?: string): string {
     : 'Respond in English.'
 }
 
+// Difficulty tiers, calibrated to university course levels (same ideology
+// as Release EDU's advancement levels).
+const DIFFICULTY_GUIDE: Record<string, string> = {
+  beginner: 'friendly introduction (≈ university 100-level) — plain language, generous analogies, no assumed background',
+  intermediate: 'solid working depth (≈ 200–300-level) — real terminology, quantitative where natural, some assumed fundamentals',
+  advanced: 'rigorous treatment (≈ 400-level / early graduate) — formal precision, edge cases, primary mechanisms',
+  professional: 'practitioner/expert depth (≈ graduate seminar) — full technical rigor, current practice, open problems',
+}
+
+interface SessionFields { language?: string | null; difficulty?: string | null; personalContext?: string | null }
+
+/**
+ * Every tree is a self-contained SESSION with its own language, target
+ * difficulty, and the student's stated background for this problem —
+ * collected at session onboarding. All AI output within the session
+ * follows these, not any global state.
+ */
+export function sessionDirectives(tree: SessionFields, fallbackLang?: string): string {
+  const lang = tree.language ?? fallbackLang
+  const parts = [langDirective(lang ?? undefined)]
+  if (tree.difficulty && DIFFICULTY_GUIDE[tree.difficulty]) {
+    parts.push(`TARGET LEVEL for this session: ${tree.difficulty} — ${DIFFICULTY_GUIDE[tree.difficulty]}. Calibrate every explanation and every test question to exactly this depth.`)
+  }
+  if (tree.personalContext) {
+    parts.push(`THE STUDENT'S BACKGROUND for this problem (stated at session start): "${tree.personalContext.slice(0, 400)}" — connect examples to it and skip what it already covers.`)
+  }
+  return parts.join('\n')
+}
+
 async function anthropic() {
   const Anthropic = (await import('@anthropic-ai/sdk')).default
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -68,10 +97,23 @@ interface SeedResult { framing: string; rootSummary: string; solutions: SeedSolu
  * Create a new tree: root (the problem) + candidate solution branches +
  * each solution's first-level components. Deeper levels grow only when the
  * student asks — the tree expands with their curiosity, never ahead of it.
+ *
+ * opts carries the SESSION ONBOARDING answers (language, difficulty,
+ * personal background) — stored on the tree, they govern every AI output
+ * in this session.
  */
-export async function seedTree(userId: string, problem: string, lang?: string): Promise<string> {
+export async function seedTree(
+  userId: string,
+  problem: string,
+  opts: { lang?: string; difficulty?: string; personalContext?: string } = {},
+): Promise<string> {
   const client = await anthropic()
   const grounding = await studentGrounding(userId)
+  const session: SessionFields = {
+    language: opts.lang === 'zh' ? 'zh' : opts.lang ? 'en' : null,
+    difficulty: opts.difficulty && DIFFICULTY_GUIDE[opts.difficulty] ? opts.difficulty : null,
+    personalContext: opts.personalContext?.trim().slice(0, 1000) || null,
+  }
 
   const result = await client.messages.create({
     model: OPUS,
@@ -81,6 +123,7 @@ export async function seedTree(userId: string, problem: string, lang?: string): 
       content: `You are Bob, an expert mentor. A student wants to master ONE specific problem. Design the SEED of a learning tree for it.
 
 THE PROBLEM: "${problem}"
+${sessionDirectives(session)}
 ${grounding}
 
 The tree model: the problem is the ROOT. Base branches are the CANDIDATE SOLUTIONS (real, distinct approaches an expert would weigh — 1 to 3 of them; use 1 only when the problem genuinely has a single canonical resolution). Each solution's children are its first-level COMPONENTS: the parts of that solution a beginner would NOT understand yet (2-4 per solution). Do NOT go deeper — deeper branches grow later from the student's own questions.
@@ -93,7 +136,6 @@ Also write:
 - "framing": one tight paragraph restating the problem precisely — what mastery of it means, what the end state looks like
 - "rootSummary": 1-2 sentence summary for the root node itself
 
-${langDirective(lang)}
 
 Return ONLY JSON:
 {"framing": "...", "rootSummary": "...", "solutions": [{"title": "...", "summary": "...", "components": [{"title": "...", "summary": "..."}]}]}`,
@@ -105,7 +147,14 @@ Return ONLY JSON:
   if (!seed?.solutions?.length) throw new Error('Seed generation failed')
 
   const tree = await prisma.problemTree.create({
-    data: { userId, title: problem.slice(0, 300), framing: seed.framing?.slice(0, 2000) ?? null },
+    data: {
+      userId,
+      title: problem.slice(0, 300),
+      framing: seed.framing?.slice(0, 2000) ?? null,
+      language: session.language,
+      difficulty: session.difficulty,
+      personalContext: session.personalContext,
+    },
   })
   const root = await prisma.treeNode.create({
     data: {
@@ -206,7 +255,7 @@ STUDENT'S QUESTION: "${question.slice(0, 500)}"
 
 Propose 1-4 NEW child nodes under the target node. Each must be a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution).
 
-${langDirective(lang)}
+${sessionDirectives(tree, lang)}
 
 Return ONLY JSON:
 [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}]`,
@@ -267,7 +316,8 @@ Write in markdown (400-700 words):
 4. **Where beginners go wrong** — the main misconception or failure mode
 5. **How you'll know you understand it** — 1-2 sentences describing the transfer test
 
-Dense, no fluff, no praise-padding. KaTeX ($...$) allowed for math. ${langDirective(lang)}`,
+Dense, no fluff, no praise-padding. KaTeX ($...$) allowed for math.
+${sessionDirectives(tree, lang)}`,
     }],
   })
 
@@ -301,7 +351,7 @@ ${node.explainer ? `EXPLAINER THE STUDENT READ (do NOT quiz its literal sentence
 
 Choose the format that authentically tests this subject: a small calculation/worked problem for quantitative concepts, a scenario-application or why/what-if short answer otherwise. All items are answered as free text. 2 items normally; 3 only if the concept has distinct facets that each need probing.
 
-${langDirective(lang)}
+${sessionDirectives(tree, lang)}
 
 Return ONLY JSON: {"questions": ["...", "..."]}`,
     }],
@@ -332,7 +382,7 @@ export async function judgeVerification(
 NODE: "${node.title}" — ${node.summary}
 ${questions.map((q, i) => `Q${i + 1}: ${q}\nStudent's answer: ${(answers[i] ?? '').slice(0, 800)}`).join('\n\n')}
 
-${langDirective(lang)}
+${sessionDirectives(tree, lang)}
 
 Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedback": "2-3 sentences: what they got right, what to revisit"}`,
     }],

@@ -32,6 +32,12 @@ export async function GET() {
   // Ready
   try {
     const portfolio = JSON.parse(cache.data)
+    // Portfolios generated before the Tree pivot carry legacy Release EDU
+    // data. Treat them as absent so a fresh, session-only portfolio must be
+    // generated — old product data must never surface here.
+    if ((portfolio?.version ?? 0) < 2) {
+      return NextResponse.json({ status: 'none' })
+    }
     return NextResponse.json({ status: 'ready', portfolio, generatedAt: cache.generatedAt })
   } catch {
     return NextResponse.json({ status: 'error', error: 'Stored portfolio is corrupted' })
