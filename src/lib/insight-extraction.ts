@@ -61,6 +61,10 @@ importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; re
       }],
     })
 
+    try {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId: storeUserId, model: pickBackgroundModel(), feature: 'insight' })
+    } catch { /* non-critical */ }
     const text = (result.content[0] as { type: string; text?: string })?.text?.trim()
     if (!text || text === '[]') return
     const jsonMatch = text.match(/\[[\s\S]*\]/)
