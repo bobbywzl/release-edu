@@ -2,11 +2,13 @@
 // kills the function at the plan default before Claude finishes.
 export const maxDuration = 300
 import { NextRequest, NextResponse } from 'next/server'
-import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'
-import { getStudentContext } from '@/lib/student-context'
-import { getUserCompletionStats } from '@/lib/status-cascade'
 import prisma from '@/lib/prisma'
+
+// Portfolios generated before the Tree pivot carry Release EDU data. The
+// version stamp lets readers treat anything older as absent — a Tree EDU
+// portfolio is built ONLY from Tree EDU session data.
+const PORTFOLIO_VERSION = 2
 
 export async function POST(_req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -21,20 +23,17 @@ export async function POST(_req: NextRequest) {
   if (existing?.status === 'generating' && existing.startedAt) {
     const age = Date.now() - existing.startedAt.getTime()
     if (age < 5 * 60 * 1000) {
-      // Already generating — return current status
       return NextResponse.json({ status: 'generating', startedAt: existing.startedAt })
     }
     // Stale (>5 min) — overwrite
   }
 
-  // Mark as generating
   await prisma.portfolioCache.upsert({
     where: { userId },
     create: { userId, data: '', status: 'generating', startedAt: new Date() },
     update: { status: 'generating', startedAt: new Date(), errorMessage: null },
   })
 
-  // Kick off generation in the background
   void generatePortfolioInBackground(userId, apiKey).catch(err => {
     console.error('[Portfolio] Background generation failed:', err)
     return prisma.portfolioCache.update({
@@ -46,136 +45,71 @@ export async function POST(_req: NextRequest) {
   return NextResponse.json({ status: 'generating', startedAt: new Date() })
 }
 
+function safeParse<T>(str: string | null | undefined, fallback: T): T {
+  if (!str) return fallback
+  try { return JSON.parse(str) as T } catch { return fallback }
+}
+
+/**
+ * Tree EDU portfolio — built EXCLUSIVELY from the student's problem-tree
+ * sessions: their trees, verified nodes, own notes/annotations, uploaded
+ * evidence files, and workspace conversations. Nothing from any prior
+ * product (legacy curriculum, old conversations, carried-over insights)
+ * may enter — a session's record is the session's data, full stop.
+ */
 async function generatePortfolioInBackground(userId: string, apiKey: string): Promise<void> {
-  const store = dbStore.forUser(userId)
-  const studentContext = await getStudentContext(userId, false, userId)
-  // Curated memory only — stale/merged insights from abandoned directions
-  // must not contaminate the portfolio. Resolved struggles come separately:
-  // they're the growth narrative (started struggling with X, mastered it).
-  const { getTopInsights, getResolvedStruggles } = await import('@/lib/insight-memory')
-  const insights = await getTopInsights(userId, { limit: 40 })
-  const resolvedStruggles = await getResolvedStruggles(userId).catch(() => [])
-  const conversations = await store.getConversations()
+  // Basic identity only (name/XP/streak) — no legacy profile interests.
+  const [profileRow, userRow] = await Promise.all([
+    prisma.studentProfile.findUnique({ where: { userId }, select: { displayName: true, xp: true, streak: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+  ])
+  const name = profileRow?.displayName || userRow?.name || 'Student'
 
-  // Separate insights by type
-  const strengths = insights.filter(i => i.type === 'strength' || i.type === 'breakthrough')
-  const improvements = insights.filter(i => i.type === 'weakness' || i.type === 'struggle')
-  const interests = insights.filter(i => i.type === 'interest' || i.type === 'aspiration')
-  const personality = insights.filter(i => i.type === 'personality' || i.type === 'style')
-
-  // Get conversation excerpts for evidence — get full messages for each conv
-  const allMessages: { conversationTitle: string; role: string; content: string; date: Date }[] = []
-  for (const c of conversations) {
-    const fullConv = await store.getConversation(c.id)
-    if (fullConv) {
-      for (const m of fullConv.messages) {
-        allMessages.push({
-          conversationTitle: c.title,
-          role: m.role,
-          content: m.content,
-          date: m.createdAt,
-        })
-      }
-    }
-  }
-
-  // Get chapter completion stats
-  const completionStatsData = await getUserCompletionStats(userId)
-
-  // Get archived curriculum blocks (included in portfolio)
-  const archivedBlocks = await prisma.curriculumBlock.findMany({
-    where: { userId, includedInPortfolio: true },
-    orderBy: { startedAt: 'asc' },
-  })
-
-  // ── Rich evidence-gathering queries ──
-
-  // Session outcomes (success rate, subject breakdown, evolution)
-  const sessionOutcomes = await prisma.sessionOutcome.findMany({
+  // ── Session data: the trees ──
+  const trees = await prisma.problemTree.findMany({
     where: { userId },
-    orderBy: { createdAt: 'asc' },
-    select: { endScore: true, passed: true, messageCount: true, subjectArea: true, sessionSummary: true, createdAt: true, thumbsUp: true, thumbsDown: true },
-  })
-
-  // Chapter-level performance (scores, completion pace)
-  const chaptersWithTracks = await prisma.chapter.findMany({
-    where: { track: { userId } },
-    select: {
-      title: true, status: true, sessionScore: true, createdAt: true,
-      track: { select: { name: true, type: true } },
-    },
+    include: { nodes: { orderBy: { createdAt: 'asc' } } },
     orderBy: { createdAt: 'asc' },
   })
 
-  // Project work (real outputs)
-  const projectsWithDetail = await prisma.subjectProject.findMany({
-    where: { track: { userId } },
-    select: {
-      title: true, description: true, status: true, progress: true, mentorFeedback: true, createdAt: true, updatedAt: true,
-      track: { select: { name: true } },
-      tasks: { select: { title: true, completed: true } },
-      milestones: { select: { title: true, completed: true, date: true } },
-    },
+  // Workspace conversations ONLY (context tag "tree-node:<id>").
+  const nodeConvs = await prisma.conversation.findMany({
+    where: { userId, context: { startsWith: 'tree-node:' } },
+    include: { messages: { orderBy: { createdAt: 'asc' } } },
+  })
+  const convByNodeId = new Map(nodeConvs.map(c => [c.context!.slice('tree-node:'.length), c]))
+
+  // Evidence files attached to nodes in this product.
+  const nodeFiles = await prisma.linkedFile.findMany({
+    where: { userId, workType: 'tree-node' },
+    select: { name: true, workId: true, addedAt: true },
   })
 
-  // Homework submissions (student's written output)
-  const homeworkSubmissions = await prisma.homework.findMany({
-    where: { track: { userId }, status: 'completed', studentResponse: { not: null } },
-    select: { title: true, studentResponse: true, track: { select: { name: true } } },
-    take: 15,
-  })
+  const realNodes = trees.flatMap(t => t.nodes.filter(n => !n.pending))
+  const verifiedNodes = realNodes.filter(n => n.status === 'understood')
+  const userMessages = nodeConvs.flatMap(c => c.messages.filter(m => m.role === 'user'))
 
-  // Quiz performance
-  const quizzes = await prisma.quiz.findMany({
-    where: { track: { userId }, score: { not: null } },
-    select: { title: true, score: true, totalPoints: true, track: { select: { name: true } } },
-  })
+  // Bob's accumulated insight memory — the personalization moat. Curated
+  // (active, ranked) memory colors the portrait of WHO the student is; the
+  // scope rule below stops it from smuggling in legacy product claims.
+  let insightLines = ''
+  try {
+    const { getTopInsights } = await import('@/lib/insight-memory')
+    const insights = await getTopInsights(userId, { limit: 20 })
+    insightLines = insights.map(i => `- [${i.type}, confidence ${i.confidence.toFixed(2)}] ${i.content}`).join('\n')
+  } catch { /* non-critical */ }
 
-  // User's own highlights — what they marked as important (reveals what resonates)
-  const highlightsData = await prisma.messageHighlight.findMany({
-    where: { userId },
-    select: { selectedText: true, comment: true, color: true, createdAt: true },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
-  })
-
-  // Compute performance metrics from real data
-  const passedSessions = sessionOutcomes.filter(s => s.passed).length
-  const successRate = sessionOutcomes.length > 0 ? Math.round((passedSessions / sessionOutcomes.length) * 100) : 0
-  const chapterScores = chaptersWithTracks.filter(c => c.sessionScore != null).map(c => c.sessionScore!)
-  const avgChapterScore = chapterScores.length > 0 ? Math.round(chapterScores.reduce((a, b) => a + b, 0) / chapterScores.length) : 0
-  const completedChapters = chaptersWithTracks.filter(c => c.status === 'completed')
-
-  // Evolution: first 1/3 vs last 1/3 session scores to show growth
-  const sortedScores = chapterScores.slice()
-  const thirdSize = Math.floor(sortedScores.length / 3) || 1
-  const earlyAvg = sortedScores.length >= 3 ? Math.round(sortedScores.slice(0, thirdSize).reduce((a, b) => a + b, 0) / thirdSize) : null
-  const recentAvg = sortedScores.length >= 3 ? Math.round(sortedScores.slice(-thirdSize).reduce((a, b) => a + b, 0) / thirdSize) : null
-  const improvement = earlyAvg != null && recentAvg != null ? recentAvg - earlyAvg : null
-
-  // User message tendencies: average length, question rate, technical vocabulary
-  const userMessages = allMessages.filter(m => m.role === 'user')
-  const avgUserMsgLen = userMessages.length > 0 ? Math.round(userMessages.reduce((a, m) => a + m.content.length, 0) / userMessages.length) : 0
-  const questionRate = userMessages.length > 0 ? Math.round((userMessages.filter(m => m.content.includes('?')).length / userMessages.length) * 100) : 0
-
-  // ── Pre-check: is there enough real data to generate a portfolio? ──
-  const hasConversations = allMessages.length > 0
-  const hasInsights = insights.length > 0
-  const hasProgress = studentContext.progress.overallCompletion > 0
-  const hasProjects = studentContext.projects.active.length > 0
-  const hasArchive = archivedBlocks.length > 0
-  const dataPoints = [hasConversations, hasInsights, hasProgress, hasProjects, hasArchive].filter(Boolean).length
-
-  if (dataPoints === 0) {
+  if (trees.length === 0 || realNodes.length === 0) {
     const emptyPortfolio = {
+      version: PORTFOLIO_VERSION,
       headline: 'Portfolio not yet available',
-      summary: `${studentContext.profile.name} has just started their learning journey on Release EDU. As they engage with the curriculum, complete assignments, work on projects, and discuss topics with Bob, this portfolio will be populated with verified evidence of their skills, character traits, and growth. Every claim in this portfolio will be backed by real data — no fabrication.`,
+      summary: `${name} has just started on Tree EDU. As they plant problem trees, verify their understanding node by node, and attach real work as evidence, this portfolio will fill with verifiable proof of mastery. Every claim will be traceable to a specific verified node or artifact — no fabrication.`,
       skills: [],
       projects: [],
       strengths: [],
       growthAreas: [],
       metrics: { completionRate: 0, averagePace: 'Not enough data yet', consistencyScore: 0, qualityIndicators: [] },
-      personalStatement: `I am just beginning my learning journey on Release EDU. This portfolio will grow as I engage with the curriculum, complete projects, and develop my skills. Check back soon!`,
+      personalStatement: 'I am just beginning my journey on Tree EDU. This portfolio will grow with every problem I master.',
       insufficientData: true,
     }
     await prisma.portfolioCache.update({
@@ -185,166 +119,102 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
     return
   }
 
+  // ── Per-tree session digests for the prompt ──
+  const treeDigests = trees.map(t => {
+    const nodes = t.nodes.filter(n => !n.pending)
+    const verified = nodes.filter(n => n.status === 'understood')
+    const nodeLines = nodes.slice(0, 25).map(n => {
+      const annotations = safeParse<Array<{ text: string }>>(n.annotations, [])
+      const files = nodeFiles.filter(f => f.workId === n.id)
+      const conv = convByNodeId.get(n.id)
+      return `  - [${n.kind}, ${n.status}] "${n.title}" — ${n.summary.slice(0, 100)}`
+        + (n.notes ? `\n    Student's notes: "${n.notes.replace(/\s+/g, ' ').slice(0, 180)}"` : '')
+        + (annotations.length ? `\n    Annotations: ${annotations.slice(0, 2).map(a => `"${a.text.slice(0, 100)}"`).join('; ')}` : '')
+        + (files.length ? `\n    Evidence files: ${files.map(f => f.name).join(', ')}` : '')
+        + (conv ? `\n    Workspace exchanges: ${conv.messages.length} messages` : '')
+    }).join('\n')
+    return `### Session: "${t.title}" [${t.status}]${t.difficulty ? ` · target level: ${t.difficulty}` : ''}${t.language ? ` · language: ${t.language}` : ''}
+${t.framing ? `Framing: ${t.framing.slice(0, 220)}` : ''}
+${t.personalContext ? `Student's stated background for this problem: "${t.personalContext.slice(0, 220)}"` : ''}
+Progress: ${verified.length}/${nodes.length} nodes verified as understood (AI-tested, not self-marked)
+Nodes:
+${nodeLines}`
+  }).join('\n\n')
+
+  const recentUserExcerpts = userMessages.slice(-20)
+    .map(m => `- "${m.content.replace(/\s+/g, ' ').slice(0, 220)}"`).join('\n')
+
   const Anthropic = (await import('@anthropic-ai/sdk')).default
   const client = new Anthropic({ apiKey })
+
+  const completionRate = realNodes.length > 0 ? Math.round((verifiedNodes.length / realNodes.length) * 100) : 0
 
   const result = await client.messages.create({
     model: 'claude-opus-4-8',
     max_tokens: 4000,
     messages: [{
       role: 'user',
-      content: `Generate a RIGOROUSLY HONEST student portfolio/resume for university and employer review.
+      content: `Generate a RIGOROUSLY HONEST student portfolio/résumé for university and employer review, from Tree EDU problem-mastery sessions.
 
-## RELEASE EDU PORTFOLIO — HALLMARKS OF TRUTH
+## TREE EDU PORTFOLIO — HALLMARKS OF TRUTH
 
-This is a Release EDU Portfolio. It MUST be **OBJECTIVE**, **TRANSPARENT**, and **ACCURATE**. Universities and employers will read this to decide real outcomes. Every claim must be traceable to concrete evidence.
+Tree EDU teaches by growing a tree from ONE specific problem: solutions branch into components and technical leaves, and a node counts as understood ONLY after passing an AI-verified transfer test (questions designed to separate understanding from memorization). This portfolio therefore certifies VERIFIED understanding, not attendance.
 
-### Required hallmarks of a Release EDU Portfolio:
-1. **Quote-backed evidence**: Every strength, skill, and trait must cite ACTUAL quotes from the student's conversations or homework submissions — with context. Never paraphrase as evidence.
-2. **Numerical transparency**: State real numbers — success rate %, average session score, chapter count, projects completed, improvement delta. No vague "strong performance" — give the number.
-3. **Evolution over time**: Compare early-curriculum performance to recent. Show trajectory, not just snapshot.
-4. **Tendencies from behavior**: What does the student DO? Ask a lot of questions? Write long thoughtful responses? Revisit the same topic? Highlight theory or applications? Observe and report.
-5. **Output artifacts**: Reference real homework responses, project outputs, and user-chosen highlights as evidence of thought.
-6. **Honest limitations**: Name gaps. "No projects completed yet" is more valuable than padding.
-7. **Cumulative across curricula**: Include evidence from archived curriculum blocks — show the full learning journey.
+### ABSOLUTE SCOPE RULE — read first:
+Use ONLY the session data below. Do NOT reference, assume, or import anything from any other product, curriculum, chapter, course, or prior learning history. If it is not in the sessions below, it does not exist for this portfolio. Never mention "Release EDU", chapters, tracks, or curricula — this product has problems, trees, nodes, and verifications.
 
-### CRITICAL HONESTY RULES:
-1. ONLY include information DIRECTLY SUPPORTED by data below. No inference beyond what's stated.
-2. For "strengths" — ONLY include traits with specific quote/data evidence. If no evidence, return empty array.
-3. For "skills" — ONLY list skills where real work exists (completed chapters with scores, homework submitted, etc.). Level reflects actual progress.
-4. For "projects" — ONLY real projects. Never invent impact.
-5. Every "evidence" field MUST contain at least one real quote or specific data point (e.g. "scored 88% on Diffusion Models chapter", "wrote 340-word response to homework X stating '[quote]'").
-6. For "conversationRef" — cite the specific conversation title or chapter context.
-7. If early-stage with limited data, SAY SO.
+### Required hallmarks:
+1. **Verification-backed claims**: every skill/strength must cite a specific verified node ("passed the transfer test on 'QEC surface codes'") or a real artifact (student's notes, annotation, evidence file, workspace quote).
+2. **Numerical transparency**: real numbers — nodes verified, trees completed, verification rate. No vague praise.
+3. **Honest limitations**: unverified nodes and abandoned trees are stated plainly.
+4. **The problems ARE the résumé**: each completed tree is presented as a mastered problem with the solution path they came to understand.
 
-## Student Profile
-Name: ${studentContext.profile.name}
-Learning Stage: ${studentContext.profile.stageName}
-XP: ${studentContext.profile.xp} | Streak: ${studentContext.profile.streak} days
-Learning Style: ${studentContext.profile.learningStyle || 'not determined yet'}
-Interests: ${studentContext.interests.length > 0 ? studentContext.interests.join(', ') : 'not yet identified'}
-Aspirations: ${studentContext.aspirations || 'not yet expressed'}
+## Student
+Name: ${name}
+XP: ${profileRow?.xp ?? 0} | Streak: ${profileRow?.streak ?? 0} days
+Trees (sessions): ${trees.length} total, ${trees.filter(t => t.status === 'completed').length} completed
+Nodes: ${verifiedNodes.length}/${realNodes.length} verified as understood (${completionRate}%)
+Evidence files uploaded: ${nodeFiles.length}
+Workspace messages written by the student: ${userMessages.length}
 
-## Actual Completion Data (from chapter status cascade)
-Overall Progress: ${completionStatsData.overall.progress}%
-Chapters Completed: ${completionStatsData.overall.completed}/${completionStatsData.overall.total}
-Tracks: ${completionStatsData.tracks.map(t => `${t.trackName}: ${t.progress}%`).join(', ')}
+## SESSIONS (the complete, only source of truth)
+${treeDigests}
 
-## Curriculum Progress
-Overall: ${studentContext.progress.overallCompletion}%
-Excelling: ${studentContext.progress.excellingTopics.length > 0 ? studentContext.progress.excellingTopics.join(', ') : 'none identified yet'}
-Subjects: ${studentContext.progress.subjectBreakdown.map(s => `${s.subject}: ${s.mastery}%`).join(', ')}
+## STUDENT'S OWN RECENT WORKSPACE WORDS (verbatim — use for "evidence" quotes)
+${recentUserExcerpts || '(none yet)'}
 
-## Projects (ONLY include these — do not invent others)
-${studentContext.projects.active.length > 0 ? studentContext.projects.active.map(p => `- ${p.name} (${p.progress}% complete)`).join('\n') : 'No projects started yet'}
+## BOB'S ACCUMULATED MEMORY OF THE STUDENT (curated insights — the app's long-term understanding)
+Use these ONLY to color WHO the student is (strengths, style, aspirations, growth areas) — never as claims of completed work, and never referencing any other product, curriculum, or chapters. Claims of ACHIEVEMENT must come from the sessions above.
+${insightLines || '(no accumulated insights yet)'}
 
-## Identified Strengths from Bob's observations (ONLY use these — do not invent)
-${strengths.length > 0 ? strengths.map(s => `- [confidence: ${s.confidence}] ${s.content} (source: ${s.source})`).join('\n') : 'No strengths identified yet — not enough interaction data'}
-
-## Areas for Growth from Bob's observations
-${improvements.length > 0 ? improvements.map(s => `- [confidence: ${s.confidence}] ${s.content}`).join('\n') : 'No areas identified yet'}
-
-## Interests & Aspirations from conversations
-${interests.length > 0 ? interests.map(s => `- ${s.content}`).join('\n') : 'None expressed yet'}
-
-## Personality & Learning Style observations
-${personality.length > 0 ? personality.map(s => `- ${s.content}`).join('\n') : 'Not enough data to assess'}
-
-## PERFORMANCE METRICS (from real chapter/session data)
-- Overall chapter completion: ${completionStatsData.overall.completed}/${completionStatsData.overall.total}
-- Completed chapters with scores: ${completedChapters.length}
-- Average session score: ${avgChapterScore}% (from ${chapterScores.length} scored chapters)
-- Session pass rate: ${successRate}% (${passedSessions}/${sessionOutcomes.length} sessions passed)
-${earlyAvg != null ? `- Evolution: early curriculum avg ${earlyAvg}% → recent avg ${recentAvg}% (${improvement! >= 0 ? '+' : ''}${improvement} points change)` : '- Evolution: insufficient data'}
-- XP earned: ${studentContext.profile.xp}
-- Current streak: ${studentContext.profile.streak} days
-
-## SESSION OUTCOMES (real session-by-session history)
-${sessionOutcomes.length > 0 ? sessionOutcomes.slice(-12).map(s => `- [${s.subjectArea}] ${s.passed ? '✓ passed' : '✗ failed'} at ${s.endScore}% · ${s.messageCount} msgs · ${s.createdAt.toISOString().slice(0,10)}${s.thumbsUp ? ` · 👍${s.thumbsUp}` : ''}${s.thumbsDown ? ` · 👎${s.thumbsDown}` : ''}${s.sessionSummary ? ` · "${s.sessionSummary.slice(0, 80)}"` : ''}`).join('\n') : 'No sessions completed yet'}
-
-## CHAPTER-BY-CHAPTER PERFORMANCE (evidence of mastery per topic)
-${completedChapters.slice(0, 20).map(c => `- [${c.track.name}] "${c.title}": ${c.sessionScore != null ? c.sessionScore + '%' : 'completed'}`).join('\n') || 'No completed chapters yet'}
-
-## PROJECT WORK (real outputs, not just plans)
-${projectsWithDetail.length > 0 ? projectsWithDetail.map(p => {
-  const doneTasks = p.tasks.filter(t => t.completed).length
-  const doneMilestones = p.milestones.filter(m => m.completed).length
-  return `- [${p.track.name}] "${p.title}" (${p.status}, ${p.progress}%)
-    Description: ${p.description?.slice(0, 150) || 'n/a'}
-    Tasks: ${doneTasks}/${p.tasks.length} complete${p.tasks.slice(0, 3).map(t => `\n      • ${t.completed ? '✓' : '○'} ${t.title}`).join('')}
-    Milestones: ${doneMilestones}/${p.milestones.length} complete
-    ${p.mentorFeedback ? `Mentor feedback: "${p.mentorFeedback.slice(0, 200)}"` : ''}`
-}).join('\n\n') : 'No projects started yet'}
-
-## HOMEWORK SUBMISSIONS (student's written output — real evidence of thinking)
-${homeworkSubmissions.length > 0 ? homeworkSubmissions.slice(0, 8).map(h => `- [${h.track.name}] "${h.title}"\n  Student wrote: "${(h.studentResponse || '').slice(0, 300)}"`).join('\n\n') : 'No homework submissions yet'}
-
-## QUIZ PERFORMANCE
-${quizzes.length > 0 ? quizzes.map(q => `- [${q.track.name}] "${q.title}": ${q.score}/${q.totalPoints}`).join('\n') : 'No quizzes completed yet'}
-
-## USER'S OWN HIGHLIGHTS (what the student chose to mark as important — reveals what resonates)
-${highlightsData.length > 0 ? highlightsData.slice(0, 10).map(h => `- [${h.color}] "${h.selectedText.slice(0, 150)}"${h.comment ? ` — student's note: "${h.comment}"` : ''}`).join('\n') : 'No annotations yet'}
-
-## BEHAVIORAL TENDENCIES (from ${userMessages.length} user messages)
-- Average message length: ${avgUserMsgLen} characters
-- Question-asking rate: ${questionRate}% of messages contain questions
-- Total conversations: ${conversations.length}
-
-## ACTUAL CONVERSATION EXCERPTS (verbatim — use for "evidence" fields)
-${allMessages.length > 0 ? allMessages.slice(-20).map(m => `[${m.role} in "${m.conversationTitle}"] ${m.content.slice(0, 250)}`).join('\n') : 'No conversations yet'}
-
-## PAST CURRICULUM HISTORY (archived blocks — cumulative achievements)
-${archivedBlocks.length > 0 ? archivedBlocks.map(b => {
-  const tracks = JSON.parse(b.tracksJson || '[]')
-  const blockInsights = b.insightsJson ? JSON.parse(b.insightsJson) : []
-  const outcomes = b.sessionOutcomesJson ? JSON.parse(b.sessionOutcomesJson) : []
-  return `### ${b.title} (${new Date(b.startedAt).toLocaleDateString()} — ${new Date(b.archivedAt).toLocaleDateString()})
-Progress: ${b.overallProgress}% · Chapters: ${b.completedChapters}/${b.totalChapters} · XP: ${b.totalXp}
-Tracks: ${tracks.map((t: { name: string; progress: number }) => `${t.name} (${t.progress}%)`).join(', ')}
-Key insights: ${blockInsights.slice(0, 5).map((i: { content: string }) => i.content).join('; ') || 'none'}
-Sessions: ${outcomes.length} total, ${outcomes.filter((o: { passed: boolean }) => o.passed).length} passed`
-}).join('\n\n') : 'No past curricula archived yet'}
-
-## Overcome Struggles (growth narrative — strongest portfolio material)
-${resolvedStruggles.length > 0
-  ? resolvedStruggles.map(s => `- Previously: "${s.content}" — since RESOLVED through completed chapters (use this as evidence of growth over time)`).join('\n')
-  : 'None recorded yet'}
-
-## Data Availability Summary
-- Conversations: ${allMessages.length} messages across ${conversations.length} conversations
-- Insights: ${insights.length} total (${strengths.length} strengths, ${improvements.length} growth areas, ${resolvedStruggles.length} resolved struggles)
-- Completion: ${studentContext.progress.overallCompletion}%
-- Projects: ${studentContext.projects.active.length} active
-- Archived curriculum blocks: ${archivedBlocks.length} (included in portfolio)
-
-Generate a JSON portfolio with EXACTLY this schema. EMBED the evidence from above into the relevant fields — each claim should quote actual data, user writings, or highlights. The portfolio must show GROWTH AND IMPROVEMENT OVER TIME (cite score trajectories, evolution between curriculum blocks, early vs recent performance). For any section with insufficient data, return empty arrays or honest "insufficient data" messages. DO NOT PAD. DO NOT ADD EXTRA FIELDS.
+Generate a JSON portfolio with EXACTLY this schema. Every claim must be traceable to the sessions above. For any section with insufficient data, return empty arrays or honest "insufficient data" messages. DO NOT PAD. DO NOT ADD EXTRA FIELDS.
 
 CRITICAL SCHEMA RULES:
-- "skills[].level" MUST be exactly one of: "beginner" | "intermediate" | "advanced" | "expert" (NO variants like "beginner-to-intermediate")
-- "metrics.completionRate" MUST be a single integer 0-100 (NOT an object with sub-fields)
+- "skills[].level" MUST be exactly one of: "beginner" | "intermediate" | "advanced" | "expert"
+- "metrics.completionRate" MUST be a single integer 0-100
 - "metrics.consistencyScore" MUST be a single integer 0-100
-- "metrics.averagePace" MUST be a short string under 40 characters (e.g. "3 chapters/month")
+- "metrics.averagePace" MUST be a short string under 40 characters
 - "metrics.qualityIndicators" MUST be an array of short strings
-- Do NOT add fields like "projectsNote", "cautionaryIndicators", "dataLimitations", or any other top-level or nested fields not in the schema below
+- "projects" here means MASTERED OR IN-PROGRESS PROBLEMS (trees): title = the problem, description = the solution path they now understand, impact = what the verifications prove.
 
 {
   "headline": "Honest one-line summary reflecting actual status",
-  "summary": "Honest 2-3 paragraph summary. State what IS known, acknowledge what isn't yet. No flattery without evidence.",
-  "skills": [{"name": "skill name", "level": "beginner|intermediate|advanced|expert", "evidence": "SPECIFIC evidence from actual work — module completed, project milestone hit, etc."}],
-  "projects": [{"title": "ACTUAL project name from data", "description": "what they actually built (based on progress)", "skills": ["skills actually demonstrated"], "impact": "honest assessment of what this shows"}],
-  "strengths": [{"trait": "trait name", "description": "explanation", "evidence": "ACTUAL QUOTE from conversation excerpts above", "conversationRef": "which conversation"}],
+  "summary": "Honest 2-3 paragraph summary of their problem-mastery record. State what IS verified, acknowledge what isn't yet.",
+  "skills": [{"name": "skill name", "level": "beginner|intermediate|advanced|expert", "evidence": "specific verified node / artifact"}],
+  "projects": [{"title": "the problem (tree title)", "description": "the solution path they came to understand", "skills": ["skills actually demonstrated"], "impact": "what the verified nodes prove"}],
+  "strengths": [{"trait": "trait name", "description": "explanation", "evidence": "ACTUAL QUOTE from the student's workspace words or notes above", "conversationRef": "which tree/node"}],
   "growthAreas": [{"area": "area name", "description": "honest description", "progress": "actual progress on this"}],
   "metrics": {
-    "completionRate": ${studentContext.progress.overallCompletion},
+    "completionRate": ${completionRate},
     "averagePace": "calculated from actual data",
-    "consistencyScore": ${Math.min(100, studentContext.profile.streak * 7)},
+    "consistencyScore": ${Math.min(100, (profileRow?.streak ?? 0) * 7)},
     "qualityIndicators": ["ONLY real indicators"]
   },
-  "personalStatement": "Honest, realistic personal statement reflecting actual journey stage"
+  "personalStatement": "Honest, realistic first-person statement reflecting their actual problem-mastery journey"
 }
 
-Return ONLY valid JSON.`
-    }]
+Return ONLY valid JSON.`,
+    }],
   })
 
   {
@@ -363,6 +233,7 @@ Return ONLY valid JSON.`
   try {
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text]
     const portfolio = JSON.parse(jsonMatch[1] || text)
+    portfolio.version = PORTFOLIO_VERSION
     await prisma.portfolioCache.update({
       where: { userId },
       data: { data: JSON.stringify(portfolio), status: 'ready', generatedAt: new Date(), errorMessage: null },

@@ -68,14 +68,24 @@ function WorkspaceInner() {
 
   useEffect(() => {
     if (!treeId || !nodeId) return
+    let cancelled = false
     fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (d?.messages) setMessages(d.messages) })
+      .then(d => {
+        if (cancelled || !d?.messages) return
+        setMessages(d.messages)
+        // First visit to this node: Bob opens with a condensed syllabus-style
+        // hook — the concept, where it sits in the tree, and why it matters
+        // to the root problem. Triggered once; the saved reply prevents re-runs.
+        if (d.messages.length === 0) void streamFromBob('[NODE_INTRO]', false)
+      })
       .catch(() => {})
     fetch(`/api/files/upload?workType=tree-node&workId=${nodeId}`, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.files) setFiles(d.files) })
       .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeId, nodeId])
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
@@ -83,11 +93,11 @@ function WorkspaceInner() {
   // Fresh node → fresh panel state (draft notes belong to one node only).
   useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]) }, [nodeId])
 
-  async function send() {
-    const text = input.trim()
-    if (!text || streaming || !treeId || !nodeId) return
-    setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'user', content: text }])
-    setInput('')
+  // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
+  // first-open trigger — Bob speaks without a student bubble appearing.
+  async function streamFromBob(text: string, showUser: boolean) {
+    if (streaming || !treeId || !nodeId) return
+    if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'user', content: text }])
     setStreaming(true)
     setStreamText('')
     try {
@@ -110,11 +120,18 @@ function WorkspaceInner() {
       }
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: full }])
     } catch {
-      setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.connectError') }])
+      if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.connectError') }])
     } finally {
       setStreaming(false)
       setStreamText('')
     }
+  }
+
+  async function send() {
+    const text = input.trim()
+    if (!text) return
+    setInput('')
+    await streamFromBob(text, true)
   }
 
   async function ensureExplainer() {

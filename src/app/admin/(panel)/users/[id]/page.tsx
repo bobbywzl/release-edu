@@ -103,76 +103,6 @@ export default function UserDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedConvos, setExpandedConvos] = useState<Set<string>>(new Set())
-  const [unlocking, setUnlocking] = useState(false)
-  const [unlockMsg, setUnlockMsg] = useState<string | null>(null)
-  const [regenLimitInput, setRegenLimitInput] = useState('')
-  const [regenSaving, setRegenSaving] = useState(false)
-  const [regenMsg, setRegenMsg] = useState<string | null>(null)
-
-  // Shared PATCH helper for the regeneration-budget controls.
-  async function patchRegen(payload: Record<string, unknown>) {
-    setRegenSaving(true)
-    setRegenMsg(null)
-    try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setRegenMsg(`✓ ${data.message}`)
-        const refreshed = await fetch(`/api/admin/users/${userId}`).then(r => r.json())
-        if (refreshed.user) setUser(refreshed.user)
-      } else {
-        setRegenMsg(`Error: ${data.error || 'Request failed'}`)
-      }
-    } catch {
-      setRegenMsg('Error: Request failed')
-    } finally {
-      setRegenSaving(false)
-    }
-  }
-
-  function handleSetRegenLimit() {
-    const limit = parseInt(regenLimitInput, 10)
-    if (!Number.isInteger(limit) || limit < 0 || limit > 99) {
-      setRegenMsg('Error: enter a number from 0 to 99')
-      return
-    }
-    void patchRegen({ action: 'set_regen_limit', limit })
-  }
-
-  function handleResetRegenCount() {
-    void patchRegen({ action: 'reset_regen_count' })
-  }
-
-  async function handleUnlockCurriculum() {
-    if (!confirm('Unlock this user\'s curriculum? This removes the 30-day lock and lets them make changes immediately.')) return
-    setUnlocking(true)
-    setUnlockMsg(null)
-    try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'unlock_curriculum' }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setUnlockMsg('✓ Curriculum unlocked successfully')
-        // Refresh user data
-        const refreshed = await fetch(`/api/admin/users/${userId}`).then(r => r.json())
-        if (refreshed.user) setUser(refreshed.user)
-      } else {
-        setUnlockMsg(`Error: ${data.error || 'Failed to unlock'}`)
-      }
-    } catch {
-      setUnlockMsg('Error: Request failed')
-    } finally {
-      setUnlocking(false)
-    }
-  }
-
   useEffect(() => {
     fetch(`/api/admin/users/${userId}`)
       .then(r => {
@@ -212,13 +142,9 @@ export default function UserDetailPage() {
   }
 
   const profile = user.studentProfile
-  const plan = user.curriculumPlan
   const interests = parseJsonField(profile?.interests)
   const strengths = parseJsonField(profile?.strengths)
   const weaknesses = parseJsonField(profile?.weaknesses)
-  const planStrengths = parseJsonField(plan?.primaryStrengths)
-  const planInterests = parseJsonField(plan?.primaryInterests)
-  const planTraits = parseJsonField(plan?.personalityTraits)
 
   // Group insights by type
   const insightsByType: Record<string, any[]> = {}
@@ -307,46 +233,6 @@ export default function UserDetailPage() {
             <InfoRow label="Updated" value={formatDate(profile.updatedAt)} />
           </div>
 
-          {/* Regeneration budget — grant extra "Regenerate with AI" uses */}
-          <div className="mt-4 p-3 rounded-lg bg-background border border-border space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-foreground">Curriculum regenerations</span>
-              <span className="text-xs text-muted-foreground">
-                {profile.manualRegenerationCount ?? 0} used / {profile.manualRegenerationLimit ?? 2} allowed
-              </span>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="number"
-                min={0}
-                max={99}
-                value={regenLimitInput}
-                onChange={e => setRegenLimitInput(e.target.value)}
-                placeholder={String(profile.manualRegenerationLimit ?? 2)}
-                className="w-20 text-xs px-2 py-1.5 rounded-lg bg-card border border-border text-foreground"
-              />
-              <button
-                onClick={handleSetRegenLimit}
-                disabled={regenSaving}
-                className="text-xs px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-              >
-                Set limit
-              </button>
-              <button
-                onClick={handleResetRegenCount}
-                disabled={regenSaving}
-                className="text-xs px-3 py-1.5 rounded-lg bg-muted border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-              >
-                Reset used to 0
-              </button>
-              {regenMsg && (
-                <span className={`text-xs ${regenMsg.startsWith('✓') ? 'text-emerald-400' : 'text-red-400'}`}>{regenMsg}</span>
-              )}
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Raise the limit or reset the used count to grant this student more &quot;Regenerate with AI&quot; uses.
-            </p>
-          </div>
           <div className="mt-4 space-y-3">
             <div>
               <span className="text-xs text-muted-foreground block mb-1.5">Interests</span>
@@ -364,96 +250,37 @@ export default function UserDetailPage() {
         </Section>
       )}
 
-      {/* Curriculum Plan */}
-      {plan && (
-        <Section title="Curriculum Plan" icon={ClipboardList}>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-0">
-            <InfoRow label="Version" value={plan.version} />
-            <InfoRow label="Learning Style" value={plan.learningStyle} />
-            <InfoRow label="Generated" value={formatDate(plan.generatedAt)} />
-            <InfoRow label="Locked" value={plan.lockedAt ? formatDate(plan.lockedAt) : '—'} />
-          </div>
-          {/* Lock controls */}
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
-            {plan.lockedAt ? (
-              <button
-                onClick={handleUnlockCurriculum}
-                disabled={unlocking}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50"
-              >
-                {unlocking ? <Loader2 className="w-3 h-3 animate-spin" /> : <LockOpen className="w-3 h-3" />}
-                Force Unlock Curriculum
-              </button>
-            ) : (
-              <span className="text-xs text-emerald-400 flex items-center gap-1.5">
-                <LockOpen className="w-3 h-3" /> Curriculum is unlocked
-              </span>
-            )}
-            {unlockMsg && (
-              <span className={`text-xs ${unlockMsg.startsWith('✓') ? 'text-emerald-400' : 'text-red-400'}`}>
-                {unlockMsg}
-              </span>
-            )}
-          </div>
-          {plan.profileSummary && (
-            <div className="mt-3">
-              <span className="text-xs text-muted-foreground block mb-1">Profile Summary</span>
-              <p className="text-xs text-foreground bg-background rounded-lg p-3 border border-border">{plan.profileSummary}</p>
-            </div>
-          )}
-          <div className="mt-3 space-y-2">
-            <div>
-              <span className="text-xs text-muted-foreground block mb-1.5">Primary Strengths</span>
-              <TagList items={planStrengths} color="green" />
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block mb-1.5">Primary Interests</span>
-              <TagList items={planInterests} />
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block mb-1.5">Personality Traits</span>
-              <TagList items={planTraits} color="purple" />
-            </div>
-          </div>
-        </Section>
-      )}
-
-      {/* Tracks */}
-      {user.tracks?.length > 0 && (
-        <Section title={`Tracks (${user.tracks.length})`} icon={FolderKanban}>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {user.tracks.map((track: any) => (
-              <div key={track.id} className="bg-background border border-border rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: track.color }} />
-                  <span className="font-medium text-foreground text-sm">{track.name}</span>
-                  <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded ml-auto">{track.type}</span>
-                </div>
-                {track.description && <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{track.description}</p>}
-                <div className="flex gap-3 text-[11px] text-muted-foreground">
-                  <span>{track.chapters?.length || 0} chapters</span>
-                  <span>{track.homeworks?.length || 0} homework</span>
-                  <span>{track.quizzes?.length || 0} quizzes</span>
-                </div>
-                {track.project && (
-                  <div className="mt-2 text-[11px] flex items-center gap-1.5">
-                    <Target className="w-3 h-3 text-primary" />
-                    <span className="text-foreground">{track.project.title}</span>
-                    <span className={cn(
-                      'px-1.5 py-0.5 rounded text-[9px] font-medium',
-                      track.project.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' :
-                      track.project.status === 'in-progress' ? 'bg-blue-500/10 text-blue-400' :
-                      'bg-muted text-muted-foreground'
-                    )}>
-                      {track.project.status}
-                    </span>
+      {/* Problem Trees — the student's learning sessions */}
+      {user.problemTrees?.length > 0 && (
+        <Section title={`Problem Trees (${user.problemTrees.length})`} icon={FolderKanban}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {user.problemTrees.map((tree: any) => {
+              const real = (tree.nodes || []).filter((n: any) => !n.pending)
+              const understood = real.filter((n: any) => n.status === 'understood').length
+              const pending = (tree.nodes || []).length - real.length
+              return (
+                <div key={tree.id} className="bg-background border border-border rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className={`w-3 h-3 rounded-full flex-shrink-0 ${tree.status === 'completed' ? 'bg-emerald-400' : 'bg-primary'}`} />
+                    <span className="font-medium text-foreground text-sm line-clamp-1">{tree.title}</span>
+                    <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded ml-auto flex-shrink-0">{tree.status}</span>
                   </div>
-                )}
-                <div className="mt-1.5 text-[10px] text-muted-foreground/60 font-mono flex items-center gap-1">
-                  {track.id} <CopyButton text={track.id} />
+                  {tree.framing && <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{tree.framing}</p>}
+                  <div className="flex gap-3 text-[11px] text-muted-foreground flex-wrap">
+                    <span>{understood}/{real.length} nodes verified</span>
+                    {pending > 0 && <span>{pending} pending approval</span>}
+                    {tree.difficulty && <span>level: {tree.difficulty}</span>}
+                    {tree.language && <span>lang: {tree.language}</span>}
+                  </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div className={`h-full rounded-full ${understood === real.length && real.length > 0 ? 'bg-emerald-400' : 'bg-primary'}`} style={{ width: real.length ? `${(understood / real.length) * 100}%` : '0%' }} />
+                  </div>
+                  <div className="mt-1.5 text-[10px] text-muted-foreground/60 font-mono flex items-center gap-1">
+                    {tree.id} <CopyButton text={tree.id} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </Section>
       )}

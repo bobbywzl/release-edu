@@ -28,6 +28,12 @@ export default function TreePage() {
   const [problem, setProblem] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Session onboarding — every tree starts with language, background, and
+  // difficulty, so the whole session is calibrated before the first branch.
+  const [step, setStep] = useState(0)
+  const [sessLang, setSessLang] = useState<'en' | 'zh'>(language === 'zh' ? 'zh' : 'en')
+  const [background, setBackground] = useState('')
+  const [difficulty, setDifficulty] = useState<string>('intermediate')
 
   const load = useCallback(async () => {
     try {
@@ -46,7 +52,7 @@ export default function TreePage() {
       const res = await fetch('/api/tree', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ problem: p, lang: language }),
+        body: JSON.stringify({ problem: p, lang: sessLang, difficulty, personalContext: background.trim() || undefined }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'failed')
@@ -73,30 +79,113 @@ export default function TreePage() {
         <p className="text-sm text-muted-foreground mt-1">{t('tree.subtitle')}</p>
       </motion.div>
 
-      {/* Plant a new tree */}
+      {/* Plant a new tree — the session onboarding stepper */}
       <motion.div
         initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-        className="border border-border rounded-xl bg-card p-5 space-y-3"
+        className="border border-border rounded-xl bg-card p-5 space-y-4"
       >
-        <label className="text-sm font-bold text-foreground">{t('tree.problemPrompt')}</label>
-        <textarea
-          value={problem}
-          onChange={e => setProblem(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); createTree() } }}
-          placeholder={t('tree.problemPlaceholder')}
-          rows={2}
-          disabled={creating}
-          className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
-        />
+        {/* Step dots */}
+        <div className="flex items-center gap-2">
+          {[0, 1, 2, 3].map(i => (
+            <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-primary' : i < step ? 'w-3 bg-primary/50' : 'w-3 bg-muted'}`} />
+          ))}
+          <span className="ml-2 text-[11px] text-muted-foreground">{t('tree.sessionSetup')}</span>
+        </div>
+
+        {step === 0 && (
+          <div className="space-y-3">
+            <label className="text-sm font-bold text-foreground block">{t('tree.stepLanguage')}</label>
+            <div className="flex gap-2">
+              {([['en', 'English'], ['zh', '中文']] as const).map(([code, label]) => (
+                <button
+                  key={code}
+                  onClick={() => setSessLang(code)}
+                  className={`px-5 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                    sessLang === code ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="space-y-3">
+            <label className="text-sm font-bold text-foreground block">{t('tree.stepBackground')}</label>
+            <textarea
+              value={background}
+              onChange={e => setBackground(e.target.value)}
+              placeholder={t('tree.backgroundPlaceholder')}
+              rows={3}
+              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-3">
+            <label className="text-sm font-bold text-foreground block">{t('tree.stepDifficulty')}</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {(['beginner', 'intermediate', 'advanced', 'professional'] as const).map(level => (
+                <button
+                  key={level}
+                  onClick={() => setDifficulty(level)}
+                  className={`text-left rounded-xl border p-3 transition-colors ${
+                    difficulty === level ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent'
+                  }`}
+                >
+                  <p className={`text-sm font-bold ${difficulty === level ? 'text-primary' : 'text-foreground'}`}>{t(`tree.diff.${level}`)}</p>
+                  <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{t(`tree.diff.${level}Desc`)}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-3">
+            <label className="text-sm font-bold text-foreground block">{t('tree.problemPrompt')}</label>
+            <textarea
+              value={problem}
+              onChange={e => setProblem(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); createTree() } }}
+              placeholder={t('tree.problemPlaceholder')}
+              rows={2}
+              disabled={creating}
+              autoFocus
+              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
+            />
+          </div>
+        )}
+
         <div className="flex items-center gap-3">
-          <button
-            onClick={createTree}
-            disabled={!problem.trim() || creating}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40"
-          >
-            {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            {creating ? t('tree.growing') : t('tree.grow')}
-          </button>
+          {step > 0 && !creating && (
+            <button
+              onClick={() => setStep(s => s - 1)}
+              className="px-4 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              {t('tree.back')}
+            </button>
+          )}
+          {step < 3 ? (
+            <button
+              onClick={() => setStep(s => s + 1)}
+              className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              {t('tree.next')}
+            </button>
+          ) : (
+            <button
+              onClick={createTree}
+              disabled={!problem.trim() || creating}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40"
+            >
+              {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              {creating ? t('tree.growing') : t('tree.grow')}
+            </button>
+          )}
           {creating && <span className="text-xs text-muted-foreground animate-pulse">{t('tree.growingHint')}</span>}
           {error && <span className="text-xs text-destructive">{error}</span>}
         </div>

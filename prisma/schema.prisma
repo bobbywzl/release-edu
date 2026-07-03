@@ -48,6 +48,10 @@ model ProblemTree {
   title       String   // the problem statement, verbatim from the student
   framing     String?  // AI-refined problem framing (one paragraph)
   status      String   @default("active") // active | completed | archived
+  // ── Per-session onboarding — every tree is a self-contained session ──
+  language        String?  // 'en' | 'zh' — chosen at session start, drives all AI output
+  difficulty      String?  // beginner | intermediate | advanced | professional
+  personalContext String?  // the student's background relevant to THIS problem
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   nodes       TreeNode[]

@@ -12,7 +12,7 @@ import { AdminEmailsManager } from './admin-emails-manager'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type SortKey = 'name' | 'email' | 'role' | 'xp' | 'streak' | 'tracks' | 'conversations' | 'insights' | 'onboarded' | 'createdAt'
+type SortKey = 'name' | 'email' | 'role' | 'xp' | 'streak' | 'trees' | 'conversations' | 'insights' | 'onboarded' | 'createdAt'
 type SortDir = 'asc' | 'desc'
 
 function timeAgo(dateStr: string | null | undefined): string {
@@ -85,9 +85,9 @@ function formatUsd(n: number): string {
 }
 
 const FEATURE_LABELS: Record<string, string> = {
-  tutoring: 'Tutoring chat', chapter: 'Lesson sessions', onboarding: 'Onboarding',
+  tutoring: 'Tutoring chat', chapter: 'Lesson sessions (legacy)', onboarding: 'Onboarding',
   research: 'Research (Gemini)', reflection: 'Reflection blocks', insight: 'Insight extraction',
-  title: 'Title generation', curriculum: 'Curriculum gen', quiz: 'Quiz eval',
+  title: 'Title generation', curriculum: 'Curriculum gen (legacy)', quiz: 'Quiz eval',
   capstone: 'Capstone eval', compaction: 'Chat compaction', image: 'Image/file analysis',
   portfolio: 'Portfolio', project: 'Projects', other: 'Other',
 }
@@ -148,7 +148,7 @@ export default function AdminDashboardPage() {
 
   async function deleteUser(user: any) {
     const label = user.name || user.email || user.id
-    if (!confirm(`Permanently delete "${label}" and ALL their data (curriculum, conversations, progress)?\n\nThis cannot be undone.`)) return
+    if (!confirm(`Permanently delete "${label}" and ALL their data (problem trees, conversations, progress)?\n\nThis cannot be undone.`)) return
     setBusyId(user.id); setActionMsg(null)
     try {
       const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' })
@@ -190,7 +190,7 @@ export default function AdminDashboardPage() {
         case 'role': av = a.role; bv = b.role; break
         case 'xp': av = a.studentProfile?.xp || 0; bv = b.studentProfile?.xp || 0; break
         case 'streak': av = a.studentProfile?.streak || 0; bv = b.studentProfile?.streak || 0; break
-        case 'tracks': av = a._count?.tracks || 0; bv = b._count?.tracks || 0; break
+        case 'trees': av = a._count?.problemTrees || 0; bv = b._count?.problemTrees || 0; break
         case 'conversations': av = a._count?.conversations || 0; bv = b._count?.conversations || 0; break
         case 'insights': av = a._count?.insights || 0; bv = b._count?.insights || 0; break
         case 'onboarded': av = a.studentProfile?.isOnboarded ? 1 : 0; bv = b.studentProfile?.isOnboarded ? 1 : 0; break
@@ -482,7 +482,7 @@ export default function AdminDashboardPage() {
                     ['role', 'Role'],
                     ['xp', 'XP'],
                     ['streak', 'Streak'],
-                    ['tracks', 'Tracks'],
+                    ['trees', 'Trees'],
                     ['conversations', 'Convos'],
                     ['insights', 'Insights'],
                     ['onboarded', 'Onboarded'],
@@ -507,7 +507,7 @@ export default function AdminDashboardPage() {
                   <tr
                     key={user.id}
                     className="hover:bg-accent/50 transition-colors cursor-pointer"
-                    onClick={() => window.location.href = `/admin/students/${user.id}`}
+                    onClick={() => window.location.href = `/admin/users/${user.id}`}
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -540,15 +540,14 @@ export default function AdminDashboardPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        {user.tracks?.slice(0, 3).map((t: any) => (
+                        {user.problemTrees?.slice(0, 3).map((t: any) => (
                           <div
                             key={t.id}
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: t.color }}
-                            title={t.name}
+                            className={`w-2.5 h-2.5 rounded-full ${t.status === 'completed' ? 'bg-emerald-400' : 'bg-primary'}`}
+                            title={`${t.title} (${t.understoodCount}/${t.nodeCount})`}
                           />
                         ))}
-                        <span className="text-muted-foreground ml-1">{user._count?.tracks || 0}</span>
+                        <span className="text-muted-foreground ml-1">{user._count?.problemTrees || 0}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{user._count?.conversations || 0}</td>
