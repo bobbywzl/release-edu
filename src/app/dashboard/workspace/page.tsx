@@ -15,6 +15,8 @@ import {
   Sprout, X, FileText, PanelRightOpen, PanelRightClose,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
+import { HighlightableText } from '@/components/highlightable-text'
+import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -37,13 +39,13 @@ function WorkspaceInner() {
 
   const [tree, setTree] = useState<TreeData | null>(null)
   const [messages, setMessages] = useState<Msg[]>([])
+  const [conversationId, setConversationId] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [showNotes, setShowNotes] = useState(true)
   const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files'>('notes')
   const [explainerLoading, setExplainerLoading] = useState(false)
-  const [annotation, setAnnotation] = useState('')
   const [notesDraft, setNotesDraft] = useState<string | null>(null)
   const [notesSaved, setNotesSaved] = useState(false)
   const [files, setFiles] = useState<NodeFileRow[]>([])
@@ -60,10 +62,12 @@ function WorkspaceInner() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
+  // Annotations come from HIGHLIGHTS made directly on the conversation —
+  // select any text in Bob's messages, pick a color, attach a comment
+  // (the Release EDU annotation system, running on this node's chat).
+  const { highlights, addHighlight, updateHighlight, deleteHighlight } = useHighlights(conversationId)
+
   const node = tree?.nodes.find(n => n.id === nodeId) ?? null
-  const annotations: Array<{ text: string; createdAt: string }> = (() => {
-    try { return JSON.parse(node?.annotations ?? '[]') } catch { return [] }
-  })()
 
   const loadTree = useCallback(async () => {
     if (!treeId) return
@@ -82,6 +86,7 @@ function WorkspaceInner() {
       .then(d => {
         if (cancelled || !d?.messages) return
         setMessages(d.messages)
+        setConversationId(d.conversationId ?? null)
         // First visit to this node: Bob opens with a condensed syllabus-style
         // hook — the concept, where it sits in the tree, and why it matters
         // to the root problem. Triggered once; the saved reply prevents re-runs.
@@ -134,6 +139,13 @@ function WorkspaceInner() {
         full = full.slice(0, markerIdx).trimEnd()
       }
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: full }])
+      // Swap temp ids for persisted ids so text in this turn is highlightable.
+      setTimeout(() => {
+        fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => { if (d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
+          .catch(() => {})
+      }, 600)
     } catch {
       if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.connectError') }])
     } finally {
@@ -176,17 +188,6 @@ function WorkspaceInner() {
     loadTree()
   }
 
-  async function addAnnotation() {
-    const text = annotation.trim()
-    if (!text || !treeId || !nodeId) return
-    setAnnotation('')
-    await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'annotate', text }),
-    }).catch(() => {})
-    loadTree()
-  }
 
   async function uploadEvidence(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -352,7 +353,17 @@ function WorkspaceInner() {
                     ? 'max-w-[80%] bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
                     : 'max-w-[92%] bg-card border border-border text-foreground rounded-bl-sm',
                 )}>
-                  {m.role === 'user' ? m.content : <MarkdownRenderer content={m.content} />}
+                  {m.role === 'user' ? m.content : (
+                    <HighlightableText
+                      messageId={m.id}
+                      highlights={highlights}
+                      onAddHighlight={addHighlight}
+                      onUpdateHighlight={updateHighlight}
+                      onDeleteHighlight={deleteHighlight}
+                    >
+                      <MarkdownRenderer content={m.content} />
+                    </HighlightableText>
+                  )}
                 </div>
               </motion.div>
             ))}
@@ -551,22 +562,29 @@ function WorkspaceInner() {
 
               {panelTab === 'annotations' && (
                 <div>
-                  <div className="space-y-1.5 mb-2">
-                    {annotations.length === 0 && <p className="text-[11px] text-muted-foreground">{t('workspace.noAnnotations')}</p>}
-                    {annotations.map((a, i) => (
-                      <div key={i} className="text-xs text-foreground/90 border-l-2 border-amber-400/60 bg-amber-400/[0.06] rounded-r-md px-2.5 py-1.5">
-                        {a.text}
-                        <span className="block text-[10px] text-muted-foreground/60 mt-0.5">{new Date(a.createdAt).toLocaleDateString()}</span>
+                  <p className="text-[11px] text-muted-foreground leading-snug mb-2">{t('workspace.annotationsHint')}</p>
+                  <div className="space-y-1.5">
+                    {highlights.length === 0 && <p className="text-[11px] text-muted-foreground">{t('workspace.noAnnotations')}</p>}
+                    {highlights.map(h => (
+                      <div
+                        key={h.id}
+                        className="text-xs border-l-2 rounded-r-md px-2.5 py-1.5 bg-background/60 group/hl"
+                        style={{ borderColor: { amber: '#FBBF24', blue: '#60A5FA', green: '#34D399', purple: '#A78BFA' }[h.color] ?? '#FBBF24' }}
+                      >
+                        <p className="text-foreground/90 italic">&ldquo;{h.selectedText.slice(0, 140)}{h.selectedText.length > 140 ? '…' : ''}&rdquo;</p>
+                        {h.comment && <p className="text-foreground mt-1 font-medium">💬 {h.comment}</p>}
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="text-[10px] text-muted-foreground/60">{new Date(h.createdAt).toLocaleDateString()}</span>
+                          <button
+                            onClick={() => deleteHighlight(h.id)}
+                            className="opacity-0 group-hover/hl:opacity-100 text-[10px] text-muted-foreground hover:text-red-400 transition-opacity"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
-                  <input
-                    value={annotation}
-                    onChange={e => setAnnotation(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addAnnotation() } }}
-                    placeholder={t('workspace.addAnnotation')}
-                    className="w-full text-xs bg-background border border-border rounded-lg px-2.5 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
                 </div>
               )}
 
