@@ -464,61 +464,99 @@ function TreeCanvasInner() {
   }, [tree])
 
   // Branch physics while dragging:
-  // - HIERARCHY is inviolable: a node stays above its parent (min level gap).
-  // - STRINGS have tension: an edge can never stretch past MAX_STRING — the
-  //   dragged node is held back by its parent's string, and each descendant
-  //   gets tugged along the moment its own string goes taut. The result is
-  //   the whole subtree trailing the dragged node like a hanging mobile —
-  //   slack first, then a natural, flexible follow.
+  // - HIERARCHY is inviolable: the dragged node stays above its parent.
+  // - STRING TENSION: the dragged node strains against its parent's string
+  //   (max length) and cannot be pulled further.
+  // - SHAPE-PRESERVING FOLLOW: at drag start we freeze each descendant's
+  //   offset relative to the dragged node; while dragging, the whole
+  //   subtree glides to keep those offsets (with a soft lag for a natural,
+  //   flexible feel). The subtree's internal shape never collapses.
   const MIN_LEVEL_GAP = 110
   const MAX_STRING = 400
+  const FOLLOW = 0.5 // per-event blend toward the rigid target (the lag)
+  const dragCtx = useRef<{ id: string; offsets: Map<string, { dx: number; dy: number }> } | null>(null)
+
+  const collectDescendants = useCallback((rootId: string): string[] => {
+    const out: string[] = []
+    const queue = [rootId]
+    while (queue.length) {
+      const cur = queue.shift()!
+      for (const kid of relRef.current.children.get(cur) ?? []) {
+        out.push(kid)
+        queue.push(kid)
+      }
+    }
+    return out
+  }, [])
+
+  const onNodeDragStart = useCallback((_: unknown, node: FlowNode) => {
+    const positions = new Map(flow.getNodes().map(n => [n.id, n.position]))
+    const base = positions.get(node.id)
+    if (!base) return
+    const offsets = new Map<string, { dx: number; dy: number }>()
+    for (const d of collectDescendants(node.id)) {
+      const p = positions.get(d)
+      if (p) offsets.set(d, { dx: p.x - base.x, dy: p.y - base.y })
+    }
+    dragCtx.current = { id: node.id, offsets }
+  }, [flow, collectDescendants])
+
+  const onNodeDragStop = useCallback(() => {
+    // Snap the trailing subtree onto its exact rigid targets so the shape
+    // lands perfectly translated.
+    const ctx = dragCtx.current
+    dragCtx.current = null
+    if (!ctx) return
+    const positions = new Map(flow.getNodes().map(n => [n.id, n.position]))
+    const base = positions.get(ctx.id)
+    if (!base) return
+    setNodes(nds => nds.map(n => {
+      const off = ctx.offsets.get(n.id)
+      if (!off) return n
+      const target = { x: base.x + off.dx, y: base.y + off.dy }
+      draggedPos.current.set(n.id, target)
+      return { ...n, position: target }
+    }))
+  }, [flow, setNodes])
+
   const handleNodesChange: typeof onNodesChange = useCallback(changes => {
     const current = new Map(flow.getNodes().map(n => [n.id, { ...n.position }]))
     const extraMoves = new Map<string, { x: number; y: number }>()
 
-    const clampToParent = (pos: { x: number; y: number }, pp: { x: number; y: number }) => {
-      // Above the parent, always.
-      pos.y = Math.min(pos.y, pp.y - MIN_LEVEL_GAP)
-      // String tension: project back inside the string's reach.
-      const dx = pos.x - pp.x
-      const dy = pos.y - pp.y
-      const dist = Math.hypot(dx, dy)
-      if (dist > MAX_STRING) {
-        const k = MAX_STRING / dist
-        pos.x = pp.x + dx * k
-        pos.y = Math.min(pp.y + dy * k, pp.y - MIN_LEVEL_GAP)
-      }
-      return pos
-    }
-
     for (const c of changes) {
       if (c.type === 'position' && c.position) {
-        // The dragged node strains against its own parent's string.
+        // The dragged node strains against its parent's string.
         const pid = relRef.current.parent.get(c.id)
         const pp = pid ? current.get(pid) : undefined
-        if (pp) c.position = clampToParent({ ...c.position }, pp)
-        current.set(c.id, { ...c.position })
+        if (pp) {
+          c.position.y = Math.min(c.position.y, pp.y - MIN_LEVEL_GAP)
+          const dx = c.position.x - pp.x
+          const dy = c.position.y - pp.y
+          const dist = Math.hypot(dx, dy)
+          if (dist > MAX_STRING) {
+            const k = MAX_STRING / dist
+            c.position.x = pp.x + dx * k
+            c.position.y = Math.min(pp.y + dy * k, pp.y - MIN_LEVEL_GAP)
+          }
+        }
         draggedPos.current.set(c.id, c.position)
 
-        // Cascade through the subtree: each child is pulled only when its
-        // string tightens; its movement may tighten its children's strings
-        // in turn — BFS downward.
-        const queue: string[] = [c.id]
-        while (queue.length) {
-          const parentId = queue.shift()!
-          const parentPos = current.get(parentId)
-          if (!parentPos) continue
-          for (const kid of relRef.current.children.get(parentId) ?? []) {
-            const kidPos = current.get(kid)
-            if (!kidPos) continue
-            const next = clampToParent({ ...kidPos }, parentPos)
-            if (next.x !== kidPos.x || next.y !== kidPos.y) {
-              current.set(kid, next)
-              extraMoves.set(kid, next)
-              draggedPos.current.set(kid, next)
+        // Shape-preserving follow: every descendant eases toward
+        // (dragged position + its frozen offset).
+        const ctx = dragCtx.current
+        if (ctx && ctx.id === c.id) {
+          ctx.offsets.forEach((off, id) => {
+            const cur = current.get(id)
+            if (!cur) return
+            const target = { x: c.position!.x + off.dx, y: c.position!.y + off.dy }
+            const next = {
+              x: cur.x + (target.x - cur.x) * FOLLOW,
+              y: cur.y + (target.y - cur.y) * FOLLOW,
             }
-            queue.push(kid)
-          }
+            current.set(id, next)
+            extraMoves.set(id, next)
+            draggedPos.current.set(id, next)
+          })
         }
       }
     }
@@ -685,6 +723,8 @@ function TreeCanvasInner() {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodesChange={handleNodesChange}
+              onNodeDragStart={onNodeDragStart}
+              onNodeDragStop={onNodeDragStop}
               onNodeClick={(_, node) => setSelectedId(node.id)}
               onPaneClick={() => setSelectedId(null)}
               fitView
