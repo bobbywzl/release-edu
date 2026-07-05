@@ -98,6 +98,15 @@ knowledge per skill, not presumed learner speed; wheel-spinning is predictable a
 means change-the-intervention; learning-styles adaptation is debunked — never adapt
 on it.
 
+## The Answer Standard (Relevant & Informative — law)
+
+Every workspace answer must be BOTH: **Relevant** (answers the asked question at the
+depth THIS problem needs — no generic field lectures, no uncalled-for depth) and
+**Informative** (never a bare answer — always carries the scientific background /
+mechanism that makes it transferable understanding). Canonical wording lives in
+FOUNDATION.md; prompts consume it via `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
+Apply it to any new answer-producing feature.
+
 ## The Differentiator Principle (assessment ideology — still law)
 
 Every verification question must separate a student who MEMORIZED content from one who

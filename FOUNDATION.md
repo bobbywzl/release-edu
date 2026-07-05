@@ -65,6 +65,26 @@ annotate AI generated comprehensive explainers/ summaries.
   separate understanding from memorization). A fully verified tree = a mastered
   problem.
 
+## The Answer Standard — Relevant & Informative (law)
+
+Every answer Bob gives in the workspace must pass BOTH tests before it ships:
+
+- **Relevant** — it answers the question the learner actually asked, scoped to THIS
+  node and in service of the root problem. Not a survey of the field, not a lecture
+  at a depth the question never called for. Depth is calibrated to what this problem
+  needs — going deeper than the pain point is as irrelevant as staying too shallow
+  to touch it.
+- **Informative** — it always teaches the science underneath. A bare verdict, recipe,
+  or fact ("use variety X", "yes, that works") is a failed answer even when correct:
+  every answer carries enough of the mechanism or principle behind it (the WHY) that
+  the learner gains transferable understanding, not a disconnected fact.
+
+The two failure modes to design against: **too general** (a textbook chapter dumped
+on a specific question) and **too specific** (an answer with no scientific background
+that resolves the moment but teaches nothing). Every prompt that produces
+learner-facing answers (node chat, explainers) embeds this standard — see
+`ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
+
 ## Sessions
 
 Every tree is a self-contained **session**, onboarded at creation: language (EN/中文),

@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives } from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD } from '@/lib/tree-engine'
 
 const OPUS = 'claude-opus-4-8'
 
@@ -287,6 +287,8 @@ ${filesBlock}
 - Dense, precise, zero praise-padding. Concrete examples over abstractions.
 - **Be Socratic where it earns its place**: when the student is tracking well, probe ("why would that break if…?") instead of explaining more. When they're lost, teach directly — Socratic questioning of a confused student is theatre, not teaching.
 - Connect answers back to the root problem and this node's branch whenever natural.
+
+${ANSWER_STANDARD}
 
 ## FORMAT EVERY TEACHING RESPONSE FOR READING (like a well-set textbook page)
 - Open substantial responses with a short bold or \`##\` title naming what this turn covers; use \`###\` subtitles to break distinct sections.

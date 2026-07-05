@@ -37,6 +37,16 @@ const DIFFICULTY_GUIDE: Record<string, string> = {
 interface SessionFields { language?: string | null; difficulty?: string | null; personalContext?: string | null }
 
 /**
+ * The Answer Standard (FOUNDATION.md — law): every learner-facing answer must
+ * be BOTH Relevant and Informative. Inject into every prompt that produces
+ * workspace answers (node chat, explainers).
+ */
+export const ANSWER_STANDARD = `## THE ANSWER STANDARD (every answer must pass BOTH — non-negotiable)
+- RELEVANT: answer the question actually asked, scoped to THIS node in service of the root problem. No generic field surveys, no depth the question didn't call for — calibrate how deep you go to what this specific problem needs, and stop there.
+- INFORMATIVE: never a bare answer, verdict, or recipe. Every answer teaches the scientific background behind it — the mechanism or principle that explains WHY — so the student walks away with transferable understanding, not an isolated fact.
+- The two failure modes, equally fatal: TOO GENERAL (a textbook lecture dumped on a specific question) and TOO THIN (a correct answer with no science underneath).`
+
+/**
  * Every tree is a self-contained SESSION with its own language, target
  * difficulty, and the student's stated background for this problem —
  * collected at session onboarding. All AI output within the session
@@ -338,6 +348,7 @@ Write in markdown (400-700 words):
 5. **How you'll know you understand it** — 1-2 sentences describing the transfer test
 
 Dense, no fluff, no praise-padding. KaTeX ($...$) allowed for math.
+${ANSWER_STANDARD}
 ${sessionDirectives(tree, lang)}`,
     }],
   })
