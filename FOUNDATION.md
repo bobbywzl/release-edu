@@ -1,114 +1,110 @@
-# Release EDU — Vault Digest
-Synthesized from Obsidian vault + two PDFs on 2026-03-25.
-Sources: 35 markdown notes + "Release EDU - Business Outline.pdf" + "Release EDU - Compiled Research Notes.pdf"
+# Tree EDU — Foundation
 
-## Identity
-- Originally called "PR" (Project Release), now "Release EDU"
-- Cultural goal: Allow people to become who they are meant to be
-- Vision: A society without test-based education (應試考試)
+This is the canonical vision and product document for **Tree EDU**. It supersedes the
+Release EDU foundation entirely.
 
-## Target Market
-- First: career-skills-based education for elementary and lower-middle-school students
-- Initial fields: Math, psychology, finance, CS — lock into one first
-- Expansion: general education integration, broader ages, international community
+> **⚠️ Tree EDU and Release EDU have COMPLETELY DIFFERENT structures.**
+> Release EDU was big-to-small: broad subjects → tracks → courses → chapters, taught
+> top-down from a generated curriculum. Tree EDU is small-to-big: ONE specific problem
+> grows into a tree of understanding, expanding only through the learner's own
+> questions. Do not reason about this product using Release EDU concepts (tracks,
+> chapters, curriculum plans, L&C mode, lesson phase machines) — they no longer exist
+> in the product. Legacy database tables remain only as dormant storage and must not
+> shape new features.
 
-## Two-Pillar Model
-1. Multi-agentic AI tutor — personalized multimodal content at scale
-2. Human Motivators / Tutor-Mentors — ignite curiosity, last-resort problem solving, mentorship
+## Vision (verbatim — the founding paragraph)
 
-## The 80/20 Curriculum Rule
-- 80% creative & project-based learning (motivator-guided)
-- 20% mandated content curriculum (AI-delivered efficiently)
+I want to create a revolutionary form of education. The point is to make a beginner at
+a specific problem a thorough expert by the end of a session. This form of education
+begins at a specific problem to solve, instead of a broad subject under which subtopics
+and problems are taught. In other words, it goes from small to big rather than big to
+small, like a growing tree — the meaning of this is expanded on below. This problem is
+the root. Initial solutions are the base branches from the root. The user does not know
+the specifics of these initial solution(s), and given many solutions they need
+knowledge to give evaluative comparisons. The resolution is then scrutinized. Each part
+of the resolution may touch on different fields and technical understandings, which
+form the further branches of the trees. Technical knowledge or specific pain point
+solutions are the leaves. In this sense, the app is not only project oriented but
+should design an expanding tree as a "curriculum" to solve this specific problem, with
+each "chapter" teaching the relevant topic to every point of a solution that is not
+understood by a beginner. An example of this is a user curious on how to produce sweet
+and plump strawberries consistently, or to design a mobile FPS game, or to fully
+comprehend how one might implement a QFT gate on k-bits in real life. For the last one,
+you would need the full solution, and then you would need sub-branches considering QEC
+practical methods, the QFT logic gate theory and connection to classical fourier
+transform (starting from Hadamard gate), etc. You need this entire tree to understand
+the full answer to this problem.
 
-## Four Stages of Learning
-1. **Motivation & Inspiration** — Motivator-led, creative modules, spark interest
-2. **Review & Adjustment** — AI feedback + motivator style adjustments, custom flexible curricula
-3. **Self-Guided Learning** — Student + AI, curiosity-driven, project-based, MAIT adaptive
-4. **Expert Feedback** — TM/Motivator for what AI can't solve, office hours, career advice
+## Mode (verbatim)
 
-## Three Missions
-1. Make career-oriented education suitable and accessible to everybody
-2. Promote competency-based certification; eradicate exam-based curriculum via 1-on-1 AI + human education
-3. (Later) Integrate career-oriented education into general education
+Tree EDU is an educative visualiser and a portfolio, respectively empowering and
+recording specific problem-based learning.
 
-## Product Structure — One App (originally VR, adaptable to web/mobile)
-1. **AI Conversational Tutor (CORE)** — multimodal learning, personalized pace/method/pathway, Socratic approach
-2. **TM-Student Connection** — mentor pairing via Gale-Shapley, community building, "pre-LinkedIn"
-3. **Community Project Space** — collaborative VR/digital workspace, group projects, anonymity options
-4. **Document/Recordings Drive** — learning tools attached to course segments
+The app is this tree creator expanding from one problem and one or a few solutions to
+compare. This tree should be fully interactive with each node being a "pain point
+explainer", including the user's own files and products as an answer to "do you
+understand this point". It should look like a summative logic diagram (each node or
+vertex should have its own simplified description), and should expand as users ask
+more questions and give permission for it to be added to the tree, with freedom to
+annotate AI generated comprehensive explainers/ summaries.
 
-### Spaces
-- Learning Space
-- Creator Space (group projects, guided events)
-- Meeting Space
+## The Tree Model
 
-## Learning Philosophy
-- **Non-linear learning** — metacognitive, connections between concepts, not just simple→complex
-- **Discovery method** — students rediscover knowledge paths; joy of discovery, curiosity, empowerment
-- **Personalization axes:** learning style, pace, attention span, expertise, subject complexity
-- **MAIT** — Massive Adaptive Interactive Text; diverges to explore misunderstandings
-- **Fast mapping + slow solving** — intuition training paired with rigorous logic
-- **Gamification** — XP, streaks, leaderboard, avatar growth, Lollapalooza effect
-- **Projects > Exams** — competency-based certification through mini-projects + collaborative work
-- **Takashi Tokieda principle:** Examples >> Theorems >> Definitions
+- **Root** — the learner's specific problem, stated in their own words at session start.
+- **Base branches** — the candidate solutions or founding concepts that answer it
+  (1–3; seeded by AI, nothing deeper).
+- **Branches** — components of a solution a beginner would not yet understand.
+- **Leaves** — specific technical knowledge or concrete pain-point resolutions.
+- **Growth is permission-based and discovery-driven.** The tree NEVER grows ahead of
+  the learner's curiosity: new nodes come from (a) the learner's explicit
+  "grow this branch" questions, (b) AI discovery — repeated questions circling an
+  uncovered field produce a suggestion card the learner must approve, (c) manual
+  add. Vague growth requests get ONE clarifying question back, not guesses.
+- **Mastery is verified, never self-declared.** A node flips to "understood" only by
+  passing a Differentiator-principle mini problem set (transfer/what-if questions that
+  separate understanding from memorization). A fully verified tree = a mastered
+  problem.
 
-## Teaching Philosophy
-- Good teachers: passionate, Socratic, celebrate mistakes, explain like talking to a 5th grader
-- AI replaces "bad teachers" (mechanical delivery); good teachers become mentors
-- AI roles: knowledge delivery, project management, personalized tutoring, marking/feedback
-- Human roles: curiosity guidance, connection providing, wisdom/experience, emotional bond, soft-skill mentoring
+## Sessions
 
-## Tutor-Mentors (TMs)
-- Max 15-20 students per TM for quality
-- Pairing: Gale-Shapley algorithm based on soft skills, interests, learning style
-- Pricing: students pay base AI access + per-session mentor fee (split between mentor & student)
-- Hierarchy: free non-paid → high-rated salaried → "mentor of mentors"
-- TMs can customize AI curriculum for their student community
+Every tree is a self-contained **session**, onboarded at creation: language (EN/中文),
+the learner's personal background for this problem, and target difficulty
+(beginner/intermediate/advanced/professional, mapped to university course tiers).
+These calibrate every AI output inside the session. The global first-run interview
+ends with the bolded question — **"What is the specific problem you want to master?"**
+— whose answer plants the first tree.
 
-## Moats
-1. AI soft-skill quantification/hierarchy system (behavioral tracking + data analysis)
-2. Specific multi-agent AI combination with PR-specific synthesizer agent
-3. Human connection network (mentor-student → professional relationships)
-4. Repetition-based difficulty metrics from large-scale data
+## Product Surfaces
 
-## Multi-Agent Architecture (from Andrew Ng research)
-- Specialized agents: course outliner, researcher, feedback/sentiment analyzer, synthesizer (CEO)
-- Iterative agentic workflow for accuracy, especially STEM verification
-- Dynamic conversation between agents (referencing AutoGen framework)
+1. **Tree** — the interactive visualiser: organic upward-growing graph (cursive
+   branches, bud nodes, drag physics with string tension and shape-preserving subtree
+   follow) plus a searchable list view carrying each node's full record.
+2. **Workspace** — the per-node work area: Bob's chat (syllabus-style opening hook,
+   Socratic where earned, Haiku contextual pre-pass each turn), the cached
+   comprehensive explainer, editable notes, conversation highlights as annotations,
+   and file evidence Bob can actually read.
+3. **Dashboard** — XP status, rank, daily goal, streak, badges, per-tree node
+   progress.
+4. **Portfolio** — the record: the Forest of completed trees, verified-node evidence,
+   featured badges. Built ONLY from Tree EDU session data; it certifies verified
+   understanding, not attendance.
 
-## VR/AR Utility
-- Multimodal teaching, visual learners, reduced distraction, flow-state
-- Cross-cultural collaboration (poker-table-lobby model for academic discussions)
-- Virtual hands-on work for career-oriented fields
-- 10-year VR direction: natural interaction, hands-first, standardization
+## Retention & Moat
 
-## Pricing
-- Free app access
-- Individual courses/packages + community access = package price
-- 100% satisfaction guarantee (refund if no measurable improvement, max 3-4 times)
-- Mentor linking: non-adherent mentors pay PR for student data; adherent mentors = paid staff
+- **XP system**: daily goal ring, streak with loss-aversion at-risk state, tiered
+  badges, named ranks, reward sounds — small steps ding (node verified = the core
+  unit of progress).
+- **Insight memory** (the moat): Bob's curated long-term memory of the learner —
+  extracted from workspace conversations with anti-hallucination rules, consolidated,
+  reinforced — personalizes seeding, explainers, and the portfolio's portrait.
+  Preserve it in every future change.
+- **Project execution awareness**: Bob detects concrete real-world progress on the
+  problem (code written, experiments run) and flags it per node.
 
-## Key Open Problems (from PDFs)
-1. How to get first batch of students (initiation strategy)
-2. Measurement of progress and success
-3. Balancing basic education and advanced knowledge in projects
-4. Integrating linear and non-linear learning structures
-5. Trusting AI to compose monitorable personalized curriculum
-6. Equity in TM-student pairing
-7. Persuading good teachers to share techniques
-8. One-fit-certification problem for employers
-9. VR health concerns and integration challenges
-10. Accurate AI metrics for soft skills quantification
+## What survives from Release EDU
 
-## Educator Qualifications (from Outline)
-- Masters/PhD-level subject expertise
-- Deep educational psychology experience
-- Profound passion for education
-- Focus: development of passion and motivation, NOT content delivery
-
-## Key Research References
-- Harvard School of Education: 4 quadrants (hierarchical/distributed × individual/collective)
-- PR = "guided distributed learning" (individual + collective)
-- Wil Richardson: 5 transformations of learning
-- WEF soft skills: analytic, creative thinking, resilience, self-awareness, curiosity, communication
-- Imperfect information in higher education → PR equalizes access across SES levels
+Login/auth + demo mode, admin panel, XP engine, insight memory, i18n (every
+user-facing string EN + 中文), the Differentiator assessment principle, and the
+highlight/annotation system (now anchored to node conversations). Everything else —
+curriculum generation, tracks/chapters, lesson phase machine, L&C mode, chat modes —
+is gone from the product.
