@@ -60,10 +60,12 @@ annotate AI generated comprehensive explainers/ summaries.
   "grow this branch" questions, (b) AI discovery — repeated questions circling an
   uncovered field produce a suggestion card the learner must approve, (c) manual
   add. Vague growth requests get ONE clarifying question back, not guesses.
-- **Mastery is verified, never self-declared.** A node flips to "understood" only by
-  passing a Differentiator-principle mini problem set (transfer/what-if questions that
-  separate understanding from memorization). A fully verified tree = a mastered
-  problem.
+- **Mastery is verified, never self-declared.** Verification lives IN the workspace
+  chat: Bob asks Differentiator-principle **checkpoint questions** (MCQ and own-words
+  short answers, AI-judged) as interactive cards while teaching. A node flips to
+  "understood" only after 3 correct checkpoint answers including at least one
+  own-words short answer — recognition alone never verifies. There is no separate
+  test screen. A fully verified tree = a mastered problem.
 
 ## The Answer Standard — Relevant & Informative (law)
 
@@ -100,9 +102,10 @@ ends with the bolded question — **"What is the specific problem you want to ma
    branches, bud nodes, drag physics with string tension and shape-preserving subtree
    follow) plus a searchable list view carrying each node's full record.
 2. **Workspace** — the per-node work area: Bob's chat (syllabus-style opening hook,
-   Socratic where earned, Haiku contextual pre-pass each turn), the cached
-   comprehensive explainer, editable notes, conversation highlights as annotations,
-   and file evidence Bob can actually read.
+   Socratic where earned, Haiku contextual pre-pass each turn, in-chat checkpoint
+   question cards that carry mastery), the cached comprehensive explainer, editable
+   notes, conversation highlights as annotations, and file evidence Bob can
+   actually read.
 3. **Dashboard** — XP status, rank, daily goal, streak, badges, per-tree node
    progress.
 4. **Portfolio** — the record: the Forest of completed trees, verified-node evidence,
@@ -111,9 +114,12 @@ ends with the bolded question — **"What is the specific problem you want to ma
 
 ## Retention & Moat
 
-- **XP system**: daily goal ring, streak with loss-aversion at-risk state, tiered
-  badges, named ranks, reward sounds — small steps ding (node verified = the core
-  unit of progress).
+- **XP system**: every checkpoint answer pays (correct answers most, attempts a
+  little, escalating combo bonuses at 3/5/10 in a row, perseverance rewarded during
+  struggle); showing up pays (daily check-in streak XP that scales with streak
+  length + first-session bonus); daily goal ring, streak with loss-aversion at-risk
+  state, tiered badges (incl. verified-node and mastered-tree ladders), named ranks,
+  reward sounds — small steps ding (node verified = the core unit of progress).
 - **Insight memory** (the moat): Bob's curated long-term memory of the learner —
   extracted from workspace conversations with anti-hallucination rules, consolidated,
   reinforced — personalizes seeding, explainers, and the portfolio's portrait.

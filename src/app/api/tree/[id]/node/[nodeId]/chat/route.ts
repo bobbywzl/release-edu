@@ -16,7 +16,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD } from '@/lib/tree-engine'
+import {
+  getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD,
+  parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type XpAwardLite,
+} from '@/lib/tree-engine'
 
 const OPUS = 'claude-opus-4-8'
 
@@ -157,6 +160,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // (→ recommend moving). Suggestions render as approve buttons in chat.
   let reflectionBlock = ''
   let suggestion: { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string } | null = null
+  // XP earned server-side during this turn (perseverance tiers) — appended to
+  // the stream as a [[XP]] marker so the client can toast it.
+  const turnXp: XpAwardLite[] = []
   if (!isIntro) {
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
@@ -207,6 +213,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         } catch { /* non-critical */ }
       }
 
+      // Perseverance XP: struggle that keeps going is visibly rewarded —
+      // awarded once per tier crossing (2 → 3 → 4 confused turns).
+      if (r.streakWrong >= 2 && r.streakWrong <= 4 && r.streakWrong > (prior?.streakWrong ?? 0)) {
+        try {
+          const { awardXp } = await import('@/lib/xp-engine')
+          const a = await awardXp(userId, 'perseverance', { streakWrong: r.streakWrong })
+          if (a) turnXp.push(a)
+        } catch { /* non-critical */ }
+      }
+
       // Wheel-spinning: research says ~10 failed opportunities almost never
       // self-resolve — and it's predictable by 3-5. Change the intervention.
       const wheelBlock = r.streakWrong >= 4
@@ -238,7 +254,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 - Where the student is: ${r.state}
 - Gap depth: ${r.gapDepth} · consecutive confused turns: ${r.streakWrong}
 - Your next move: ${r.directive}
-${r.streakWrong >= 2 ? '- SUPPORT FIRST: two or more confused turns in a row — open with genuine, specific reassurance, then teach from a COMPLETELY different angle. No quiz this turn. Struggling IS the learning here.' : ''}
+${r.streakWrong >= 2 ? '- SUPPORT FIRST: two or more confused turns in a row — open with genuine, specific reassurance, then teach from a COMPLETELY different angle. No checkpoint question this turn. Struggling IS the learning here.' : ''}
 ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well — a Socratic probe ("why do you think that works?") beats another explanation.' : ''}${analogyBlock}${prereqBlock}${misconceptionBlock}${wheelBlock}`
       void prisma.conversation.update({
         where: { id: conv!.id },
@@ -268,7 +284,8 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
   } catch { /* non-critical */ }
 
   const path = nodePath(tree.nodes, nodeId)
-  const systemPrompt = `You are Bob, the student's expert mentor inside Release EDU's problem-mastery tree.
+  const quizStateNow = parseQuizState(node.quizState)
+  const systemPrompt = `You are Bob, the student's expert mentor inside the Tree EDU problem-mastery tree.
 
 ## THE TREE (the student's whole learning world right now)
 PROBLEM (root): "${tree.title}"
@@ -296,7 +313,21 @@ ${ANSWER_STANDARD}
 - Use numbered/bulleted lists for sequences and enumerations; > blockquotes for the one takeaway worth remembering; KaTeX ($...$) for any math.
 - Short conversational replies (a quick answer, a Socratic probe) need no headers — never decorate a one-liner.
 - If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: press the "Grow branch" button with that question so the tree can propose new nodes — the tree only grows with their permission. Do not pretend to add nodes yourself.
-- When they seem ready, remind them they can prove mastery with the "Verify understanding" check.
+
+## CHECKPOINT QUESTIONS (mastery is proven HERE in chat — there is no separate test)
+${node.status === 'understood'
+  ? '- This node is already VERIFIED. Checkpoints are optional deepening now — focus on connections onward to the root problem.'
+  : `- Mastery state: ${quizStateNow.correct}/${MASTERY_TARGET} checkpoint answers correct so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. At ${MASTERY_TARGET} correct (incl. ${MASTERY_MIN_SHORT} short answer) the node verifies automatically and the student is told in the feedback.`}
+- To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
+[[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails"}
+or
+[[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)"}
+- Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
+- "short" (own-words) carries the mastery weight — use it for the WHY/transfer probes${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' (the student still needs one)' : ''}; "mcq" for quick discrimination checks. Vary the formats.
+- At most one checkpoint per message. Never in your opening hook. Skip it on turns where the contextual read says SUPPORT FIRST.
+- The chat UI renders the block as an interactive card — introduce it naturally in prose ("Quick check:"), but do NOT repeat the question or options in your prose, and NEVER mention the JSON or the marker.
+- Question, options, explanation and rubric all follow the session's language.
+- There is NO "Verify understanding" button — never mention one. When the node verifies, congratulate briefly and point to the next unverified node in service of the root problem.
 ${sessionDirectives(tree, lang)}
 ${isIntro ? `
 ## THIS TURN: YOUR OPENING HOOK (the student just arrived at this node)
@@ -305,7 +336,7 @@ Open the workspace yourself — the student has not spoken. Write a CONDENSED, s
 2. **What this is** — 1-2 tight sentences introducing the core concept.
 3. **Where it sits** — one sentence locating it in the tree: name the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and how understanding it moves the student toward answering the ROOT problem ("${tree.title}").
 4. **You'll be able to** — 2-3 crisp bullet objectives (what they can do once this node is understood).
-5. End with ONE engaging question that pulls them in.
+5. End with ONE engaging question that pulls them in (a conversational question in prose — do NOT emit a [[QUIZ]] block in this opening hook).
 No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}${reflectionBlock}`
 
   const history = (conv!.messages ?? [])
@@ -348,6 +379,11 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
       // never persisted as message content.
       if (suggestion) {
         try { controller.enqueue(encoder.encode(`\n\n[[TREE_SUGGEST]]${JSON.stringify(suggestion)}`)) } catch { /* closed */ }
+      }
+      // XP earned during this turn (perseverance) — trailing marker, the
+      // client toasts it; never persisted as message content.
+      if (turnXp.length > 0) {
+        try { controller.enqueue(encoder.encode(`\n\n[[XP]]${JSON.stringify(turnXp)}`)) } catch { /* closed */ }
       }
 
       if (full) {

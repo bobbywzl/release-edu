@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { Sidebar, BottomNav } from '@/components/sidebar'
 import { XpToastProvider } from '@/components/xp-toast'
+import { DailyCheckin } from '@/components/daily-checkin'
 import { TransitionScreen } from '@/components/transition-screen'
 
 // Shared transition flags — any code path that owns a redirect-prone window
@@ -61,6 +62,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </main>
       {!isChat && <BottomNav />}
       <XpToastProvider />
+      <DailyCheckin />
     </div>
   )
 }

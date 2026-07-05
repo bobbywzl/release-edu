@@ -361,47 +361,48 @@ ${sessionDirectives(tree, lang)}`,
   return explainer
 }
 
-// ── Verification (AI-verified mastery — Differentiator Principle) ────────
+// ── Checkpoint verification (AI-verified mastery — Differentiator law) ───
+//
+// There is no separate test screen: mastery is proven through the checkpoint
+// questions Bob asks IN the workspace chat ([[QUIZ]] blocks — MCQ or short
+// answer). MCQs are judged deterministically; short answers by Sonnet. The
+// node flips to "understood" once the student has MASTERY_TARGET correct
+// answers including at least MASTERY_MIN_SHORT own-words short answer —
+// recognition alone (MCQ) is never enough to verify understanding.
 
-export interface VerifyQuestions { questions: string[] }
+export const MASTERY_TARGET = 3
+export const MASTERY_MIN_SHORT = 1
 
-export async function generateVerification(userId: string, treeId: string, nodeId: string, lang?: string): Promise<VerifyQuestions> {
-  const tree = await getTreeWithNodes(userId, treeId)
-  const node = tree?.nodes.find(n => n.id === nodeId)
-  if (!tree || !node) throw new Error('Node not found')
+/** Per-node checkpoint tally, stored as JSON in TreeNode.quizState. */
+export interface QuizState { correct: number; attempts: number; combo: number; shortCorrect: number }
 
-  const client = await anthropic()
-  const result = await client.messages.create({
-    model: SONNET,
-    max_tokens: 800,
-    messages: [{
-      role: 'user',
-      content: `Design a MINI PROBLEM SET (2-3 items) that verifies true understanding of one concept. Apply the Differentiator Principle: every item must separate a student who MEMORIZED this content from one who TRULY UNDERSTANDS it — transfer to an unseen context, why/what-if counterfactuals, edge cases where the memorized rule breaks. Never an item answerable by reciting a definition or repeating the explainer's words.
-
-PROBLEM (root of their tree): "${tree.title}"
-NODE UNDER TEST: "${node.title}" — ${node.summary}
-${node.explainer ? `EXPLAINER THE STUDENT READ (do NOT quiz its literal sentences back):\n${node.explainer.slice(0, 1500)}` : ''}
-
-Choose the format that authentically tests this subject: a small calculation/worked problem for quantitative concepts, a scenario-application or why/what-if short answer otherwise. All items are answered as free text. 2 items normally; 3 only if the concept has distinct facets that each need probing.
-
-${sessionDirectives(tree, lang)}
-
-Return ONLY JSON: {"questions": ["...", "..."]}`,
-    }],
-  })
-  void recordUsage(result, userId, SONNET, 'tree-verify')
-  const parsed = extractJSON<VerifyQuestions>((result.content[0] as { text?: string })?.text ?? '')
-  if (!parsed?.questions?.length) throw new Error('Verification generation failed')
-  return { questions: parsed.questions.slice(0, 3) }
+export function parseQuizState(raw: string | null | undefined): QuizState {
+  const fallback: QuizState = { correct: 0, attempts: 0, combo: 0, shortCorrect: 0 }
+  if (!raw) return fallback
+  try {
+    const p = JSON.parse(raw) as Partial<QuizState>
+    return {
+      correct: Math.max(0, p.correct ?? 0),
+      attempts: Math.max(0, p.attempts ?? 0),
+      combo: Math.max(0, p.combo ?? 0),
+      shortCorrect: Math.max(0, p.shortCorrect ?? 0),
+    }
+  } catch {
+    return fallback
+  }
 }
 
-export interface VerifyJudgement { passed: boolean; feedback: string; scores: number[] }
+export interface CheckpointJudgement { correct: boolean; score: number; feedback: string }
 
-export async function judgeVerification(
+/**
+ * Judge one short-answer checkpoint (meaning over wording; the Differentiator
+ * bar: does the answer show understanding that would transfer, or recitation?).
+ */
+export async function judgeCheckpointAnswer(
   userId: string, treeId: string, nodeId: string,
-  questions: string[], answers: string[], lang?: string,
-  confidences?: Array<'sure' | 'unsure'>,
-): Promise<VerifyJudgement> {
+  question: string, rubric: string | undefined, answer: string,
+  confidence?: 'sure' | 'unsure', lang?: string,
+): Promise<CheckpointJudgement> {
   const tree = await getTreeWithNodes(userId, treeId)
   const node = tree?.nodes.find(n => n.id === nodeId)
   if (!tree || !node) throw new Error('Node not found')
@@ -409,75 +410,101 @@ export async function judgeVerification(
   const client = await anthropic()
   const result = await client.messages.create({
     model: SONNET,
-    max_tokens: 900,
+    max_tokens: 500,
     messages: [{
       role: 'user',
-      content: `Judge whether the student truly understands this concept (meaning over wording; partial credit for sound reasoning). Passing = average score ≥ 7.
+      content: `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
 
-NODE: "${node.title}" — ${node.summary}
-${questions.map((q, i) => `Q${i + 1}: ${q}${confidences?.[i] ? ` [student's stated confidence: ${confidences[i]}]` : ''}\nStudent's answer: ${(answers[i] ?? '').slice(0, 800)}`).join('\n\n')}
+NODE UNDER STUDY: "${node.title}" — ${node.summary}
+ROOT PROBLEM: "${tree.title}"
+CHECKPOINT QUESTION: ${question.slice(0, 600)}
+${rubric ? `WHAT A TRULY-UNDERSTANDING ANSWER MUST CONTAIN: ${rubric.slice(0, 400)}` : ''}
+STUDENT'S ANSWER${confidence ? ` [stated confidence: ${confidence}]` : ''}: ${answer.slice(0, 1200)}
 
-HYPERCORRECTION RULE: a CONFIDENT-WRONG answer is the most dangerous and the most teachable state. If an answer marked "sure" scores below 5, your feedback must open by directly, memorably refuting the specific wrong belief (name it, then correct it) — high-confidence errors are unusually fixable when confronted head-on.
+HYPERCORRECTION RULE: a CONFIDENT-WRONG answer is the most teachable state. If the answer is marked "sure" and scores below 5, your feedback must open by directly, memorably refuting the specific wrong belief (name it, then correct it).
+
+The feedback must be INFORMATIVE, not a verdict: in 1-3 sentences give the scientific reason the right answer is right (and where their reasoning broke, if it did).
 
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedback": "2-3 sentences: what they got right, what to revisit — refutation first if confident-wrong occurred"}`,
+Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
     }],
   })
   void recordUsage(result, userId, SONNET, 'tree-verify')
-  const parsed = extractJSON<VerifyJudgement>((result.content[0] as { text?: string })?.text ?? '')
-  if (!parsed) throw new Error('Judging failed')
+  const parsed = extractJSON<{ score?: number; feedback?: string }>((result.content[0] as { text?: string })?.text ?? '')
+  if (!parsed || typeof parsed.score !== 'number') throw new Error('Judging failed')
+  const score = Math.max(0, Math.min(10, parsed.score))
+  return { correct: score >= 7, score, feedback: (parsed.feedback ?? '').slice(0, 600) }
+}
 
-  if (parsed.passed) {
-    await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'understood' } })
-    // Node mastery is the small-step reward of the Tree product.
-    try {
+export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number }
+
+/**
+ * Flip a node to "understood" with every mastery side effect: XP, the
+ * knowledge insight (analogy-bridge raw material), struggle resolution, and
+ * the tree-completion check. Returns the XP awards for client celebration.
+ */
+export async function markNodeVerified(
+  userId: string, treeId: string, nodeId: string,
+): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean }> {
+  const node = await prisma.treeNode.findUnique({ where: { id: nodeId } })
+  if (!node) throw new Error('Node not found')
+  const xp: XpAwardLite[] = []
+  let treeCompleted = false
+
+  await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'understood' } })
+  // Node mastery is the small-step reward of the Tree product.
+  try {
+    const { awardXp } = await import('@/lib/xp-engine')
+    const a = await awardXp(userId, 'objective_mastered')
+    if (a) xp.push(a)
+  } catch { /* non-critical */ }
+  // ── Insight constellation: verified mastery becomes durable ACQUIRED
+  // KNOWLEDGE in Bob's memory (the raw material for analogy-bridging),
+  // and any recorded struggles with this concept flip to growth events.
+  try {
+    await prisma.insight.create({
+      data: {
+        userId,
+        type: 'knowledge',
+        content: `Verified understanding of "${node.title}" (transfer-tested): ${node.summary.slice(0, 140)}`,
+        confidence: 0.95,
+        importance: 0.7,
+        source: 'verification',
+      },
+    })
+    const { markStrugglesResolved } = await import('@/lib/insight-memory')
+    await markStrugglesResolved(userId, node.title)
+  } catch { /* non-critical */ }
+  // A fully-understood tree completes the problem.
+  try {
+    const remaining = await prisma.treeNode.count({
+      where: { treeId, pending: false, status: { not: 'understood' } },
+    })
+    if (remaining === 0) {
+      await prisma.problemTree.update({ where: { id: treeId }, data: { status: 'completed' } })
       const { awardXp } = await import('@/lib/xp-engine')
-      await awardXp(userId, 'objective_mastered')
-    } catch { /* non-critical */ }
-    // ── Insight constellation: verified mastery becomes durable ACQUIRED
-    // KNOWLEDGE in Bob's memory (the raw material for analogy-bridging),
-    // and any recorded struggles with this concept flip to growth events.
-    try {
-      await prisma.insight.create({
-        data: {
-          userId,
-          type: 'knowledge',
-          content: `Verified understanding of "${node.title}" (transfer-tested): ${node.summary.slice(0, 140)}`,
-          confidence: 0.95,
-          importance: 0.7,
-          source: 'verification',
-        },
-      })
-      const { markStrugglesResolved } = await import('@/lib/insight-memory')
-      await markStrugglesResolved(userId, node.title)
-    } catch { /* non-critical */ }
-    // A fully-understood tree completes the problem.
-    try {
-      const remaining = await prisma.treeNode.count({
-        where: { treeId, pending: false, status: { not: 'understood' } },
-      })
-      if (remaining === 0) {
-        await prisma.problemTree.update({ where: { id: treeId }, data: { status: 'completed' } })
-        const { awardXp } = await import('@/lib/xp-engine')
-        await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
-      }
-    } catch { /* non-critical */ }
-  } else {
-    await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'learning' } }).catch(() => null)
-    // A failed transfer test is diagnostic gold — record the specific gap.
-    try {
-      await prisma.insight.create({
-        data: {
-          userId,
-          type: 'struggle',
-          content: `Failed verification on "${node.title}": ${(parsed.feedback ?? '').slice(0, 180)}`,
-          confidence: 0.85,
-          importance: 0.55,
-          source: 'verification',
-        },
-      })
-    } catch { /* non-critical */ }
-  }
-  return parsed
+      const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
+      if (a) xp.push(a)
+      treeCompleted = true
+    }
+  } catch { /* non-critical */ }
+
+  return { xp, treeCompleted }
+}
+
+/** A failed short-answer checkpoint is diagnostic gold — record the gap. */
+export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string): Promise<void> {
+  try {
+    await prisma.insight.create({
+      data: {
+        userId,
+        type: 'struggle',
+        content: `Missed a checkpoint on "${nodeTitle}": ${feedback.slice(0, 180)}`,
+        confidence: 0.85,
+        importance: 0.55,
+        source: 'verification',
+      },
+    })
+  } catch { /* non-critical */ }
 }

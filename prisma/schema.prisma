@@ -80,6 +80,10 @@ model TreeNode {
   // [{text, source: 'chat'|'file', createdAt}] — appended when Bob detects
   // concrete progress toward building the product/answering the problem.
   progressLog String?
+  // JSON checkpoint-mastery state: {correct, attempts, combo, shortCorrect}.
+  // Mastery is proven through Bob's in-chat checkpoint questions (MCQ +
+  // short answer, AI-judged); the node flips to understood at the target.
+  quizState   String?
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

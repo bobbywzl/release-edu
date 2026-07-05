@@ -52,6 +52,8 @@ export type XpSource =
   | 'project_completed'
   | 'perseverance'
   | 'objective_mastered'
+  | 'quiz_attempt'
+  | 'combo_bonus'
 
 interface XpAwardResult {
   awarded: number
@@ -98,6 +100,13 @@ const XP_TABLE: Record<XpSource, { base: number; label: string }> = {
   // deterministic progress bar advancing IS this event. Rewarding it makes
   // every step of a lesson land with a ding, not just chapter completion.
   objective_mastered:  { base: 20,  label: 'Objective Mastered' },
+  // Quiz attempt: a WRONG checkpoint answer still earns a little — trying is
+  // participation, and a zero-reward wrong answer teaches quitting, not grit.
+  quiz_attempt:        { base: 5,   label: 'Attempt Made' },
+  // Combo bonus: consecutive correct checkpoint answers pay escalating
+  // surprise bonuses at 3 / 5 / 10 — the variable-reward spike that makes
+  // "one more question" irresistible. Tiers in calculateXp.
+  combo_bonus:         { base: 10,  label: 'Combo' },
 }
 
 // ── Daily goal + ranks (retention layer) ──
@@ -132,6 +141,7 @@ export function calculateXp(
     streakDays?: number    // for daily_streak scaling
     difficulty?: number    // 0-1 multiplier
     streakWrong?: number   // for perseverance: how many wrongs in a row
+    combo?: number         // for combo_bonus: consecutive correct answers
   } = {}
 ): number {
   const entry = XP_TABLE[source]
@@ -173,6 +183,16 @@ export function calculateXp(
       if (sw === 2) xp = 10
       else if (sw === 3) xp = 15
       else xp = 20
+      break
+    }
+    case 'combo_bonus': {
+      // Escalating tiers, awarded exactly when the combo HITS the tier:
+      //   3 in a row → 10 XP · 5 in a row → 20 XP · 10 in a row → 40 XP
+      const combo = opts.combo ?? 0
+      if (combo >= 10) xp = 40
+      else if (combo >= 5) xp = 20
+      else if (combo >= 3) xp = 10
+      else xp = 0
       break
     }
   }
@@ -217,6 +237,7 @@ export async function awardXp(
     streakDays?: number
     difficulty?: number
     streakWrong?: number
+    combo?: number
   } = {}
 ): Promise<XpAwardResult | null> {
   const profile = await prisma.studentProfile.findUnique({
@@ -295,12 +316,12 @@ export async function awardXpBatch(
 
 // ── Daily streak update ──
 
-export async function updateStreak(userId: string): Promise<{ streak: number; xpAwarded: XpAwardResult | null }> {
+export async function updateStreak(userId: string): Promise<{ streak: number; awards: XpAwardResult[] }> {
   const profile = await prisma.studentProfile.findUnique({
     where: { userId },
     select: { streak: true, updatedAt: true, xp: true },
   })
-  if (!profile) return { streak: 0, xpAwarded: null }
+  if (!profile) return { streak: 0, awards: [] }
 
   const lastActive = profile.updatedAt
   const now = new Date()
@@ -309,7 +330,7 @@ export async function updateStreak(userId: string): Promise<{ streak: number; xp
 
   if (lastDate === todayDate) {
     // Already active today — no streak update
-    return { streak: profile.streak, xpAwarded: null }
+    return { streak: profile.streak, awards: [] }
   }
 
   // Check if yesterday
@@ -337,8 +358,12 @@ export async function updateStreak(userId: string): Promise<{ streak: number; xp
 
   // Award streak XP + the first-session-of-the-day bonus (a new day reaching
   // this point IS the first session — the cheap dopamine hit for showing up).
-  const xpAwarded = await awardXp(userId, 'daily_streak', { streakDays: newStreak, streak: newStreak })
-  await awardXp(userId, 'first_session', { streak: newStreak }).catch(() => null)
+  // Both are returned so the client can celebrate the day's arrival rewards.
+  const awards: XpAwardResult[] = []
+  const streakAward = await awardXp(userId, 'daily_streak', { streakDays: newStreak, streak: newStreak })
+  if (streakAward) awards.push(streakAward)
+  const firstSession = await awardXp(userId, 'first_session', { streak: newStreak }).catch(() => null)
+  if (firstSession) awards.push(firstSession)
 
-  return { streak: newStreak, xpAwarded }
+  return { streak: newStreak, awards }
 }

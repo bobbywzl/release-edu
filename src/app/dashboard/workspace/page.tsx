@@ -3,8 +3,12 @@
  * Workspace — the per-node work area. Retains the Bob chat look (bubbles,
  * streaming, markdown, input bar) with a formal NOTES panel alongside:
  * the node's retained knowledge (explainer + your annotations), its context
- * in the tree, verification state, and files from previous sessions — all
- * scoped to the node you're working on.
+ * in the tree, checkpoint-mastery state, and files from previous sessions —
+ * all scoped to the node you're working on.
+ *
+ * Mastery is proven IN the chat: Bob's [[QUIZ]] blocks render as interactive
+ * checkpoint cards (MCQ / short answer). Correct answers earn XP and count
+ * toward the node's verification — there is no separate test screen.
  */
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -12,21 +16,68 @@ import Link from 'next/link'
 import { motion } from 'framer-motion'
 import {
   Bot, Send, ArrowLeft, ShieldCheck, Loader2, StickyNote, Paperclip,
-  Sprout, X, FileText, PanelRightOpen, PanelRightClose,
+  Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import { emitXpAwards } from '@/components/xp-toast'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
 interface NodeData {
   id: string; parentId: string | null; kind: string; title: string; summary: string
   explainer: string | null; status: string; annotations: string | null; notes: string | null
+  quizState: string | null
 }
 interface TreeData { id: string; title: string; framing: string | null; nodes: NodeData[] }
 interface NodeFileRow { id: string; name: string; type?: string | null }
+
+interface QuizPayload {
+  kind: 'mcq' | 'short'
+  question: string
+  options?: string[]
+  correctIndex?: number
+  explanation?: string
+  rubric?: string
+}
+
+/**
+ * Split Bob's message into visible prose + the trailing [[QUIZ]] block.
+ * A malformed block (bad JSON, mcq without valid options/correctIndex) is
+ * dropped entirely — the marker is hidden and no dead card can render.
+ */
+function splitQuiz(content: string): { text: string; quiz: QuizPayload | null } {
+  const idx = content.indexOf('[[QUIZ]]')
+  if (idx === -1) return { text: content, quiz: null }
+  let quiz: QuizPayload | null = null
+  try {
+    const parsed = JSON.parse(content.slice(idx + 8).trim()) as QuizPayload
+    if (typeof parsed.question === 'string' && parsed.question.trim()) {
+      if (parsed.kind === 'short') quiz = parsed
+      else if (
+        parsed.kind === 'mcq'
+        && Array.isArray(parsed.options) && parsed.options.length >= 2
+        && Number.isInteger(parsed.correctIndex)
+        && (parsed.correctIndex as number) >= 0 && (parsed.correctIndex as number) < parsed.options.length
+      ) quiz = parsed
+    }
+  } catch { /* malformed — hide the marker, show only prose */ }
+  return { text: content.slice(0, idx).trimEnd(), quiz }
+}
+
+const MASTERY_TARGET = 3
+
+function masteryOf(raw: string | null | undefined): { correct: number; shortCorrect: number } {
+  if (!raw) return { correct: 0, shortCorrect: 0 }
+  try {
+    const p = JSON.parse(raw) as { correct?: number; shortCorrect?: number }
+    return { correct: Math.max(0, p.correct ?? 0), shortCorrect: Math.max(0, p.shortCorrect ?? 0) }
+  } catch {
+    return { correct: 0, shortCorrect: 0 }
+  }
+}
 
 let tempId = 0
 
@@ -49,7 +100,13 @@ function WorkspaceInner() {
   const [notesDraft, setNotesDraft] = useState<string | null>(null)
   const [notesSaved, setNotesSaved] = useState(false)
   const [files, setFiles] = useState<NodeFileRow[]>([])
-  const [verify, setVerify] = useState<null | { phase: 'loading' | 'answering' | 'judging' | 'done'; questions?: string[]; answers?: string[]; confidences?: Array<'sure' | 'unsure'>; passed?: boolean; feedback?: string }>(null)
+  // The in-chat checkpoint currently awaiting an answer (Bob's [[QUIZ]] card).
+  const [activeQuiz, setActiveQuiz] = useState<QuizPayload | null>(null)
+  const [quizSel, setQuizSel] = useState<number | null>(null)
+  const [quizText, setQuizText] = useState('')
+  const [quizConf, setQuizConf] = useState<'sure' | 'unsure'>('sure')
+  const [quizBusy, setQuizBusy] = useState(false)
+  const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean } | null>(null)
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
@@ -87,6 +144,13 @@ function WorkspaceInner() {
         if (cancelled || !d?.messages) return
         setMessages(d.messages)
         setConversationId(d.conversationId ?? null)
+        // An unanswered checkpoint survives a reload: if the conversation
+        // ends on a Bob message carrying a quiz, re-arm the card.
+        const last = d.messages[d.messages.length - 1] as Msg | undefined
+        if (last?.role === 'assistant') {
+          const { quiz } = splitQuiz(last.content)
+          if (quiz) setActiveQuiz(quiz)
+        }
         // First visit to this node: Bob opens with a condensed syllabus-style
         // hook — the concept, where it sits in the tree, and why it matters
         // to the root problem. Triggered once; the saved reply prevents re-runs.
@@ -104,7 +168,7 @@ function WorkspaceInner() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
-  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null) }, [nodeId])
+  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf('sure'); setQuizResult(null) }, [nodeId])
 
   // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
   // first-open trigger — Bob speaks without a student bubble appearing.
@@ -131,14 +195,26 @@ function WorkspaceInner() {
         full += decoder.decode(value, { stream: true })
         setStreamText(full)
       }
-      // Discovery marker rides at the end of the stream — strip it from the
-      // visible message and surface it as an approve/dismiss card.
+      // Trailing machine markers ride at the end of the stream, in server
+      // order: [[TREE_SUGGEST]] then [[XP]]. Strip back-to-front.
+      const xpIdx = full.indexOf('[[XP]]')
+      if (xpIdx !== -1) {
+        try { emitXpAwards(JSON.parse(full.slice(xpIdx + 6))) } catch { /* malformed — ignore */ }
+        full = full.slice(0, xpIdx).trimEnd()
+      }
       const markerIdx = full.indexOf('[[TREE_SUGGEST]]')
       if (markerIdx !== -1) {
         try { setSuggestion(JSON.parse(full.slice(markerIdx + 16))) } catch { /* malformed — ignore */ }
         full = full.slice(0, markerIdx).trimEnd()
       }
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: full }])
+      // A [[QUIZ]] block inside Bob's own text becomes the interactive
+      // checkpoint card (the message keeps the marker; rendering strips it).
+      const { quiz } = splitQuiz(full)
+      if (quiz) {
+        setActiveQuiz(quiz)
+        setQuizSel(null); setQuizText(''); setQuizConf('sure'); setQuizResult(null)
+      }
       // Swap temp ids for persisted ids so text in this turn is highlightable.
       setTimeout(() => {
         fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
@@ -247,40 +323,38 @@ function WorkspaceInner() {
     }
   }
 
-  async function startVerify() {
-    if (!treeId || !nodeId) return
-    setVerify({ phase: 'loading' })
+  // Answer the active checkpoint card. The server judges (MCQ locally, short
+  // answers by AI), pays XP, advances the node's mastery tally — and flips
+  // the node to verified when the target is reached. Both sides of the
+  // exchange are persisted, so after a short beat we pull the conversation
+  // (answer + Bob's feedback bubbles) and retire the card.
+  async function submitQuiz() {
+    if (!activeQuiz || quizBusy || quizResult || !treeId || !nodeId) return
+    const answer = activeQuiz.kind === 'mcq' ? quizSel : quizText.trim()
+    if (answer === null || answer === '') return
+    setQuizBusy(true)
     try {
-      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/verify`, {
+      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/quiz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phase: 'start', lang: language }),
+        body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf, lang: language }),
       })
-      const body = await res.json()
-      if (!res.ok || !body.questions) throw new Error()
-      setVerify({ phase: 'answering', questions: body.questions, answers: body.questions.map(() => ''), confidences: body.questions.map(() => 'sure' as const) })
+      const body = await res.json().catch(() => null)
+      if (!res.ok || !body) throw new Error('quiz error')
+      if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
+      setQuizResult({ correct: !!body.correct, verified: !!body.verified })
+      setTimeout(() => {
+        fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => { if (d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
+          .catch(() => {})
+        loadTree()
+        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText('')
+      }, 1600)
     } catch {
-      setVerify(null)
-    }
-  }
-
-  async function submitVerify() {
-    if (!verify?.questions || !treeId || !nodeId) return
-    setVerify(v => v ? { ...v, phase: 'judging' } : v)
-    try {
-      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phase: 'judge', questions: verify.questions, answers: verify.answers, confidences: verify.confidences, lang: language }),
-      })
-      const body = await res.json()
-      setVerify(v => v ? { ...v, phase: 'done', passed: !!body.passed, feedback: body.feedback ?? '' } : v)
-      if (body.passed && body.passed === true) {
-        import('@/components/xp-toast').then(m => m.emitXpAwards([{ awarded: 20, label: 'Objective Mastered', levelUp: false, newLevel: 0 }])).catch(() => {})
-      }
-      loadTree()
-    } catch {
-      setVerify(null)
+      /* transient — leave the card armed so the student can retry */
+    } finally {
+      setQuizBusy(false)
     }
   }
 
@@ -315,12 +389,22 @@ function WorkspaceInner() {
             <ShieldCheck className="w-4 h-4" /> {t('tree.verified')}
           </span>
         ) : (
-          <button
-            onClick={startVerify}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors flex-shrink-0"
-          >
-            <ShieldCheck className="w-3.5 h-3.5" /> {t('workspace.verify')}
-          </button>
+          /* Mastery pips: correct checkpoint answers toward verification —
+             the checkpoints live in the chat itself, "Quiz me" just asks Bob. */
+          <div className="flex items-center gap-2 flex-shrink-0" title={t('workspace.masteryHint')}>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: MASTERY_TARGET }).map((_, i) => (
+                <span key={i} className={cn('w-2 h-2 rounded-full transition-colors', i < Math.min(masteryOf(node?.quizState).correct, MASTERY_TARGET) ? 'bg-emerald-400' : 'bg-border')} />
+              ))}
+            </div>
+            <button
+              onClick={() => streamFromBob(t('workspace.quizMeMessage'), true)}
+              disabled={streaming}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+            >
+              <HelpCircle className="w-3.5 h-3.5" /> {t('workspace.quizMeBtn')}
+            </button>
+          </div>
         )}
         <button
           onClick={() => setShowNotes(s => !s)}
@@ -341,39 +425,137 @@ function WorkspaceInner() {
                 <p className="text-sm text-muted-foreground max-w-md mx-auto">{t('workspace.emptyHint')}</p>
               </div>
             )}
-            {messages.map(m => (
-              <motion.div
-                key={m.id}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
-              >
-                <div className={cn(
-                  'rounded-2xl px-4 py-3 text-[15px] leading-relaxed',
-                  m.role === 'user'
-                    ? 'max-w-[80%] bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
-                    : 'max-w-[92%] bg-card border border-border text-foreground rounded-bl-sm',
-                )}>
-                  {m.role === 'user' ? m.content : (
-                    <HighlightableText
-                      messageId={m.id}
-                      highlights={highlights}
-                      onAddHighlight={addHighlight}
-                      onUpdateHighlight={updateHighlight}
-                      onDeleteHighlight={deleteHighlight}
-                    >
-                      <MarkdownRenderer content={m.content} />
-                    </HighlightableText>
-                  )}
-                </div>
-              </motion.div>
-            ))}
+            {messages.map((m, mi) => {
+              const parts = m.role === 'assistant' ? splitQuiz(m.content) : null
+              // A quiz chip in an OLD message is inert — answered if any
+              // student message follows it; the live card renders separately.
+              const isActiveQuizMsg = !!(activeQuiz && parts?.quiz && mi === messages.length - 1)
+              const wasAnswered = !!parts?.quiz && messages.slice(mi + 1).some(x => x.role === 'user')
+              return (
+                <motion.div
+                  key={m.id}
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                  className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
+                >
+                  <div className={cn(
+                    'rounded-2xl px-4 py-3 text-[15px] leading-relaxed',
+                    m.role === 'user'
+                      ? 'max-w-[80%] bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
+                      : 'max-w-[92%] bg-card border border-border text-foreground rounded-bl-sm',
+                  )}>
+                    {m.role === 'user' ? m.content : (
+                      <>
+                        <HighlightableText
+                          messageId={m.id}
+                          highlights={highlights}
+                          onAddHighlight={addHighlight}
+                          onUpdateHighlight={updateHighlight}
+                          onDeleteHighlight={deleteHighlight}
+                        >
+                          <MarkdownRenderer content={parts!.text} />
+                        </HighlightableText>
+                        {parts!.quiz && !isActiveQuizMsg && (
+                          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50">
+                            <HelpCircle className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                            <span className="truncate">{parts!.quiz.question}</span>
+                            {wasAnswered && <span className="ml-auto flex-shrink-0 text-emerald-400">✓ {t('workspace.quizAnswered')}</span>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              )
+            })}
             {streaming && streamText && (
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
-                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0]} />
+                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0]} />
                   <span className="inline-block w-0.5 h-4 bg-primary animate-pulse rounded-full align-middle ml-0.5" />
                 </div>
               </div>
+            )}
+
+            {/* Live checkpoint card — Bob's [[QUIZ]] block, answerable in place.
+                Correct answers earn XP and count toward node verification. */}
+            {activeQuiz && !streaming && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="max-w-[92%] border border-primary/40 bg-primary/[0.06] rounded-2xl rounded-bl-sm px-4 py-3 space-y-3"
+              >
+                <p className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5" /> {t('workspace.checkpoint')}
+                </p>
+                <div className="text-sm text-foreground leading-relaxed">
+                  <MarkdownRenderer content={activeQuiz.question} />
+                </div>
+                {activeQuiz.kind === 'mcq' && Array.isArray(activeQuiz.options) && (
+                  <div className="space-y-1.5">
+                    {activeQuiz.options.map((opt, oi) => (
+                      <button
+                        key={oi}
+                        type="button"
+                        disabled={quizBusy || !!quizResult}
+                        onClick={() => setQuizSel(oi)}
+                        className={cn(
+                          'w-full text-left flex items-start gap-2.5 px-3 py-2 rounded-lg border text-sm transition-colors',
+                          quizSel === oi && !quizResult ? 'border-primary/60 bg-primary/15 text-foreground' : 'border-border text-foreground/85 hover:bg-accent',
+                          quizResult && activeQuiz.correctIndex === oi && 'border-emerald-400/70 bg-emerald-500/15',
+                          quizResult && quizSel === oi && activeQuiz.correctIndex !== oi && 'border-red-400/60 bg-red-500/10',
+                        )}
+                      >
+                        <span className="font-bold text-xs mt-0.5 text-primary">{String.fromCharCode(65 + oi)}</span>
+                        <span>{opt}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {activeQuiz.kind === 'short' && (
+                  <textarea
+                    value={quizText}
+                    onChange={e => setQuizText(e.target.value)}
+                    rows={3}
+                    disabled={quizBusy || !!quizResult}
+                    placeholder={t('workspace.quizShortPlaceholder')}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
+                  />
+                )}
+                {/* Metacognitive calibration — confident-wrong answers get the
+                    hypercorrection treatment from the judge. */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground">{t('workspace.confidenceLabel')}</span>
+                  {(['sure', 'unsure'] as const).map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      disabled={quizBusy || !!quizResult}
+                      onClick={() => setQuizConf(c)}
+                      className={cn(
+                        'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
+                        quizConf === c
+                          ? 'border-primary/60 bg-primary/15 text-primary'
+                          : 'border-border text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {c === 'sure' ? t('workspace.confSure') : t('workspace.confUnsure')}
+                    </button>
+                  ))}
+                </div>
+                {quizResult ? (
+                  <p className={cn('text-sm font-bold', quizResult.correct ? 'text-emerald-400' : 'text-amber-400')}>
+                    {quizResult.correct ? t('workspace.quizCorrect') : t('workspace.quizIncorrect')}
+                  </p>
+                ) : (
+                  <button
+                    onClick={submitQuiz}
+                    disabled={quizBusy || (activeQuiz.kind === 'mcq' ? quizSel === null : !quizText.trim())}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-40"
+                  >
+                    {quizBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                    {quizBusy ? t('workspace.quizJudging') : t('workspace.quizSubmit')}
+                  </button>
+                )}
+              </motion.div>
             )}
             {streaming && !streamText && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm px-2">
@@ -613,85 +795,6 @@ function WorkspaceInner() {
         )}
       </div>
 
-      {/* Verification modal — the Differentiator probe */}
-      {verify && (
-        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-overlay-in">
-          <div className="w-full max-w-lg bg-card border border-border rounded-2xl p-5 animate-modal-in space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" /> {t('workspace.verifyTitle')}
-              </h3>
-              <button onClick={() => setVerify(null)} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {verify.phase === 'loading' && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
-                <Loader2 className="w-4 h-4 animate-spin" /> {t('workspace.verifyPreparing')}
-              </div>
-            )}
-            {(verify.phase === 'answering' || verify.phase === 'judging') && verify.questions && (
-              <>
-                {verify.questions.map((q, i) => (
-                  <div key={i} className="space-y-1.5">
-                    <p className="text-sm text-foreground font-medium">{i + 1}. {q}</p>
-                    <textarea
-                      value={verify.answers?.[i] ?? ''}
-                      onChange={e => setVerify(v => v ? { ...v, answers: v.answers?.map((a, j) => j === i ? e.target.value : a) } : v)}
-                      rows={3}
-                      disabled={verify.phase === 'judging'}
-                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
-                    />
-                    {/* Metacognitive calibration — confident-wrong answers get
-                        the hypercorrection treatment from the judge. */}
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] text-muted-foreground">{t('workspace.confidenceLabel')}</span>
-                      {(['sure', 'unsure'] as const).map(c => (
-                        <button
-                          key={c}
-                          type="button"
-                          disabled={verify.phase === 'judging'}
-                          onClick={() => setVerify(v => v ? { ...v, confidences: v.confidences?.map((x, j) => j === i ? c : x) } : v)}
-                          className={cn(
-                            'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
-                            verify.confidences?.[i] === c
-                              ? 'border-primary/60 bg-primary/15 text-primary'
-                              : 'border-border text-muted-foreground hover:text-foreground',
-                          )}
-                        >
-                          {c === 'sure' ? t('workspace.confSure') : t('workspace.confUnsure')}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <button
-                  onClick={submitVerify}
-                  disabled={verify.phase === 'judging' || verify.answers?.some(a => !a.trim())}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 text-white text-sm font-medium py-2.5 hover:bg-emerald-500 transition-colors disabled:opacity-40"
-                >
-                  {verify.phase === 'judging' ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                  {verify.phase === 'judging' ? t('workspace.verifyJudging') : t('workspace.verifySubmit')}
-                </button>
-              </>
-            )}
-            {verify.phase === 'done' && (
-              <div className="space-y-3">
-                <p className={cn('text-sm font-bold', verify.passed ? 'text-emerald-400' : 'text-amber-400')}>
-                  {verify.passed ? t('workspace.verifyPassed') : t('workspace.verifyFailed')}
-                </p>
-                {verify.feedback && <p className="text-sm text-muted-foreground leading-relaxed">{verify.feedback}</p>}
-                <button
-                  onClick={() => setVerify(null)}
-                  className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors"
-                >
-                  {t('workspace.verifyClose')}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
