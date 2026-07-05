@@ -37,6 +37,10 @@ function applyHighlightsToDOM(
   onHighlightClick: ((id: string) => void) | undefined,
   onDeleteHighlight: (id: string) => void
 ) {
+  // Remove decoration elements FIRST (comment icons, delete buttons) —
+  // unwrapping a mark preserves its children, so anything not purged here
+  // accumulates once per repaint (the runaway 💬💬💬 bug).
+  container.querySelectorAll('[data-hl-decoration]').forEach(el => el.remove())
   // Remove existing marks and normalize
   container.querySelectorAll('mark[data-highlight-id]').forEach(mark => {
     const parent = mark.parentNode!
@@ -122,6 +126,7 @@ function applyHighlightsToDOM(
       mark.title = h.comment ? `💬 ${h.comment}` : 'Click to view annotation'
       if (h.comment) {
         const icon = document.createElement('span')
+        icon.dataset.hlDecoration = '1'
         icon.textContent = ' 💬'
         icon.style.fontSize = '10px'
         icon.style.opacity = '0.7'
@@ -138,6 +143,7 @@ function applyHighlightsToDOM(
       mark.addEventListener('mouseenter', () => {
         if (deleteBtn) return
         deleteBtn = document.createElement('button')
+        deleteBtn.dataset.hlDecoration = '1'
         deleteBtn.textContent = '×'
         deleteBtn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;border-radius:50%;background:rgba(0,0,0,0.2);font-size:10px;line-height:1;cursor:pointer;vertical-align:middle;border:none;color:inherit;'
         deleteBtn.title = 'Remove highlight'
