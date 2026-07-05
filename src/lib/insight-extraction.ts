@@ -54,10 +54,14 @@ ${existingListing || '(none yet)'}
 If the exchange CONFIRMS a known insight, reinforce it instead of writing a duplicate.
 
 Return ONLY a JSON array of operations (or [] if nothing notable):
-- New: {"op":"new","type":"<one of: personality|interest|strength|weakness|preference|aspiration|breakthrough|struggle|style>","content":"one sentence, written in ${lang === 'zh' ? 'Simplified Chinese (简体中文)' : 'English'}","confidence":0.0-1.0,"importance":0.0-1.0}
+- New: {"op":"new","type":"<one of: personality|interest|strength|weakness|preference|aspiration|breakthrough|struggle|style|knowledge|misconception>","content":"one sentence, written in ${lang === 'zh' ? 'Simplified Chinese (简体中文)' : 'English'}","confidence":0.0-1.0,"importance":0.0-1.0}
 - Reinforce: {"op":"reinforce","id":"<known insight id>"}
 
-importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; recurring topical strengths/struggles ≈ 0.4–0.7; one-off topic confusion or passing remarks ≈ 0.1–0.3.`,
+TWO SPECIAL TYPES (evidence rules are strict):
+- "knowledge": ONLY when the student EXPLAINED a concept correctly in their OWN words (not just answered yes / repeated the tutor). Content names the concept and what they can do with it: "Can explain why the DFT re-expresses a signal in the frequency basis". These power analogy-based teaching later — precision matters.
+- "misconception": ONLY when the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea twice). NOT a one-off slip. Content states the wrong belief precisely: "Believes measurement collapses all qubits to classical bits simultaneously".
+
+importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; verified knowledge and misconceptions ≈ 0.5–0.8; recurring topical strengths/struggles ≈ 0.4–0.7; one-off topic confusion or passing remarks ≈ 0.1–0.3.`,
       }],
     })
 

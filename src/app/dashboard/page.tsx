@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { ChevronRight, Sprout, CheckCircle2 } from 'lucide-react'
+import { ChevronRight, Sprout, CheckCircle2, Brain, ChevronDown } from 'lucide-react'
 import { useStudentData } from '@/lib/student-data'
 import { useLanguage } from '@/lib/i18n'
 import { XpPanel } from '@/components/xp-panel'
@@ -30,11 +30,17 @@ export default function DashboardPage() {
   const { data, loading } = useStudentData()
   const { t } = useLanguage()
   const [trees, setTrees] = useState<TreeSummary[] | null>(null)
+  const [insights, setInsights] = useState<Array<{ id: string; type: string; content: string; timesObserved: number }>>([])
+  const [showInsights, setShowInsights] = useState(false)
 
   useEffect(() => {
     fetch('/api/tree', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.trees) setTrees(d.trees) })
+      .catch(() => {})
+    fetch('/api/insights', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.insights) setInsights(d.insights) })
       .catch(() => {})
   }, [])
 
@@ -142,6 +148,33 @@ export default function DashboardPage() {
           )
         })}
       </motion.div>
+
+      {/* Open learner model — transparency into Bob's memory (research:
+          legible learner models improve learning, Long & Aleven 2017). */}
+      {insights.length > 0 && (
+        <motion.div variants={fadeUp}>
+          <button
+            onClick={() => setShowInsights(s => !s)}
+            className="w-full border border-border/50 rounded-lg p-4 hover:border-border transition-colors flex items-center gap-2 text-left"
+          >
+            <Brain className="w-4 h-4 text-primary flex-shrink-0" />
+            <span className="text-sm font-semibold text-foreground flex-1">{t('dashboard.bobKnows')}</span>
+            <span className="text-[11px] text-muted-foreground">{insights.length} {t('dashboard.insightsCount')}</span>
+            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showInsights ? 'rotate-180' : ''}`} />
+          </button>
+          {showInsights && (
+            <div className="border border-t-0 border-border/50 rounded-b-lg px-4 py-3 space-y-1.5 -mt-1.5">
+              <p className="text-[11px] text-muted-foreground mb-2">{t('dashboard.bobKnowsSub')}</p>
+              {insights.map(i => (
+                <div key={i.id} className="flex items-start gap-2 text-xs">
+                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium uppercase tracking-wide">{i.type}</span>
+                  <span className="text-foreground/85 leading-snug">{i.content}{i.timesObserved > 1 ? <span className="text-muted-foreground/60"> ·×{i.timesObserved}</span> : null}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      )}
     </motion.div>
   )
 }
