@@ -19,6 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const userId = await getUserId()
   const body = (await req.json().catch(() => ({}))) as {
     phase?: string; questions?: string[]; answers?: string[]; lang?: string
+    confidences?: Array<'sure' | 'unsure'>
   }
 
   try {
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!Array.isArray(body.questions) || !Array.isArray(body.answers) || body.questions.length === 0) {
         return NextResponse.json({ error: 'questions and answers required' }, { status: 400 })
       }
-      const judgement = await judgeVerification(userId, id, nodeId, body.questions, body.answers, body.lang)
+      const judgement = await judgeVerification(userId, id, nodeId, body.questions, body.answers, body.lang, body.confidences)
       return NextResponse.json(judgement)
     }
     return NextResponse.json({ error: 'Unknown phase' }, { status: 400 })

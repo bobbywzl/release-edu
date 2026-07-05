@@ -87,7 +87,7 @@ async function studentGrounding(userId: string): Promise<string> {
       ctx.profile.advancementLevel ? `Target level: ${ctx.profile.advancementLevel}` : '',
       ctx.profile.occupation ? `Background: ${ctx.profile.occupation}` : '',
       ctx.interests.length ? `Interests: ${ctx.interests.slice(0, 5).join(', ')}` : '',
-      ctx.insights.length ? `Known about the student:\n${ctx.insights.slice(0, 6).map(i => `- [${i.type}] ${i.content}`).join('\n')}` : '',
+      ctx.insights.length ? `Known about the student:\n${ctx.insights.slice(0, 8).map(i => `- [${i.type}] ${i.content}`).join('\n')}\nWhere natural, build explanations as analogies from their [knowledge] and [strength] entries — connect new concepts to what they verifiably already understand.` : '',
     ].filter(Boolean)
     return parts.length ? `\n## About this student\n${parts.join('\n')}` : ''
   } catch {
@@ -389,6 +389,7 @@ export interface VerifyJudgement { passed: boolean; feedback: string; scores: nu
 export async function judgeVerification(
   userId: string, treeId: string, nodeId: string,
   questions: string[], answers: string[], lang?: string,
+  confidences?: Array<'sure' | 'unsure'>,
 ): Promise<VerifyJudgement> {
   const tree = await getTreeWithNodes(userId, treeId)
   const node = tree?.nodes.find(n => n.id === nodeId)
@@ -397,17 +398,19 @@ export async function judgeVerification(
   const client = await anthropic()
   const result = await client.messages.create({
     model: SONNET,
-    max_tokens: 800,
+    max_tokens: 900,
     messages: [{
       role: 'user',
       content: `Judge whether the student truly understands this concept (meaning over wording; partial credit for sound reasoning). Passing = average score ≥ 7.
 
 NODE: "${node.title}" — ${node.summary}
-${questions.map((q, i) => `Q${i + 1}: ${q}\nStudent's answer: ${(answers[i] ?? '').slice(0, 800)}`).join('\n\n')}
+${questions.map((q, i) => `Q${i + 1}: ${q}${confidences?.[i] ? ` [student's stated confidence: ${confidences[i]}]` : ''}\nStudent's answer: ${(answers[i] ?? '').slice(0, 800)}`).join('\n\n')}
+
+HYPERCORRECTION RULE: a CONFIDENT-WRONG answer is the most dangerous and the most teachable state. If an answer marked "sure" scores below 5, your feedback must open by directly, memorably refuting the specific wrong belief (name it, then correct it) — high-confidence errors are unusually fixable when confronted head-on.
 
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedback": "2-3 sentences: what they got right, what to revisit"}`,
+Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedback": "2-3 sentences: what they got right, what to revisit — refutation first if confident-wrong occurred"}`,
     }],
   })
   void recordUsage(result, userId, SONNET, 'tree-verify')
@@ -420,6 +423,23 @@ Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedbac
     try {
       const { awardXp } = await import('@/lib/xp-engine')
       await awardXp(userId, 'objective_mastered')
+    } catch { /* non-critical */ }
+    // ── Insight constellation: verified mastery becomes durable ACQUIRED
+    // KNOWLEDGE in Bob's memory (the raw material for analogy-bridging),
+    // and any recorded struggles with this concept flip to growth events.
+    try {
+      await prisma.insight.create({
+        data: {
+          userId,
+          type: 'knowledge',
+          content: `Verified understanding of "${node.title}" (transfer-tested): ${node.summary.slice(0, 140)}`,
+          confidence: 0.95,
+          importance: 0.7,
+          source: 'verification',
+        },
+      })
+      const { markStrugglesResolved } = await import('@/lib/insight-memory')
+      await markStrugglesResolved(userId, node.title)
     } catch { /* non-critical */ }
     // A fully-understood tree completes the problem.
     try {
@@ -434,6 +454,19 @@ Return ONLY JSON: {"scores": [0-10 per question], "passed": true|false, "feedbac
     } catch { /* non-critical */ }
   } else {
     await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'learning' } }).catch(() => null)
+    // A failed transfer test is diagnostic gold — record the specific gap.
+    try {
+      await prisma.insight.create({
+        data: {
+          userId,
+          type: 'struggle',
+          content: `Failed verification on "${node.title}": ${(parsed.feedback ?? '').slice(0, 180)}`,
+          confidence: 0.85,
+          importance: 0.55,
+          source: 'verification',
+        },
+      })
+    } catch { /* non-critical */ }
   }
   return parsed
 }

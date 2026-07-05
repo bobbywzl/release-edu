@@ -49,7 +49,7 @@ function WorkspaceInner() {
   const [notesDraft, setNotesDraft] = useState<string | null>(null)
   const [notesSaved, setNotesSaved] = useState(false)
   const [files, setFiles] = useState<NodeFileRow[]>([])
-  const [verify, setVerify] = useState<null | { phase: 'loading' | 'answering' | 'judging' | 'done'; questions?: string[]; answers?: string[]; passed?: boolean; feedback?: string }>(null)
+  const [verify, setVerify] = useState<null | { phase: 'loading' | 'answering' | 'judging' | 'done'; questions?: string[]; answers?: string[]; confidences?: Array<'sure' | 'unsure'>; passed?: boolean; feedback?: string }>(null)
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
@@ -258,7 +258,7 @@ function WorkspaceInner() {
       })
       const body = await res.json()
       if (!res.ok || !body.questions) throw new Error()
-      setVerify({ phase: 'answering', questions: body.questions, answers: body.questions.map(() => '') })
+      setVerify({ phase: 'answering', questions: body.questions, answers: body.questions.map(() => ''), confidences: body.questions.map(() => 'sure' as const) })
     } catch {
       setVerify(null)
     }
@@ -271,7 +271,7 @@ function WorkspaceInner() {
       const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phase: 'judge', questions: verify.questions, answers: verify.answers, lang: language }),
+        body: JSON.stringify({ phase: 'judge', questions: verify.questions, answers: verify.answers, confidences: verify.confidences, lang: language }),
       })
       const body = await res.json()
       setVerify(v => v ? { ...v, phase: 'done', passed: !!body.passed, feedback: body.feedback ?? '' } : v)
@@ -642,6 +642,27 @@ function WorkspaceInner() {
                       disabled={verify.phase === 'judging'}
                       className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
                     />
+                    {/* Metacognitive calibration — confident-wrong answers get
+                        the hypercorrection treatment from the judge. */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">{t('workspace.confidenceLabel')}</span>
+                      {(['sure', 'unsure'] as const).map(c => (
+                        <button
+                          key={c}
+                          type="button"
+                          disabled={verify.phase === 'judging'}
+                          onClick={() => setVerify(v => v ? { ...v, confidences: v.confidences?.map((x, j) => j === i ? c : x) } : v)}
+                          className={cn(
+                            'px-2 py-0.5 rounded-full text-[11px] border transition-colors',
+                            verify.confidences?.[i] === c
+                              ? 'border-primary/60 bg-primary/15 text-primary'
+                              : 'border-border text-muted-foreground hover:text-foreground',
+                          )}
+                        >
+                          {c === 'sure' ? t('workspace.confSure') : t('workspace.confUnsure')}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ))}
                 <button

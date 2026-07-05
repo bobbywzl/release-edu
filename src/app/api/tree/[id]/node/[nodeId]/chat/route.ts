@@ -33,6 +33,9 @@ interface Reflection {
   moveToTitle?: string | null
   // Concrete real-world execution progress detected in the student's message.
   projectProgress?: string | null
+  // A SYSTEMATIC wrong belief (same wrong idea expressed as their model of
+  // the world) — needs direct refutation, not more practice (repair theory).
+  misconception?: string | null
 }
 
 function safeParse<T>(str: string | null | undefined, fallback: T): T {
@@ -84,7 +87,8 @@ Assess and return ONLY JSON:
  "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)",
  "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers: {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
  "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
- "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>}`,
+ "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>,
+ "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}`,
       }],
     })
     try {
@@ -159,6 +163,56 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
     const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior)
     if (r) {
+      // ── ANALOGY BRIDGE (the insight moat at work) ──
+      // 2+ confused turns → stop re-explaining in the abstract. Pull the
+      // student's verified ACQUIRED KNOWLEDGE and strengths from memory and
+      // hand Bob the raw material to teach THIS concept as an explicit
+      // analogy from something they already demonstrably understand.
+      let analogyBlock = ''
+      if (r.streakWrong >= 2) {
+        try {
+          const { getTopInsights } = await import('@/lib/insight-memory')
+          const anchors = await getTopInsights(userId, { limit: 8, types: ['knowledge', 'strength', 'interest'] })
+          if (anchors.length > 0) {
+            analogyBlock = `\n- ANALOGY BRIDGE: the student verifiably knows / is strong in:\n${anchors.map(a => `    · [${a.type}] ${a.content}`).join('\n')}\n  Build your re-explanation as an EXPLICIT analogy: map the structure of one of these onto "${node.title}" step by step ("you already know X — this works the same way, except…"). Anchor the new concept to their existing knowledge, then show where the analogy breaks.`
+          }
+        } catch { /* non-critical */ }
+      }
+
+      // ── PREREQUISITE BACKWARD-CHAIN ──
+      // Research: when a learner keeps failing a skill, the deficit is often
+      // UPSTREAM. Surface unverified ancestors so Bob can check foundations
+      // instead of drilling the same wall.
+      let prereqBlock = ''
+      if (r.streakWrong >= 2) {
+        const ancestors = nodePath(tree.nodes, nodeId).slice(0, -1).filter(a => a.parentId !== null && a.status !== 'understood')
+        if (ancestors.length > 0) {
+          prereqBlock = `\n- PREREQUISITE CHECK: these upstream nodes are NOT yet verified: ${ancestors.map(a => `"${a.title}"`).join(', ')}. The real gap may live there — probe one prerequisite briefly; if confirmed, recommend moving to that node.`
+        }
+      }
+
+      // Systematic misconception → direct refutation + remembered.
+      let misconceptionBlock = ''
+      if (r.misconception) {
+        misconceptionBlock = `\n- MISCONCEPTION DETECTED: "${r.misconception}" — this is a systematic wrong model, not a slip. Refute it DIRECTLY and memorably (name the belief, show precisely why it fails, replace it), per repair theory. More examples alone will not fix it.`
+        try {
+          const { extractInsightsBackground: _ } = await import('@/lib/insight-extraction')
+          void prisma.insight.create({
+            data: {
+              userId, type: 'misconception',
+              content: `${r.misconception.slice(0, 250)} (at "${node.title}")`,
+              confidence: 0.7, importance: 0.6, source: 'reflection',
+            },
+          }).catch(() => null)
+        } catch { /* non-critical */ }
+      }
+
+      // Wheel-spinning: research says ~10 failed opportunities almost never
+      // self-resolve — and it's predictable by 3-5. Change the intervention.
+      const wheelBlock = r.streakWrong >= 4
+        ? `\n- WHEEL-SPINNING: ${r.streakWrong} confused turns. More of the same teaching will NOT work. Switch intervention entirely: a fully worked example start-to-finish, OR a different representation (visual/concrete/numeric), OR the prerequisite route above. Say openly that you're changing approach.`
+        : ''
+
       if (r.projectProgress) {
         // Flag real execution progress on this node — shown in the list
         // view and node panel as the project's build log.
@@ -185,7 +239,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 - Gap depth: ${r.gapDepth} · consecutive confused turns: ${r.streakWrong}
 - Your next move: ${r.directive}
 ${r.streakWrong >= 2 ? '- SUPPORT FIRST: two or more confused turns in a row — open with genuine, specific reassurance, then teach from a COMPLETELY different angle. No quiz this turn. Struggling IS the learning here.' : ''}
-${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well — a Socratic probe ("why do you think that works?") beats another explanation.' : ''}`
+${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well — a Socratic probe ("why do you think that works?") beats another explanation.' : ''}${analogyBlock}${prereqBlock}${misconceptionBlock}${wheelBlock}`
       void prisma.conversation.update({
         where: { id: conv!.id },
         data: { summary: JSON.stringify({ lastReflection: r }) },

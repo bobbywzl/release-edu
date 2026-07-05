@@ -22,6 +22,12 @@ import type { Insight } from '@prisma/client'
 export const INSIGHT_TYPES = [
   'personality', 'interest', 'strength', 'weakness', 'preference',
   'aspiration', 'breakthrough', 'struggle', 'style',
+  // Tree EDU additions:
+  // knowledge — verifiably ACQUIRED understanding (verified nodes, correct
+  //   own-words explanations). The raw material for analogy-bridging.
+  // misconception — a SYSTEMATIC wrong belief (not a slip). Per repair
+  //   theory these must be refuted directly — more practice won't fix them.
+  'knowledge', 'misconception',
 ] as const
 
 const ACTIVE_CAP = 50          // hard ceiling on active memory per student

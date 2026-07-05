@@ -71,6 +71,33 @@ own language / difficulty / personal background, set by a stepper at tree creati
   render with "(legacy)" labels). Every new AI call MUST record usage with a fitting
   feature tag.
 
+## The Insight Constellation (the moat — grounded in learning-science research)
+
+Bob's memory of the learner is Tree EDU's core moat. Types now include `knowledge`
+(verifiably ACQUIRED understanding — verified nodes, correct own-words explanations)
+and `misconception` (systematic wrong beliefs). The constellation:
+
+**Gathering:** chat extraction (anti-hallucination rules, reinforce-over-duplicate);
+verification outcomes (pass → `knowledge` insight + struggles resolved; fail →
+specific `struggle`); Haiku reflection (wrong-streak, misconception detection,
+project progress); consolidation keeps the set curated.
+
+**Use:** ANALOGY BRIDGE — at 2+ confused turns Bob receives the learner's verified
+knowledge/strengths and must teach the new concept as an explicit analogy from them;
+PREREQUISITE BACKWARD-CHAIN — unverified ancestor nodes are surfaced as the likely
+real gap (research: deficits are usually upstream); MISCONCEPTION REFUTATION —
+systematic wrong beliefs are refuted directly (repair theory), never drilled;
+WHEEL-SPINNING ESCAPE — at 4+ confused turns Bob must switch intervention entirely;
+HYPERCORRECTION — verify answers carry a sure/unsure confidence tap, and
+confident-wrong answers get direct, memorable refutation first; OPEN LEARNER MODEL —
+the dashboard shows "What Bob knows about you" (legible models improve learning).
+
+Key research anchors (see the learner-insight research doc): performance ≠ learning
+(delayed, first-attempt, unhinted correctness is ground truth); adapt on estimated
+knowledge per skill, not presumed learner speed; wheel-spinning is predictable and
+means change-the-intervention; learning-styles adaptation is debunked — never adapt
+on it.
+
 ## The Differentiator Principle (assessment ideology — still law)
 
 Every verification question must separate a student who MEMORIZED content from one who
