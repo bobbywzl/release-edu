@@ -132,6 +132,19 @@ export default function AdminDashboardPage() {
       .catch(() => setTokenStatsLoading(false))
   }, [])
 
+  async function clearCostData() {
+    if (!confirm('Wipe ALL cost/usage telemetry? This deletes every recorded usage event (legacy Release EDU spend included) so the panel starts fresh with Tree EDU features only. This cannot be undone.')) return
+    try {
+      const res = await fetch('/api/admin/usage', { method: 'DELETE' })
+      if (res.ok) {
+        setTokenStatsLoading(true)
+        const stats = await fetch('/api/admin/stats').then(r => (r.ok ? r.json() : null)).catch(() => null)
+        setTokenStats(stats)
+        setTokenStatsLoading(false)
+      }
+    } catch { /* surface nothing — panel just stays */ }
+  }
+
   async function changeRole(user: any, role: string) {
     if (role === user.role) return
     setBusyId(user.id); setActionMsg(null)
@@ -280,6 +293,13 @@ export default function AdminDashboardPage() {
           <h2 className="text-lg font-semibold text-foreground">AI Cost &amp; Usage</h2>
           {tokenStats && <span className="text-xs text-muted-foreground ml-1">· last {tokenStats.windowDays}d · real $ from live telemetry</span>}
           {tokenStatsLoading && <span className="text-xs text-muted-foreground ml-2">Loading…</span>}
+          <button
+            onClick={clearCostData}
+            className="ml-auto text-xs px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+            title="Delete all recorded usage events — the panel restarts from zero with Tree EDU features only"
+          >
+            Clear cost data
+          </button>
         </div>
 
         {tokenStats && tokenStats.totalEvents > 0 ? (
