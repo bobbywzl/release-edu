@@ -203,6 +203,32 @@ export function calculateXp(
   return Math.round(xp)
 }
 
+// ── Profile bootstrap ──
+// The simulation audit's biggest reward finding: a fresh user has NO
+// StudentProfile row, and every award path silently no-op'd on that —
+// day-1 check-in paid nothing, all checkpoint XP was [], badges never
+// evaluated true. XP must never depend on some other feature having
+// happened to create the profile first.
+async function ensureProfile(userId: string): Promise<{ xp: number; streak: number } | null> {
+  try {
+    const existing = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { xp: true, streak: true },
+    })
+    if (existing) return existing
+    const { ensureUserRow } = await import('@/lib/ensure-user')
+    await ensureUserRow(userId)
+    const created = await prisma.studentProfile.upsert({
+      where: { userId },
+      update: {},
+      create: { userId },
+    })
+    return { xp: created.xp, streak: created.streak }
+  } catch {
+    return null
+  }
+}
+
 // ── Daily XP accounting ──
 // Powers the daily-goal ring. Rolls over automatically when the stored date
 // is not today. Best-effort: never lets the retention layer break an award.
@@ -240,10 +266,7 @@ export async function awardXp(
     combo?: number
   } = {}
 ): Promise<XpAwardResult | null> {
-  const profile = await prisma.studentProfile.findUnique({
-    where: { userId },
-    select: { xp: true, streak: true },
-  })
+  const profile = await ensureProfile(userId)
   if (!profile) return null
 
   const currentStreak = opts.streak ?? profile.streak
@@ -276,10 +299,7 @@ export async function awardXpBatch(
   userId: string,
   awards: Array<{ source: XpSource; opts?: Parameters<typeof calculateXp>[1] }>
 ): Promise<XpAwardResult[]> {
-  const profile = await prisma.studentProfile.findUnique({
-    where: { userId },
-    select: { xp: true, streak: true },
-  })
+  const profile = await ensureProfile(userId)
   if (!profile) return []
 
   let runningTotal = profile.xp
@@ -317,6 +337,7 @@ export async function awardXpBatch(
 // ── Daily streak update ──
 
 export async function updateStreak(userId: string): Promise<{ streak: number; awards: XpAwardResult[] }> {
+  await ensureProfile(userId)
   const profile = await prisma.studentProfile.findUnique({
     where: { userId },
     select: { streak: true, updatedAt: true, xp: true },
@@ -328,7 +349,11 @@ export async function updateStreak(userId: string): Promise<{ streak: number; aw
   const lastDate = lastActive.toDateString()
   const todayDate = now.toDateString()
 
-  if (lastDate === todayDate) {
+  // streak === 0 means this user has NEVER started a streak — day one must
+  // pay (the freshly bootstrapped profile has updatedAt = now, which the
+  // same-day check would otherwise swallow, muting the most
+  // retention-critical moment of the product).
+  if (lastDate === todayDate && profile.streak > 0) {
     // Already active today — no streak update
     return { streak: profile.streak, awards: [] }
   }

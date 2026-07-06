@@ -202,10 +202,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         misconceptionBlock = `\n- MISCONCEPTION DETECTED: "${r.misconception}" — this is a systematic wrong model, not a slip. Refute it DIRECTLY and memorably (name the belief, show precisely why it fails, replace it), per repair theory. More examples alone will not fix it.`
         try {
           const { extractInsightsBackground: _ } = await import('@/lib/insight-extraction')
+          const { clampText } = await import('@/lib/clamp')
           void prisma.insight.create({
             data: {
               userId, type: 'misconception',
-              content: `${r.misconception.slice(0, 250)} (at "${node.title}")`,
+              content: `${clampText(r.misconception, 250)} (at "${node.title}")`,
               confidence: 0.7, importance: 0.6, source: 'reflection',
             },
           }).catch(() => null)
@@ -240,12 +241,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           } catch { /* non-critical */ }
         })()
       }
-      if (r.suggestNode?.title) {
+      // Discovery cards are gated for timing (simulation findings):
+      // never two turns in a row (card fatigue at peak cognitive load), no
+      // add-cards while the student is confused (competing CTAs mid-struggle),
+      // and no move-cards while this node's mastery tally is in progress
+      // (don't invite abandoning a nearly-done node).
+      const suggestedLastTurn = !!prior?.suggestNode || !!prior?.moveToTitle
+      if (r.suggestNode?.title && !suggestedLastTurn && r.streakWrong < 2) {
         suggestion = { type: 'add', title: r.suggestNode.title.slice(0, 120), summary: (r.suggestNode.summary ?? '').slice(0, 300) }
-      } else if (r.moveToTitle) {
-        const target = tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase() === r.moveToTitle!.toLowerCase())
-          ?? tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase().includes(r.moveToTitle!.toLowerCase()))
-        if (target) suggestion = { type: 'move', nodeId: target.id, title: target.title }
+      } else if (r.moveToTitle && !suggestedLastTurn) {
+        const qs = parseQuizState(node.quizState)
+        const midTally = node.status !== 'understood' && qs.correct > 0
+        if (!midTally) {
+          const target = tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase() === r.moveToTitle!.toLowerCase())
+            ?? tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase().includes(r.moveToTitle!.toLowerCase()))
+          if (target) suggestion = { type: 'move', nodeId: target.id, title: target.title }
+        }
       }
       reflectionBlock = `
 
@@ -303,6 +314,9 @@ ${filesBlock}
 - Dense, precise, zero praise-padding. Concrete examples over abstractions.
 - **Be Socratic where it earns its place**: when the student is tracking well, probe ("why would that break if…?") instead of explaining more. When they're lost, teach directly — Socratic questioning of a confused student is theatre, not teaching.
 - Connect answers back to the root problem and this node's branch whenever natural.
+- Nodes marked PENDING in the tree are unapproved proposals — they do NOT exist for the student. Never cite them as siblings they've learned from, completed context, or promised destinations. If one genuinely holds the answer, say it's waiting as a proposal on their tree for them to approve or dismiss.
+- Stay CONSISTENT with the node's explainer shown above. If you must simplify or correct it, say so explicitly ("the explainer simplifies here — the fuller picture is…") — never silently contradict it; the student reads both.
+- You do not know facts about the student's real project (stack, files, configs) unless they told you or their uploaded files show it — never assert such facts; ask or hedge.
 
 ${ANSWER_STANDARD}
 
@@ -317,13 +331,14 @@ ${ANSWER_STANDARD}
 ${node.status === 'understood'
   ? '- This node is already VERIFIED. Checkpoints are optional deepening now — focus on connections onward to the root problem.'
   : `- Mastery state: ${quizStateNow.correct}/${MASTERY_TARGET} checkpoint answers correct so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. At ${MASTERY_TARGET} correct (incl. ${MASTERY_MIN_SHORT} short answer) the node verifies automatically and the student is told in the feedback.`}
+- VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
 [[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails"}
 or
 [[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)"}
 - Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
 - "short" (own-words) carries the mastery weight — use it for the WHY/transfer probes${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' (the student still needs one)' : ''}; "mcq" for quick discrimination checks. Vary the formats.
-- At most one checkpoint per message. Never in your opening hook. Skip it on turns where the contextual read says SUPPORT FIRST.
+- At most one checkpoint per message. Never in your opening hook. Skip it on turns where the contextual read says SUPPORT FIRST — and NEVER staple a checkpoint to a turn where the student just expressed confusion or you are clarifying a misunderstanding they voiced. Quizzing a lost student converts live confusion into a recorded failure; teach first, checkpoint only once they've re-explained or responded confidently (saying "no quiz yet — tell me back in your own words first" is itself good teaching).
 - The chat UI renders the block as an interactive card — introduce it naturally in prose ("Quick check:"), but do NOT repeat the question or options in your prose, and NEVER mention the JSON or the marker.
 - Question, options, explanation and rubric all follow the session's language.
 - There is NO "Verify understanding" button — never mention one. When the node verifies, congratulate briefly and point to the next unverified node in service of the root problem.
@@ -386,8 +401,9 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
       }
 
       // Discovery card — sent to the client as a trailing machine marker,
-      // never persisted as message content.
-      if (suggestion) {
+      // never persisted as message content. One CTA per turn: if Bob asked a
+      // checkpoint this turn, the card yields (it can resurface next turn).
+      if (suggestion && !full.includes('[[QUIZ]]')) {
         try { controller.enqueue(encoder.encode(`\n\n[[TREE_SUGGEST]]${JSON.stringify(suggestion)}`)) } catch { /* closed */ }
       }
       // XP earned during this turn (perseverance) — trailing marker, the

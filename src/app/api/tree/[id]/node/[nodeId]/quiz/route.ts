@@ -25,6 +25,7 @@ import {
   getTreeWithNodes, parseQuizState, judgeCheckpointAnswer, markNodeVerified,
   recordCheckpointStruggle, MASTERY_TARGET, MASTERY_MIN_SHORT, type XpAwardLite,
 } from '@/lib/tree-engine'
+import { clampText } from '@/lib/clamp'
 
 interface QuizPayload {
   kind?: string
@@ -67,10 +68,45 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       answerText = `${String.fromCharCode(65 + idx)}) ${options[idx].slice(0, 300)}`
       // Bob authored the explanation in the session's language already.
       const explanation = (quiz.explanation ?? '').slice(0, 600)
-      // Hypercorrection: a confident-wrong MCQ pick gets flagged head-on.
-      feedback = !correct && body.confidence === 'sure'
-        ? `${zh ? '你答得很确定——所以这一点最值得当场纠正：' : "You were sure — so this is the one to fix right now: "}${explanation}`
-        : explanation
+      feedback = explanation
+      if (!correct) {
+        // Distractor-aware refutation (the moat at its sharpest moment):
+        // the distractor the student chose usually encodes THEIR specific
+        // misconception — a fast pass names why that exact option tempts and
+        // fails, instead of the same canned explanation every wrong-chooser
+        // gets. Falls back to the canned text on any error.
+        let refutation = ''
+        try {
+          const Anthropic = (await import('@anthropic-ai/sdk')).default
+          const apiKey = process.env.ANTHROPIC_API_KEY
+          if (apiKey) {
+            const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+            const client = new Anthropic({ apiKey })
+            const res = await client.messages.create({
+              model: pickBackgroundModel(),
+              max_tokens: 300,
+              messages: [{
+                role: 'user',
+                content: `A student answered a checkpoint question wrong${body.confidence === 'sure' ? ' and marked themselves SURE (hypercorrection: open by directly naming and refuting the wrong belief — confident errors are the most fixable when confronted head-on)' : ''}.
+Question: ${String(quiz.question).slice(0, 400)}
+The option THEY chose (wrong): "${options[idx].slice(0, 200)}"
+The correct option: "${options[quiz.correctIndex as number].slice(0, 200)}"
+Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — why that exact choice is tempting and precisely why it fails. Do not restate the general explanation (it follows separately). ${zh ? 'Respond in Simplified Chinese (简体中文).' : 'Respond in English.'} Return ONLY the sentences.`,
+              }],
+            })
+            try {
+              const { recordAnthropicUsage } = await import('@/lib/usage')
+              recordAnthropicUsage(res.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
+            } catch { /* non-critical */ }
+            refutation = clampText(((res.content[0] as { text?: string })?.text ?? ''), 400)
+          }
+        } catch { /* non-critical — canned explanation still lands */ }
+        feedback = refutation ? `${refutation}${explanation ? `\n\n${explanation}` : ''}` : (
+          body.confidence === 'sure'
+            ? `${zh ? '你答得很确定——所以这一点最值得当场纠正：' : 'You were sure — so this is the one to fix right now: '}${explanation}`
+            : explanation
+        )
+      }
     } else {
       const answer = String(body.answer ?? '').trim()
       if (!answer) return NextResponse.json({ error: 'answer required' }, { status: 400 })

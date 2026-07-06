@@ -104,10 +104,14 @@ export async function getResolvedStruggles(userId: string, limit = 10): Promise<
 }
 
 /**
- * On [CHAPTER_MASTERED]: struggle/weakness insights that mention the mastered
- * subject flip to `resolved` — they stop steering teaching and become
- * portfolio growth material. Matching is a conservative keyword overlap so we
- * never resolve an unrelated struggle.
+ * On verified mastery: struggle/weakness/misconception insights that mention
+ * the mastered subject flip to `resolved` — they stop steering teaching and
+ * become portfolio growth material. Misconceptions are included because a
+ * passed transfer test IS the demonstration that the wrong model was
+ * repaired; without this the open learner model keeps reporting beliefs the
+ * student visibly no longer holds (simulation: 8 stale misconceptions after
+ * three verified nodes). Matching is a conservative keyword overlap so we
+ * never resolve an unrelated insight.
  */
 export async function markStrugglesResolved(userId: string, subjectText: string): Promise<void> {
   try {
@@ -118,7 +122,7 @@ export async function markStrugglesResolved(userId: string, subjectText: string)
     if (keywords.length === 0) return
 
     const struggles = await prisma.insight.findMany({
-      where: { userId, status: 'active', type: { in: ['struggle', 'weakness'] } },
+      where: { userId, status: 'active', type: { in: ['struggle', 'weakness', 'misconception'] } },
     })
     const resolvedIds = struggles
       .filter(s => {

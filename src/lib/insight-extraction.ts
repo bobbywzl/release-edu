@@ -100,11 +100,12 @@ importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; ve
           },
         }).catch(() => null)
       } else if (op.op === 'new' && validTypes.has(op.type) && typeof op.content === 'string' && op.content.trim()) {
+        const { clampText } = await import('@/lib/clamp')
         await prisma.insight.create({
           data: {
             userId: storeUserId,
             type: op.type,
-            content: op.content.trim().slice(0, 300),
+            content: clampText(op.content, 300),
             confidence: clamp01(op.confidence, 0.5),
             importance: clamp01(op.importance, 0.4),
             source: `chat-${new Date().toISOString().split('T')[0]}`,

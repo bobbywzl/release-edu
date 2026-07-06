@@ -16,6 +16,8 @@
 import prisma from '@/lib/prisma'
 import type { TreeNode } from '@prisma/client'
 import { getTeachingModel, getJudgeModel } from '@/lib/model-resolver'
+import { ensureUserRow } from '@/lib/ensure-user'
+import { clampText } from '@/lib/clamp'
 
 function langDirective(lang?: string): string {
   return lang === 'zh'
@@ -163,10 +165,14 @@ Return ONLY JSON:
   const seed = extractJSON<SeedResult>(text)
   if (!seed?.solutions?.length) throw new Error('Seed generation failed')
 
+  // The insert must never fail AFTER the seed was paid for — guarantee the
+  // FK target exists (first-action users and demo visitors have no row yet).
+  await ensureUserRow(userId)
+
   const tree = await prisma.problemTree.create({
     data: {
       userId,
-      title: problem.slice(0, 300),
+      title: clampText(problem, 300),
       framing: seed.framing?.slice(0, 2000) ?? null,
       language: session.language,
       difficulty: session.difficulty,
@@ -176,7 +182,9 @@ Return ONLY JSON:
   const root = await prisma.treeNode.create({
     data: {
       treeId: tree.id, parentId: null, kind: 'root',
-      title: tree.title.slice(0, 120), summary: seed.rootSummary ?? seed.framing ?? '',
+      // Word-boundary clamp — the raw slice cut the problem mid-sentence
+      // ("…I need to figure out") right on the canvas root node.
+      title: clampText(tree.title, 120), summary: seed.rootSummary ?? seed.framing ?? '',
       order: 0,
     },
   })
@@ -272,7 +280,9 @@ ${sketchTree(tree.nodes)}
 TARGET NODE: "${node.title}" — ${node.summary}
 STUDENT'S QUESTION: "${question.slice(0, 500)}"
 
-If the question is CLEAR enough to branch on, propose 1-4 NEW child nodes under the target node. Each must be a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution).
+If the question is CLEAR enough to branch on, propose the FEWEST nodes that answer it — usually 1-2; propose 3-4 ONLY when the question genuinely spans that many distinct concepts (a beginner who asked one confused question does not want a mini-curriculum). Each must be a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution).
+
+CONTINGENT QUESTIONS: if the right next node depends on a fact the student does not know yet (which tool/platform/server/library their project uses), propose ONLY the diagnostic or conceptual node that resolves the unknown — never a fan of per-option how-to leaves where most are guaranteed dead ends. The tree grows the matching how-to AFTER the unknown resolves.
 
 If the question is TOO VAGUE or could branch in several very different directions, do NOT guess — ask ONE precise clarifying question instead (student-facing, warm but direct).
 
@@ -348,6 +358,9 @@ Write in markdown (400-700 words):
 4. **Where beginners go wrong** — the main misconception or failure mode
 5. **How you'll know you understand it** — 1-2 sentences describing the transfer test
 
+WORKED-EXAMPLE HONESTY (non-negotiable): you do NOT know the student's actual project details (their stack, file names, real numbers). The worked example must be an EXPLICITLY fictional third party ("imagine a shop called…") or clearly hedged as an assumption to verify — NEVER assert conclusions about THEIR project ("X is serving your files", "you see: yourbundle.js — 1.8 MB") as if observed. Asserted fiction about their own product seeds confident misconceptions the chat then has to repair.
+Nodes marked PENDING in the tree sketch are unapproved proposals — never reference them as siblings the student has learned from or as promised next steps.
+
 Dense, no fluff, no praise-padding. KaTeX ($...$) allowed for math.
 If (and only if) this concept is inherently visual — structure, flow, spatial layout, comparison — include ONE diagram at the point it belongs, as a fenced block the UI renders into a generated image (labels in the session's language, textbook style):
 \`\`\`image
@@ -416,7 +429,7 @@ export async function judgeCheckpointAnswer(
   const model = await getJudgeModel()
   const result = await client.messages.create({
     model,
-    max_tokens: 500,
+    max_tokens: 700,
     messages: [{
       role: 'user',
       content: `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
@@ -440,7 +453,9 @@ Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
   const parsed = extractJSON<{ score?: number; feedback?: string }>((result.content[0] as { text?: string })?.text ?? '')
   if (!parsed || typeof parsed.score !== 'number') throw new Error('Judging failed')
   const score = Math.max(0, Math.min(10, parsed.score))
-  return { correct: score >= 7, score, feedback: (parsed.feedback ?? '').slice(0, 600) }
+  // Sentence-safe clamp — the raw slice showed the student "…caught the bon"
+  // at the exact moment of praise.
+  return { correct: score >= 7, score, feedback: clampText(parsed.feedback ?? '', 600) }
 }
 
 export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number }
@@ -473,7 +488,7 @@ export async function markNodeVerified(
       data: {
         userId,
         type: 'knowledge',
-        content: `Verified understanding of "${node.title}" (transfer-tested): ${node.summary.slice(0, 140)}`,
+        content: `Verified understanding of "${node.title}" (transfer-tested): ${clampText(node.summary, 140)}`,
         confidence: 0.95,
         importance: 0.7,
         source: 'verification',
@@ -506,7 +521,7 @@ export async function recordCheckpointStruggle(userId: string, nodeTitle: string
       data: {
         userId,
         type: 'struggle',
-        content: `Missed a checkpoint on "${nodeTitle}": ${feedback.slice(0, 180)}`,
+        content: `Missed a checkpoint on "${nodeTitle}": ${clampText(feedback, 180)}`,
         confidence: 0.85,
         importance: 0.55,
         source: 'verification',

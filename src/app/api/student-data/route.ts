@@ -43,8 +43,24 @@ export async function GET() {
     resolvedName = sp_?.displayName || u_?.name || googleUser?.name || 'Student'
   }
   if (isDemo || (!isDemo && !googleUser)) {
+    // Honest numbers for cookie-auth users: demo visitors now own real rows
+    // (real XP, real streak) — never greet them as a fake persona with fake
+    // progress ("Good afternoon, Jordan" to a brand-new stranger).
+    const cookieUserId = await getUserId()
+    const realProfile = await prisma.studentProfile.findUnique({
+      where: { userId: cookieUserId },
+      select: { xp: true, streak: true, displayName: true },
+    }).catch(() => null)
+    const { getLevelForXp } = await import('@/lib/xp-engine')
     return NextResponse.json({
-      student: { ...mockStudent, name: isDemo ? 'Jordan Rivera' : 'Student', xp: isDemo ? mockStudent.xp : 0, level: isDemo ? mockStudent.level : 1, streak: isDemo ? mockStudent.streak : 0, stage: isDemo ? mockStudent.stage : 'motivation' },
+      student: {
+        ...mockStudent,
+        name: realProfile?.displayName || (isDemo ? 'Demo Student' : 'Student'),
+        xp: realProfile?.xp ?? 0,
+        level: getLevelForXp(realProfile?.xp ?? 0),
+        streak: realProfile?.streak ?? 0,
+        stage: 'motivation',
+      },
       knowledgeNodes: mockKnowledgeNodes,
       projects: mockProjects,
       assignments: mockAssignments,
