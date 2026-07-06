@@ -97,29 +97,29 @@ export default function LoginPage() {
               Learn <span className="text-muted-foreground">the world.</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-3">
-              <span className="text-foreground font-semibold">AI-powered personalized learning</span> — at your own pace.
+              <span className="text-foreground font-semibold">Bring one specific problem</span> — grow a tree of understanding around it.
             </p>
             {/* Value props — 2×2 blocks, big and instantly scannable */}
             <div className="mt-6 grid grid-cols-2 gap-3 text-left">
               <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
                 <BookOpen className="w-5 h-5 text-foreground" />
-                <p className="text-base font-bold text-foreground leading-snug">Any topic → a full course</p>
-                <p className="text-xs text-muted-foreground">Built for your level</p>
+                <p className="text-base font-bold text-foreground leading-snug">One problem → a whole tree</p>
+                <p className="text-xs text-muted-foreground">It grows from your questions</p>
               </div>
               <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
                 <MessageSquare className="w-5 h-5 text-foreground" />
                 <p className="text-base font-bold text-foreground leading-snug">1-on-1 AI mentor</p>
-                <p className="text-xs text-muted-foreground">Learn by chatting</p>
+                <p className="text-xs text-muted-foreground">Bob teaches every branch you open</p>
               </div>
               <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
                 <Hammer className="w-5 h-5 text-foreground" />
-                <p className="text-base font-bold text-foreground leading-snug">Learn by building</p>
-                <p className="text-xs text-muted-foreground">Real projects, not exams</p>
+                <p className="text-base font-bold text-foreground leading-snug">Mastery you prove</p>
+                <p className="text-xs text-muted-foreground">AI-verified checkpoints — no self-marking</p>
               </div>
               <div className="rounded-xl border border-border bg-card p-4 space-y-1.5">
                 <Award className="w-5 h-5 text-foreground" />
                 <p className="text-base font-bold text-foreground leading-snug">A résumé that proves it</p>
-                <p className="text-xs text-muted-foreground">For universities &amp; employers</p>
+                <p className="text-xs text-muted-foreground">Every verified node on record</p>
               </div>
             </div>
           </motion.div>
@@ -201,19 +201,19 @@ export default function LoginPage() {
             </Button>
           </motion.div>
 
-          {/* Demo mode */}
+          {/* Demo mode — the natural first step for a visitor who isn't
+              ready to connect a Google account; give it real weight. */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5, delay: 0.35 }}
-            className="text-center"
           >
             <button
               onClick={handleDemo}
               disabled={signUpLoading || signInLoading || demoLoading}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4 disabled:opacity-50"
+              className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
             >
-              {demoLoading ? 'Loading demo...' : 'Try the demo →'}
+              {demoLoading ? 'Loading demo…' : 'Try the demo — no account needed →'}
             </button>
           </motion.div>
 
