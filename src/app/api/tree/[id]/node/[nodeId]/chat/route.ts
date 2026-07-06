@@ -20,8 +20,7 @@ import {
   getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD,
   parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type XpAwardLite,
 } from '@/lib/tree-engine'
-
-const OPUS = 'claude-opus-4-8'
+import { getTeachingModel } from '@/lib/model-resolver'
 
 interface Reflection {
   state: string          // one-line read of where the student is
@@ -328,6 +327,14 @@ or
 - The chat UI renders the block as an interactive card — introduce it naturally in prose ("Quick check:"), but do NOT repeat the question or options in your prose, and NEVER mention the JSON or the marker.
 - Question, options, explanation and rubric all follow the session's language.
 - There is NO "Verify understanding" button — never mention one. When the node verifies, congratulate briefly and point to the next unverified node in service of the root problem.
+
+## VISUAL EXPLANATIONS (a diagram where words strain)
+- Use a visual when the student explicitly asks for one, OR when the concept is inherently visual — structure, spatial layout, flow/sequence, timelines/waterfalls, comparisons, geometry — and prose alone is straining. Place EXACTLY this block at the point in your explanation where the diagram belongs:
+\`\`\`image
+one-sentence description of the diagram to draw — name every part and label explicitly, textbook-diagram style
+\`\`\`
+- The UI turns the block into a generated diagram in place. Never mention the block or that an image is being generated — just continue teaching around it.
+- Labels inside the diagram follow the session's language. At most ONE per message. The Answer Standard applies to visuals too: a diagram must carry mechanism, never decoration.
 ${sessionDirectives(tree, lang)}
 ${isIntro ? `
 ## THIS TURN: YOUR OPENING HOOK (the student just arrived at this node)
@@ -349,11 +356,14 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
   const stream = new ReadableStream({
     async start(controller) {
       let full = ''
+      // Bob always speaks with the newest teaching model (resolver: latest
+      // Opus release, pinned fallback) — upgrades land without a deploy.
+      const model = await getTeachingModel()
       try {
         const Anthropic = (await import('@anthropic-ai/sdk')).default
         const client = new Anthropic({ apiKey })
         const response = client.messages.stream({
-          model: OPUS,
+          model,
           max_tokens: 2000,
           system: systemPrompt,
           messages: [...history, { role: 'user' as const, content: message.trim() }],
@@ -368,7 +378,7 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
         try {
           const final = await response.finalMessage()
           const { recordAnthropicUsage } = await import('@/lib/usage')
-          recordAnthropicUsage(final.usage, { userId, model: OPUS, feature: 'node-chat' })
+          recordAnthropicUsage(final.usage, { userId, model, feature: 'node-chat' })
         } catch { /* non-critical */ }
       } catch (err) {
         console.error('[tree] node chat failed:', err)

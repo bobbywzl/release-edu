@@ -30,10 +30,17 @@ Read this before making changes.
 - **Framework**: Next.js 14.2 (App Router), TypeScript strict mode
 - **Database**: PostgreSQL (Supabase) via Prisma 6
 - **Auth**: NextAuth 4 with Google OAuth + a `demo-mode` cookie fallback
-- **AI**: Anthropic SDK — Opus (`claude-opus-4-8`) for teaching-quality output (tree
-  seeding, node explainers, workspace chat), Sonnet (`claude-sonnet-4-6`) for
-  structured proposals/judging, Haiku (via `pickBackgroundModel()`) for background
-  passes (reflection, insight extraction). Gemini for image/file analysis.
+- **AI**: Anthropic SDK — the teaching tier (tree seeding, node explainers, workspace
+  chat) and judging tier (proposals, checkpoint judging) resolve through
+  `src/lib/model-resolver.ts`, which auto-adopts the NEWEST Opus/Sonnet release from
+  the /v1/models catalog (6h cache; pinned `CHAT_MODELS` fallback — never hardcode
+  a model id in a new Bob feature, use `getTeachingModel()`/`getJudgeModel()`).
+  Haiku (via `pickBackgroundModel()`) stays pinned for background passes (reflection,
+  insight extraction). Gemini for image/file analysis AND generated visuals: Bob
+  emits ```image fenced blocks (chat + explainers) that `MarkdownRenderer` →
+  `GeneratedVisual` turns into diagrams via `/api/image/generate` (latest Gemini
+  flash image first, durable prompt-hash cache, usage tag `image`; needs
+  `GEMINI_API_KEY`).
 - **UI**: Tailwind CSS, Radix primitives, Framer Motion, React Flow (the tree canvas),
   KaTeX.
 

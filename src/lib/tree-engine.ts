@@ -15,9 +15,7 @@
  */
 import prisma from '@/lib/prisma'
 import type { TreeNode } from '@prisma/client'
-
-const OPUS = 'claude-opus-4-8'
-const SONNET = 'claude-sonnet-4-6'
+import { getTeachingModel, getJudgeModel } from '@/lib/model-resolver'
 
 function langDirective(lang?: string): string {
   return lang === 'zh'
@@ -132,8 +130,9 @@ export async function seedTree(
     personalContext: opts.personalContext?.trim().slice(0, 1000) || null,
   }
 
+  const model = await getTeachingModel()
   const result = await client.messages.create({
-    model: OPUS,
+    model,
     max_tokens: 3000,
     messages: [{
       role: 'user',
@@ -159,7 +158,7 @@ Return ONLY JSON:
     }],
   })
 
-  void recordUsage(result, userId, OPUS, 'tree-seed')
+  void recordUsage(result, userId, model, 'tree-seed')
   const text = (result.content[0] as { text?: string })?.text ?? ''
   const seed = extractJSON<SeedResult>(text)
   if (!seed?.solutions?.length) throw new Error('Seed generation failed')
@@ -258,8 +257,9 @@ export async function proposeExpansion(
   if (!node) throw new Error('Node not found')
 
   const client = await anthropic()
+  const model = await getJudgeModel()
   const result = await client.messages.create({
-    model: SONNET,
+    model,
     max_tokens: 1500,
     messages: [{
       role: 'user',
@@ -284,7 +284,7 @@ Return ONLY JSON — one of:
     }],
   })
 
-  void recordUsage(result, userId, SONNET, 'tree-expand')
+  void recordUsage(result, userId, model, 'tree-expand')
   const text = (result.content[0] as { text?: string })?.text ?? ''
   const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; clarify?: string }>(text)
     // Tolerate a bare array (older shape).
@@ -325,8 +325,9 @@ export async function generateExplainer(userId: string, treeId: string, nodeId: 
   const client = await anthropic()
   const grounding = await studentGrounding(userId)
 
+  const model = await getTeachingModel()
   const result = await client.messages.create({
-    model: OPUS,
+    model,
     max_tokens: 2500,
     messages: [{
       role: 'user',
@@ -348,12 +349,16 @@ Write in markdown (400-700 words):
 5. **How you'll know you understand it** — 1-2 sentences describing the transfer test
 
 Dense, no fluff, no praise-padding. KaTeX ($...$) allowed for math.
+If (and only if) this concept is inherently visual — structure, flow, spatial layout, comparison — include ONE diagram at the point it belongs, as a fenced block the UI renders into a generated image (labels in the session's language, textbook style):
+\`\`\`image
+one-sentence description of the labeled diagram to draw
+\`\`\`
 ${ANSWER_STANDARD}
 ${sessionDirectives(tree, lang)}`,
     }],
   })
 
-  void recordUsage(result, userId, OPUS, 'tree-explainer')
+  void recordUsage(result, userId, model, 'tree-explainer')
   const explainer = (result.content[0] as { text?: string })?.text?.trim() ?? ''
   if (explainer) {
     await prisma.treeNode.update({ where: { id: nodeId }, data: { explainer } })
@@ -408,8 +413,9 @@ export async function judgeCheckpointAnswer(
   if (!tree || !node) throw new Error('Node not found')
 
   const client = await anthropic()
+  const model = await getJudgeModel()
   const result = await client.messages.create({
-    model: SONNET,
+    model,
     max_tokens: 500,
     messages: [{
       role: 'user',
@@ -430,7 +436,7 @@ ${sessionDirectives(tree, lang)}
 Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
     }],
   })
-  void recordUsage(result, userId, SONNET, 'tree-verify')
+  void recordUsage(result, userId, model, 'tree-verify')
   const parsed = extractJSON<{ score?: number; feedback?: string }>((result.content[0] as { text?: string })?.text ?? '')
   if (!parsed || typeof parsed.score !== 'number') throw new Error('Judging failed')
   const score = Math.max(0, Math.min(10, parsed.score))

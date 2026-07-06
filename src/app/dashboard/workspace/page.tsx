@@ -452,7 +452,7 @@ function WorkspaceInner() {
                           onUpdateHighlight={updateHighlight}
                           onDeleteHighlight={deleteHighlight}
                         >
-                          <MarkdownRenderer content={parts!.text} />
+                          <MarkdownRenderer content={parts!.text} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
                         </HighlightableText>
                         {parts!.quiz && !isActiveQuizMsg && (
                           <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50">
@@ -470,7 +470,7 @@ function WorkspaceInner() {
             {streaming && streamText && (
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
-                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0]} />
+                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0]} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
                   <span className="inline-block w-0.5 h-4 bg-primary animate-pulse rounded-full align-middle ml-0.5" />
                 </div>
               </div>
@@ -660,7 +660,7 @@ function WorkspaceInner() {
                 </h3>
                 {node?.explainer ? (
                   <div className="text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-72 overflow-y-auto">
-                    <MarkdownRenderer content={node.explainer} />
+                    <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
                   </div>
                 ) : (
                   <button

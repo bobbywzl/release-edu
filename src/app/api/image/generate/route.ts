@@ -90,10 +90,18 @@ export async function POST(req: NextRequest) {
       if (!res.ok) continue
       const data = await res.json() as {
         candidates?: { content?: { parts?: { inlineData?: { data?: string; mimeType?: string } }[] } }[]
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
       }
       const parts = data?.candidates?.[0]?.content?.parts ?? []
       const imgPart = parts.find(p => p?.inlineData?.data)
       if (!imgPart?.inlineData?.data) continue
+      // Cost telemetry — every AI call records usage with its feature tag.
+      try {
+        const [{ recordGeminiUsage }, { getUserId }] = await Promise.all([
+          import('@/lib/usage'), import('@/lib/get-user-id'),
+        ])
+        recordGeminiUsage(data.usageMetadata, { userId: await getUserId(), model, feature: 'image' })
+      } catch { /* non-critical */ }
       const mime = imgPart.inlineData.mimeType || 'image/png'
       const dataUrl = `data:${mime};base64,${imgPart.inlineData.data}`
       // Best-effort durable store (ignore unique-races / missing-table).
