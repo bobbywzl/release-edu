@@ -16,10 +16,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import {
-  getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD,
-  parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type XpAwardLite,
-} from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, type XpAwardLite } from '@/lib/tree-engine'
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 
 interface Reflection {
@@ -146,11 +144,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     conv = { ...created, messages: [] } as typeof conv & { messages: [] }
   }
 
-  // [NODE_INTRO] is the client's first-open trigger, not a student message —
-  // Bob opens the workspace with a condensed syllabus-style hook. Nothing is
-  // persisted for the trigger itself; only Bob's opener is saved.
+  // Client triggers, not student messages — nothing is persisted for the
+  // trigger itself; only Bob's reply is saved.
+  //   [NODE_INTRO]  — first open: condensed syllabus-style hook.
+  //   [NODE_REVIEW] — retention review of a verified node: reactivate the
+  //                   idea, then one fresh checkpoint (full XP).
   const isIntro = message.trim() === '[NODE_INTRO]'
-  if (!isIntro) await store.addMessage(conv!.id, 'user', message.trim())
+  const isReview = message.trim() === '[NODE_REVIEW]'
+  const isTrigger = isIntro || isReview
+  if (!isTrigger) await store.addMessage(conv!.id, 'user', message.trim())
 
   // Contextual thinking (Haiku) before Bob speaks — persisted on the
   // conversation so the wrong-streak survives across turns. The same pass
@@ -162,7 +164,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // XP earned server-side during this turn (perseverance tiers) — appended to
   // the stream as a [[XP]] marker so the client can toast it.
   const turnXp: XpAwardLite[] = []
-  if (!isIntro) {
+  if (!isTrigger) {
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
     const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
@@ -329,7 +331,7 @@ ${ANSWER_STANDARD}
 
 ## CHECKPOINT QUESTIONS (mastery is proven HERE in chat — there is no separate test)
 ${node.status === 'understood'
-  ? '- This node is already VERIFIED. Checkpoints are optional deepening now — focus on connections onward to the root problem.'
+  ? '- This node is already VERIFIED. Checkpoints are optional deepening now (exception: on a RETENTION REVIEW turn you MUST ask one) — focus on connections onward to the root problem.'
   : `- Mastery state: ${quizStateNow.correct}/${MASTERY_TARGET} checkpoint answers correct so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. At ${MASTERY_TARGET} correct (incl. ${MASTERY_MIN_SHORT} short answer) the node verifies automatically and the student is told in the feedback.`}
 - VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
@@ -359,7 +361,11 @@ Open the workspace yourself — the student has not spoken. Write a CONDENSED, s
 3. **Where it sits** — one sentence locating it in the tree: name the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and how understanding it moves the student toward answering the ROOT problem ("${tree.title}").
 4. **You'll be able to** — 2-3 crisp bullet objectives (what they can do once this node is understood).
 5. End with ONE engaging question that pulls them in (a conversational question in prose — do NOT emit a [[QUIZ]] block in this opening hook).
-No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}${reflectionBlock}`
+No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}${isReview ? `
+## THIS TURN: RETENTION REVIEW (the student clicked Review on this verified node — they have not spoken)
+Memory fades; this visit exists to interrupt that.
+1. In 2-4 sentences, reactivate the core idea as a recall cue — what it is and why it mattered to the ROOT problem ("${tree.title}"). No full re-lecture.
+2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${reflectionBlock}`
 
   const history = (conv!.messages ?? [])
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -368,12 +374,26 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
 
   const encoder = new TextEncoder()
   const convId = conv!.id
+  const QUIZ_MARK = '[[QUIZ]]'
   const stream = new ReadableStream({
     async start(controller) {
       let full = ''
       // Bob always speaks with the newest teaching model (resolver: latest
       // Opus release, pinned fallback) — upgrades land without a deploy.
       const model = await getTeachingModel()
+      // Answer-key protection: the [[QUIZ]] JSON must never stream to the
+      // client (it carries correctIndex/rubric). We forward text with a
+      // holdback the length of the marker, so no byte at or past a possible
+      // marker start ever leaves before we know whether it IS the marker.
+      let sentLen = 0
+      const forwardSafe = () => {
+        const qIdx = full.indexOf(QUIZ_MARK)
+        const safeLen = qIdx !== -1 ? qIdx : Math.max(sentLen, full.length - QUIZ_MARK.length)
+        if (safeLen > sentLen) {
+          try { controller.enqueue(encoder.encode(full.slice(sentLen, safeLen))) } catch { /* closed */ }
+          sentLen = safeLen
+        }
+      }
       try {
         const Anthropic = (await import('@anthropic-ai/sdk')).default
         const client = new Anthropic({ apiKey })
@@ -386,7 +406,7 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
         for await (const event of response) {
           if (event.type === 'content_block_delta' && 'text' in event.delta) {
             full += event.delta.text
-            controller.enqueue(encoder.encode(event.delta.text))
+            forwardSafe()
           }
         }
         // Cost telemetry for the streamed turn.
@@ -398,6 +418,44 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
       } catch (err) {
         console.error('[tree] node chat failed:', err)
         if (!full) controller.enqueue(encoder.encode("I'm having trouble connecting right now. Please try again in a moment."))
+      }
+
+      // ── Checkpoint capture ──
+      // The full quiz (with answer key) is stored server-side on the node;
+      // the client — stream AND persisted message — gets only a sanitized
+      // {kind, question, options} marker to render the card from.
+      let persistContent = full
+      const qIdx = full.indexOf(QUIZ_MARK)
+      if (qIdx !== -1) {
+        const prose = full.slice(0, qIdx).trimEnd()
+        if (qIdx > sentLen) {
+          try { controller.enqueue(encoder.encode(full.slice(sentLen, qIdx))) } catch { /* closed */ }
+          sentLen = qIdx
+        }
+        persistContent = prose
+        try {
+          const parsed = JSON.parse(full.slice(qIdx + QUIZ_MARK.length).trim()) as PendingQuiz
+          const validMcq = parsed.kind === 'mcq'
+            && Array.isArray(parsed.options) && parsed.options.length >= 2
+            && Number.isInteger(parsed.correctIndex)
+            && (parsed.correctIndex as number) >= 0 && (parsed.correctIndex as number) < parsed.options.length
+          const validShort = parsed.kind === 'short'
+          if (typeof parsed.question === 'string' && parsed.question.trim() && (validMcq || validShort)) {
+            const qs = parseQuizState(node.quizState)
+            qs.pending = { ...parsed, review: isReview || undefined, askedAt: new Date().toISOString() }
+            await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } }).catch(() => null)
+            const sanitized = JSON.stringify({ kind: parsed.kind, question: parsed.question, ...(validMcq ? { options: parsed.options } : {}) })
+            try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
+            persistContent = `${prose}\n\n${QUIZ_MARK}${sanitized}`
+          }
+        } catch { /* malformed quiz JSON — drop the marker, keep the prose */ }
+      } else {
+        forwardSafe()
+        if (full.length > sentLen) {
+          // Flush the final holdback window.
+          try { controller.enqueue(encoder.encode(full.slice(sentLen))) } catch { /* closed */ }
+          sentLen = full.length
+        }
       }
 
       // Discovery card — sent to the client as a trailing machine marker,
@@ -412,14 +470,14 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
         try { controller.enqueue(encoder.encode(`\n\n[[XP]]${JSON.stringify(turnXp)}`)) } catch { /* closed */ }
       }
 
-      if (full) {
-        await store.addMessage(convId, 'assistant', full).catch(() => null)
+      if (persistContent) {
+        await store.addMessage(convId, 'assistant', persistContent).catch(() => null)
         // Keep the insight moat: background extraction every ~5th message.
         try {
           const count = await prisma.message.count({ where: { conversationId: convId } })
           if (count % 5 === 0) {
             const { extractInsightsBackground } = await import('@/lib/insight-extraction')
-            void extractInsightsBackground(apiKey, message.trim(), full, userId)
+            void extractInsightsBackground(apiKey, message.trim(), persistContent, userId)
           }
         } catch { /* non-critical */ }
       }

@@ -127,6 +127,10 @@ model StudentProfile {
   // Best streak ever — badge criteria use this so a lost streak never
   // takes earned badges away.
   longestStreak  Int       @default(0)
+  // Last daily check-in as YYYY-MM-DD in the USER's timezone — the streak's
+  // day boundary is the learner's midnight, and the compare-and-set on this
+  // stamp makes the daily award idempotent across parallel tabs.
+  lastCheckinDay String?
   updatedAt       DateTime @updatedAt
 }
 

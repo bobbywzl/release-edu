@@ -24,6 +24,7 @@ import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { emitXpAwards } from '@/components/xp-toast'
+import { MASTERY_TARGET, parseQuizState } from '@/lib/mastery'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
 interface NodeData {
@@ -45,8 +46,9 @@ interface QuizPayload {
 
 /**
  * Split Bob's message into visible prose + the trailing [[QUIZ]] block.
- * A malformed block (bad JSON, mcq without valid options/correctIndex) is
- * dropped entirely — the marker is hidden and no dead card can render.
+ * Markers are sanitized server-side ({kind, question, options} — the answer
+ * key never reaches the client); a malformed block is dropped entirely so
+ * no dead card can render.
  */
 function splitQuiz(content: string): { text: string; quiz: QuizPayload | null } {
   const idx = content.indexOf('[[QUIZ]]')
@@ -56,27 +58,10 @@ function splitQuiz(content: string): { text: string; quiz: QuizPayload | null } 
     const parsed = JSON.parse(content.slice(idx + 8).trim()) as QuizPayload
     if (typeof parsed.question === 'string' && parsed.question.trim()) {
       if (parsed.kind === 'short') quiz = parsed
-      else if (
-        parsed.kind === 'mcq'
-        && Array.isArray(parsed.options) && parsed.options.length >= 2
-        && Number.isInteger(parsed.correctIndex)
-        && (parsed.correctIndex as number) >= 0 && (parsed.correctIndex as number) < parsed.options.length
-      ) quiz = parsed
+      else if (parsed.kind === 'mcq' && Array.isArray(parsed.options) && parsed.options.length >= 2) quiz = parsed
     }
   } catch { /* malformed — hide the marker, show only prose */ }
   return { text: content.slice(0, idx).trimEnd(), quiz }
-}
-
-const MASTERY_TARGET = 3
-
-function masteryOf(raw: string | null | undefined): { correct: number; shortCorrect: number } {
-  if (!raw) return { correct: 0, shortCorrect: 0 }
-  try {
-    const p = JSON.parse(raw) as { correct?: number; shortCorrect?: number }
-    return { correct: Math.max(0, p.correct ?? 0), shortCorrect: Math.max(0, p.shortCorrect ?? 0) }
-  } catch {
-    return { correct: 0, shortCorrect: 0 }
-  }
 }
 
 let tempId = 0
@@ -87,6 +72,9 @@ function WorkspaceInner() {
   const { t, language } = useLanguage()
   const treeId = search.get('tree')
   const nodeId = search.get('node')
+  // review=1 → retention-review entry (from the tree list's Review button):
+  // Bob reactivates this verified node and asks one fresh checkpoint.
+  const reviewEntry = search.get('review') === '1'
 
   const [tree, setTree] = useState<TreeData | null>(null)
   const [messages, setMessages] = useState<Msg[]>([])
@@ -106,7 +94,9 @@ function WorkspaceInner() {
   const [quizText, setQuizText] = useState('')
   const [quizConf, setQuizConf] = useState<'sure' | 'unsure'>('sure')
   const [quizBusy, setQuizBusy] = useState(false)
-  const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean } | null>(null)
+  // correctIndex arrives from the server on submit — the answer key never
+  // ships with the card itself.
+  const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
@@ -151,10 +141,17 @@ function WorkspaceInner() {
           const { quiz } = splitQuiz(last.content)
           if (quiz) setActiveQuiz(quiz)
         }
-        // First visit to this node: Bob opens with a condensed syllabus-style
-        // hook — the concept, where it sits in the tree, and why it matters
-        // to the root problem. Triggered once; the saved reply prevents re-runs.
-        if (d.messages.length === 0) void streamFromBob('[NODE_INTRO]', false)
+        if (reviewEntry) {
+          // Retention review: Bob reactivates the idea + asks one fresh
+          // checkpoint. Strip the flag so a reload doesn't re-trigger it.
+          void streamFromBob('[NODE_REVIEW]', false)
+          router.replace(`/dashboard/workspace?tree=${treeId}&node=${nodeId}`, { scroll: false })
+        } else if (d.messages.length === 0) {
+          // First visit to this node: Bob opens with a condensed
+          // syllabus-style hook. Triggered once; the saved reply prevents
+          // re-runs.
+          void streamFromBob('[NODE_INTRO]', false)
+        }
       })
       .catch(() => {})
     fetch(`/api/files/upload?workType=tree-node&workId=${nodeId}`, { cache: 'no-store' })
@@ -342,7 +339,7 @@ function WorkspaceInner() {
       const body = await res.json().catch(() => null)
       if (!res.ok || !body) throw new Error('quiz error')
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
-      setQuizResult({ correct: !!body.correct, verified: !!body.verified })
+      setQuizResult({ correct: !!body.correct, verified: !!body.verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
       setTimeout(() => {
         fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
           .then(r => (r.ok ? r.json() : null))
@@ -391,10 +388,10 @@ function WorkspaceInner() {
         ) : (
           /* Mastery pips: correct checkpoint answers toward verification —
              the checkpoints live in the chat itself, "Quiz me" just asks Bob. */
-          <div className="flex items-center gap-2 flex-shrink-0" title={t('workspace.masteryHint')}>
+          <div className="flex items-center gap-2 flex-shrink-0" title={t('workspace.masteryHint').replace('{n}', String(MASTERY_TARGET))}>
             <div className="flex items-center gap-1">
               {Array.from({ length: MASTERY_TARGET }).map((_, i) => (
-                <span key={i} className={cn('w-2 h-2 rounded-full transition-colors', i < Math.min(masteryOf(node?.quizState).correct, MASTERY_TARGET) ? 'bg-emerald-400' : 'bg-border')} />
+                <span key={i} className={cn('w-2 h-2 rounded-full transition-colors', i < Math.min(parseQuizState(node?.quizState).correct, MASTERY_TARGET) ? 'bg-emerald-400' : 'bg-border')} />
               ))}
             </div>
             <button
@@ -422,7 +419,7 @@ function WorkspaceInner() {
             {messages.length === 0 && !streaming && (
               <div className="text-center py-10 space-y-2">
                 <Bot className="w-8 h-8 text-primary mx-auto" />
-                <p className="text-sm text-muted-foreground max-w-md mx-auto">{t('workspace.emptyHint')}</p>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">{t('workspace.emptyHint').replace('{n}', String(MASTERY_TARGET))}</p>
               </div>
             )}
             {messages.map((m, mi) => {
@@ -500,8 +497,8 @@ function WorkspaceInner() {
                         className={cn(
                           'w-full text-left flex items-start gap-2.5 px-3 py-2 rounded-lg border text-sm transition-colors',
                           quizSel === oi && !quizResult ? 'border-primary/60 bg-primary/15 text-foreground' : 'border-border text-foreground/85 hover:bg-accent',
-                          quizResult && activeQuiz.correctIndex === oi && 'border-emerald-400/70 bg-emerald-500/15',
-                          quizResult && quizSel === oi && activeQuiz.correctIndex !== oi && 'border-red-400/60 bg-red-500/10',
+                          quizResult && quizResult.correctIndex === oi && 'border-emerald-400/70 bg-emerald-500/15',
+                          quizResult && quizSel === oi && quizResult.correctIndex !== oi && 'border-red-400/60 bg-red-500/10',
                         )}
                       >
                         <span className="font-bold text-xs mt-0.5 text-primary">{String.fromCharCode(65 + oi)}</span>

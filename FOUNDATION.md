@@ -126,6 +126,10 @@ ends with the bolded question — **"What is the specific problem you want to ma
   Preserve it in every future change.
 - **Project execution awareness**: Bob detects concrete real-world progress on the
   problem (code written, experiments run) and flags it per node.
+- **Review loop**: verified knowledge fades, so completed trees carry a **Review**
+  action — Bob revisits the stalest verified node with one fresh transfer checkpoint
+  at full XP. Learners close out a tree with **Mark as complete**, which consolidates
+  it (golden panel) into the Forest while keeping it reviewable forever.
 
 ## What survives from Release EDU
 

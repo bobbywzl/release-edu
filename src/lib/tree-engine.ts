@@ -385,30 +385,9 @@ ${sessionDirectives(tree, lang)}`,
 // questions Bob asks IN the workspace chat ([[QUIZ]] blocks — MCQ or short
 // answer). MCQs are judged deterministically; short answers by Sonnet. The
 // node flips to "understood" once the student has MASTERY_TARGET correct
-// answers including at least MASTERY_MIN_SHORT own-words short answer —
-// recognition alone (MCQ) is never enough to verify understanding.
-
-export const MASTERY_TARGET = 3
-export const MASTERY_MIN_SHORT = 1
-
-/** Per-node checkpoint tally, stored as JSON in TreeNode.quizState. */
-export interface QuizState { correct: number; attempts: number; combo: number; shortCorrect: number }
-
-export function parseQuizState(raw: string | null | undefined): QuizState {
-  const fallback: QuizState = { correct: 0, attempts: 0, combo: 0, shortCorrect: 0 }
-  if (!raw) return fallback
-  try {
-    const p = JSON.parse(raw) as Partial<QuizState>
-    return {
-      correct: Math.max(0, p.correct ?? 0),
-      attempts: Math.max(0, p.attempts ?? 0),
-      combo: Math.max(0, p.combo ?? 0),
-      shortCorrect: Math.max(0, p.shortCorrect ?? 0),
-    }
-  } catch {
-    return fallback
-  }
-}
+// answers including at least MASTERY_MIN_SHORT own-words short answer.
+// Constants + quizState parsing live in src/lib/mastery.ts (client-safe,
+// shared with the workspace UI).
 
 export interface CheckpointJudgement { correct: boolean; score: number; feedback: string }
 
@@ -514,9 +493,29 @@ export async function markNodeVerified(
   return { xp, treeCompleted }
 }
 
-/** A failed short-answer checkpoint is diagnostic gold — record the gap. */
+/**
+ * A failed short-answer checkpoint is diagnostic gold — record the gap.
+ * Reinforce-over-duplicate: repeated misses on the same node bump the
+ * existing struggle insight instead of stacking near-identical rows
+ * (a bad afternoon must not clutter Bob's memory).
+ */
 export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string): Promise<void> {
   try {
+    const existing = await prisma.insight.findFirst({
+      where: { userId, type: 'struggle', status: 'active', content: { contains: `"${nodeTitle}"` } },
+      orderBy: { lastConfirmedAt: 'desc' },
+    }).catch(() => null)
+    if (existing) {
+      await prisma.insight.update({
+        where: { id: existing.id },
+        data: {
+          timesObserved: { increment: 1 },
+          lastConfirmedAt: new Date(),
+          confidence: Math.min(1, (existing.confidence ?? 0.5) + 0.05),
+        },
+      })
+      return
+    }
     await prisma.insight.create({
       data: {
         userId,

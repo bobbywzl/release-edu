@@ -6,13 +6,19 @@ export const maxDuration = 60
  *   { quiz, answer, confidence?, lang }
  *
  * Judges ONE in-chat checkpoint question (the [[QUIZ]] card Bob emitted in
- * the workspace chat). MCQs are judged deterministically against the card's
- * correctIndex; short answers by Sonnet (Differentiator bar + hypercorrection).
+ * the workspace chat). The authoritative quiz — answer key included — lives
+ * server-side in TreeNode.quizState.pending (clients only ever receive the
+ * sanitized {kind, question, options}); we judge against that stored copy.
+ * MCQs judge deterministically, short answers via Sonnet (Differentiator
+ * bar + hypercorrection).
  *
- * This is where the reward loop lands: correct → quiz XP (+ escalating combo
- * bonuses at 3/5/10 in a row); wrong → a small attempt reward. When the node's
- * tally reaches MASTERY_TARGET correct (incl. one own-words short answer),
- * the node is verified — there is no separate verification screen.
+ * Reward rules:
+ *   - unverified node: correct → quiz XP (+ combo bonuses at 3/5/10);
+ *     wrong → small attempt reward.
+ *   - verified node, retention review: full XP (reviews must stay worth it),
+ *     and the node's reviewedAt is stamped so Review picks the stalest next.
+ *   - verified node, plain grinding: correct pays ~25%, wrong pays nothing —
+ *     no farming the daily goal on material already mastered.
  *
  * Both sides of the exchange are persisted into the node conversation so
  * Bob's next turn (and the reflection pre-pass) see the outcome.
@@ -22,39 +28,40 @@ import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
 import {
-  getTreeWithNodes, parseQuizState, judgeCheckpointAnswer, markNodeVerified,
-  recordCheckpointStruggle, MASTERY_TARGET, MASTERY_MIN_SHORT, type XpAwardLite,
+  getTreeWithNodes, judgeCheckpointAnswer, markNodeVerified,
+  recordCheckpointStruggle, type XpAwardLite,
 } from '@/lib/tree-engine'
 import { clampText } from '@/lib/clamp'
-
-interface QuizPayload {
-  kind?: string
-  question?: string
-  options?: unknown
-  correctIndex?: number
-  explanation?: string
-  rubric?: string
-}
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type PendingQuiz } from '@/lib/mastery'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
   const { id, nodeId } = await params
   const userId = await getUserId()
   const body = (await req.json().catch(() => ({}))) as {
-    quiz?: QuizPayload; answer?: string | number; confidence?: 'sure' | 'unsure'; lang?: string
-  }
-  const quiz = body.quiz
-  if (!quiz?.question || (quiz.kind !== 'mcq' && quiz.kind !== 'short')) {
-    return NextResponse.json({ error: 'quiz required' }, { status: 400 })
+    quiz?: Partial<PendingQuiz>; answer?: string | number; confidence?: 'sure' | 'unsure'; lang?: string
   }
 
   const tree = await getTreeWithNodes(userId, id)
   const node = tree?.nodes.find(n => n.id === nodeId)
   if (!tree || !node) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  // The judged quiz is the server-stored pending one. Fallback to the
+  // client-sent payload only for legacy cards persisted before answer keys
+  // moved server-side (their markers still carry correctIndex/rubric).
+  const qs = parseQuizState(node.quizState)
+  const sent = body.quiz
+  const usePending = !!qs.pending && (!sent?.question || sent.question === qs.pending.question)
+  const quiz = usePending ? qs.pending! : (sent as PendingQuiz | undefined)
+  if (!quiz?.question || (quiz.kind !== 'mcq' && quiz.kind !== 'short')) {
+    return NextResponse.json({ error: 'quiz required' }, { status: 400 })
+  }
+  const isReview = usePending && quiz.review === true
+
   const zh = (tree.language ?? body.lang) === 'zh'
   let correct = false
   let feedback = ''
   let answerText = ''
+  let correctIndex: number | undefined
 
   try {
     if (quiz.kind === 'mcq') {
@@ -64,7 +71,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         || !Number.isInteger(quiz.correctIndex) || (quiz.correctIndex as number) < 0 || (quiz.correctIndex as number) >= options.length) {
         return NextResponse.json({ error: 'invalid mcq answer' }, { status: 400 })
       }
-      correct = idx === quiz.correctIndex
+      correctIndex = quiz.correctIndex as number
+      correct = idx === correctIndex
       answerText = `${String.fromCharCode(65 + idx)}) ${options[idx].slice(0, 300)}`
       // Bob authored the explanation in the session's language already.
       const explanation = (quiz.explanation ?? '').slice(0, 600)
@@ -121,8 +129,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     return NextResponse.json({ error: 'Judging is unavailable right now.' }, { status: 502 })
   }
 
-  // ── Tally the node's checkpoint state ──
-  const qs = parseQuizState(node.quizState)
+  // ── Tally the node's checkpoint state (pending consumed, review stamped) ──
   qs.attempts += 1
   if (correct) {
     qs.correct += 1
@@ -131,20 +138,25 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   } else {
     qs.combo = 0
   }
+  qs.pending = null
+  if (isReview) qs.reviewedAt = new Date().toISOString()
   await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } }).catch(() => null)
 
-  // ── XP: every answer pays something; correctness and streaks pay more ──
+  // ── XP: every meaningful answer pays; mastered material can't be farmed ──
+  const isVerifiedNode = node.status === 'understood'
   const xp: XpAwardLite[] = []
   try {
     const { awardXp } = await import('@/lib/xp-engine')
     if (correct) {
-      const a = await awardXp(userId, 'quiz_correct', { difficulty: quiz.kind === 'mcq' ? 0.8 : 1 })
+      const baseDifficulty = quiz.kind === 'mcq' ? 0.8 : 1
+      const difficulty = isVerifiedNode && !isReview ? baseDifficulty * 0.25 : baseDifficulty
+      const a = await awardXp(userId, 'quiz_correct', { difficulty })
       if (a) xp.push(a)
-      if (qs.combo === 3 || qs.combo === 5 || qs.combo === 10) {
+      if (!isVerifiedNode && (qs.combo === 3 || qs.combo === 5 || qs.combo === 10)) {
         const c = await awardXp(userId, 'combo_bonus', { combo: qs.combo })
         if (c) xp.push(c)
       }
-    } else {
+    } else if (!isVerifiedNode || isReview) {
       const a = await awardXp(userId, 'quiz_attempt')
       if (a) xp.push(a)
     }
@@ -153,7 +165,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // ── Mastery: the in-chat tally IS the verification ──
   let verified = false
   let treeCompleted = false
-  if (node.status !== 'understood' && qs.correct >= MASTERY_TARGET && qs.shortCorrect >= MASTERY_MIN_SHORT) {
+  if (!isVerifiedNode && qs.correct >= MASTERY_TARGET && qs.shortCorrect >= MASTERY_MIN_SHORT) {
     try {
       const r = await markNodeVerified(userId, id, nodeId)
       verified = true
@@ -178,10 +190,12 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
 
   return NextResponse.json({
     correct,
+    correctIndex,
     feedback,
     xp,
     mastery: { correct: qs.correct, target: MASTERY_TARGET, shortCorrect: qs.shortCorrect, needShort: qs.shortCorrect < MASTERY_MIN_SHORT },
     verified,
     treeCompleted,
+    review: isReview,
   })
 }

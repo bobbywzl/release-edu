@@ -231,23 +231,23 @@ async function ensureProfile(userId: string): Promise<{ xp: number; streak: numb
 
 // ── Daily XP accounting ──
 // Powers the daily-goal ring. Rolls over automatically when the stored date
-// is not today. Best-effort: never lets the retention layer break an award.
+// is not today. Same-day bumps use an atomic increment so concurrent awards
+// can't overwrite each other. Best-effort: never breaks an award.
 async function bumpDailyXp(userId: string, amount: number): Promise<void> {
   if (amount <= 0) return
   try {
     const row = await prisma.studentProfile.findUnique({
       where: { userId },
-      select: { dailyXp: true, dailyXpDate: true },
+      select: { dailyXpDate: true },
     })
     if (!row) return
     const today = new Date().toDateString()
     const sameDay = row.dailyXpDate && new Date(row.dailyXpDate).toDateString() === today
     await prisma.studentProfile.update({
       where: { userId },
-      data: {
-        dailyXp: sameDay ? (row.dailyXp ?? 0) + amount : amount,
-        dailyXpDate: new Date(),
-      },
+      data: sameDay
+        ? { dailyXp: { increment: amount }, dailyXpDate: new Date() }
+        : { dailyXp: amount, dailyXpDate: new Date() },
     })
   } catch { /* schema lag — non-critical */ }
 }
@@ -273,15 +273,19 @@ export async function awardXp(
   const awarded = calculateXp(source, { ...opts, streak: currentStreak })
   if (awarded <= 0) return null
 
-  const oldLevel = getLevel(profile.xp)
-  const newTotal = profile.xp + awarded
-  const newLevel = getLevel(newTotal)
-
-  await prisma.studentProfile.update({
+  // Atomic increment: concurrent awards (quiz answer + daily check-in in
+  // another tab) can never overwrite each other. Levels derive from the
+  // returned total, so they stay accurate under races too.
+  const updated = await prisma.studentProfile.update({
     where: { userId },
-    data: { xp: newTotal },
+    data: { xp: { increment: awarded } },
+    select: { xp: true },
   })
   await bumpDailyXp(userId, awarded)
+
+  const newTotal = updated.xp
+  const oldLevel = getLevel(newTotal - awarded)
+  const newLevel = getLevel(newTotal)
 
   return {
     awarded,
@@ -302,83 +306,103 @@ export async function awardXpBatch(
   const profile = await ensureProfile(userId)
   if (!profile) return []
 
-  let runningTotal = profile.xp
-  const results: XpAwardResult[] = []
+  const amounts = awards
+    .map(({ source, opts }) => ({ source, awarded: calculateXp(source, { ...opts, streak: profile.streak }) }))
+    .filter(a => a.awarded > 0)
+  if (amounts.length === 0) return []
+  const total = amounts.reduce((sum, a) => sum + a.awarded, 0)
 
-  for (const { source, opts } of awards) {
-    const awarded = calculateXp(source, { ...opts, streak: profile.streak })
-    if (awarded <= 0) continue
+  // One atomic increment for the whole batch; per-award levels replay from
+  // the returned total so they're correct even under concurrent awards.
+  const updated = await prisma.studentProfile.update({
+    where: { userId },
+    data: { xp: { increment: total } },
+    select: { xp: true },
+  })
+  await bumpDailyXp(userId, total)
 
-    const oldLevel = getLevel(runningTotal)
-    runningTotal += awarded
-    const newLevel = getLevel(runningTotal)
-
-    results.push({
+  let running = updated.xp - total
+  return amounts.map(({ source, awarded }) => {
+    const oldLevel = getLevel(running)
+    running += awarded
+    const newLevel = getLevel(running)
+    return {
       awarded,
       source,
       label: XP_TABLE[source].label,
-      newTotal: runningTotal,
+      newTotal: running,
       levelUp: newLevel > oldLevel,
       newLevel,
-    })
-  }
-
-  if (results.length > 0) {
-    await prisma.studentProfile.update({
-      where: { userId },
-      data: { xp: runningTotal },
-    })
-    await bumpDailyXp(userId, runningTotal - profile.xp)
-  }
-
-  return results
+    }
+  })
 }
 
 // ── Daily streak update ──
 
-export async function updateStreak(userId: string): Promise<{ streak: number; awards: XpAwardResult[] }> {
+/**
+ * Calendar day (YYYY-MM-DD) in the USER's timezone. Day boundaries must be
+ * the learner's midnight, not the server's — a Shanghai student studying at
+ * 23:30 must not lose a streak to a UTC server clock. Invalid/missing
+ * timezone falls back to the server's zone.
+ */
+function dayKey(d: Date, timeZone?: string): string {
+  try {
+    return d.toLocaleDateString('en-CA', timeZone ? { timeZone } : undefined)
+  } catch {
+    return d.toLocaleDateString('en-CA')
+  }
+}
+
+export async function updateStreak(userId: string, timeZone?: string): Promise<{ streak: number; awards: XpAwardResult[] }> {
   await ensureProfile(userId)
-  const profile = await prisma.studentProfile.findUnique({
-    where: { userId },
-    select: { streak: true, updatedAt: true, xp: true },
-  })
+  let profile: { streak: number; updatedAt: Date; longestStreak: number | null; lastCheckinDay: string | null } | null = null
+  try {
+    profile = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { streak: true, updatedAt: true, longestStreak: true, lastCheckinDay: true },
+    })
+  } catch {
+    // Schema lag (lastCheckinDay not pushed yet) — legacy columns only.
+    const legacy = await prisma.studentProfile.findUnique({
+      where: { userId },
+      select: { streak: true, updatedAt: true },
+    })
+    profile = legacy ? { ...legacy, longestStreak: null, lastCheckinDay: null } : null
+  }
   if (!profile) return { streak: 0, awards: [] }
 
-  const lastActive = profile.updatedAt
   const now = new Date()
-  const lastDate = lastActive.toDateString()
-  const todayDate = now.toDateString()
+  const today = dayKey(now, timeZone)
+  const yesterday = dayKey(new Date(now.getTime() - 24 * 60 * 60 * 1000), timeZone)
+  // Migration fallback: before the first stamped check-in, approximate the
+  // last active day from updatedAt so existing streaks survive the rollout.
+  const lastDay = profile.lastCheckinDay ?? dayKey(profile.updatedAt, timeZone)
 
   // streak === 0 means this user has NEVER started a streak — day one must
-  // pay (the freshly bootstrapped profile has updatedAt = now, which the
-  // same-day check would otherwise swallow, muting the most
-  // retention-critical moment of the product).
-  if (lastDate === todayDate && profile.streak > 0) {
-    // Already active today — no streak update
+  // pay (a freshly bootstrapped profile has updatedAt = now, which the
+  // updatedAt fallback would read as "already here today", muting the most
+  // retention-critical moment of the product). A stamped lastCheckinDay
+  // always wins over that heuristic.
+  if (lastDay === today && (profile.lastCheckinDay !== null || profile.streak > 0)) {
+    // Already checked in today — no streak update.
     return { streak: profile.streak, awards: [] }
   }
 
-  // Check if yesterday
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  const isConsecutive = lastDate === yesterday.toDateString()
+  const newStreak = lastDay === yesterday ? profile.streak + 1 : 1
 
-  const newStreak = isConsecutive ? profile.streak + 1 : 1
-
+  // Compare-and-set on the day stamp: of N concurrent check-ins (multiple
+  // tabs at the same instant), exactly one wins and pays the day's awards.
+  // longestStreak is tracked so a later broken streak never revokes badges.
   try {
-    // Track the best-ever streak too — badge criteria read longestStreak so
-    // a broken streak never revokes earned badges.
-    const prev = await prisma.studentProfile.findUnique({
-      where: { userId },
-      select: { longestStreak: true },
+    const won = await prisma.studentProfile.updateMany({
+      where: { userId, OR: [{ lastCheckinDay: null }, { lastCheckinDay: { not: today } }] },
+      data: { lastCheckinDay: today, streak: newStreak, longestStreak: Math.max(newStreak, profile.longestStreak ?? 0) },
     })
-    await prisma.studentProfile.update({
-      where: { userId },
-      data: { streak: newStreak, longestStreak: Math.max(newStreak, prev?.longestStreak ?? 0) },
-    })
+    if (won.count === 0) return { streak: newStreak, awards: [] }
   } catch {
-    // Schema lag — fall back to updating only the streak.
-    await prisma.studentProfile.update({ where: { userId }, data: { streak: newStreak } })
+    // Schema lag — legacy non-guarded write (same-day check above still holds
+    // for sequential calls).
+    await prisma.studentProfile.update({ where: { userId }, data: { streak: newStreak } }).catch(() => null)
   }
 
   // Award streak XP + the first-session-of-the-day bonus (a new day reaching

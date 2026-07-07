@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Sprout, Plus, Trash2, CheckCircle2, Loader2 } from 'lucide-react'
+import { Sprout, Plus, Trash2, CheckCircle2, Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -67,6 +67,46 @@ export default function TreePage() {
     if (!confirm(t('tree.deleteConfirm'))) return
     await fetch(`/api/tree/${id}`, { method: 'DELETE' }).catch(() => {})
     setTrees(prev => prev?.filter(tr => tr.id !== id) ?? prev)
+  }
+
+  // ── Consolidation: the learner closes out a tree ──
+  // The panel plays a golden "settling" pulse, then keeps the consolidated
+  // (amber) look permanently. Trees also auto-complete when every node
+  // verifies; this button is the deliberate hand-on-the-cover moment.
+  const [consolidating, setConsolidating] = useState<string | null>(null)
+  async function markComplete(id: string) {
+    if (consolidating || !confirm(t('tree.completeConfirm'))) return
+    setConsolidating(id)
+    try {
+      await fetch(`/api/tree/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed' }),
+      })
+    } catch { /* transient — the animation still resolves; reload reflects truth */ }
+    setTimeout(() => {
+      setTrees(prev => prev?.map(tr => (tr.id === id ? { ...tr, status: 'completed' } : tr)) ?? prev)
+      setConsolidating(null)
+    }, 950)
+  }
+
+  // ── Review: retention practice on a completed tree ──
+  // The server picks the stalest verified node; the workspace opens in
+  // review mode where Bob reactivates the idea and asks a fresh checkpoint.
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null)
+  async function startReview(id: string) {
+    if (reviewBusy) return
+    setReviewBusy(id)
+    try {
+      const res = await fetch(`/api/tree/${id}/review`, { method: 'POST' })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body?.nodeId) {
+        router.push(`/dashboard/workspace?tree=${id}&node=${body.nodeId}&review=1`)
+        return
+      }
+      alert(t('tree.reviewNone'))
+    } catch { /* transient */ }
+    setReviewBusy(null)
   }
 
   return (
@@ -199,17 +239,62 @@ export default function TreePage() {
         )}
         {trees?.map(tree => {
           const pct = tree.nodeCount > 0 ? Math.round((tree.understoodCount / tree.nodeCount) * 100) : 0
+          const consolidated = tree.status === 'completed'
+          const settling = consolidating === tree.id
           return (
             <Link key={tree.id} href={`/dashboard/tree/${tree.id}`} className="block group">
-              <div className="border border-border rounded-xl bg-card p-4 hover:border-primary/40 transition-colors">
+              <motion.div
+                animate={settling ? {
+                  scale: [1, 1.03, 1],
+                  boxShadow: [
+                    '0 0 0px rgba(251,191,36,0)',
+                    '0 0 42px rgba(251,191,36,0.5)',
+                    '0 0 0px rgba(251,191,36,0)',
+                  ],
+                } : {}}
+                transition={{ duration: 0.95, ease: 'easeInOut' }}
+                className={cn(
+                  'border rounded-xl p-4 transition-colors',
+                  // Consolidated trees settle into a golden panel — done,
+                  // sealed, and worth coming back to review.
+                  consolidated || settling
+                    ? 'border-amber-400/45 bg-amber-500/[0.07] hover:border-amber-400/70'
+                    : 'border-border bg-card hover:border-primary/40',
+                )}
+              >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">
+                    <p className={cn('text-sm font-bold text-foreground transition-colors', consolidated ? 'group-hover:text-amber-400' : 'group-hover:text-primary')}>
                       {tree.title}
-                      {tree.status === 'completed' && <CheckCircle2 className="inline w-4 h-4 text-emerald-400 ml-1.5 -mt-0.5" />}
+                      {consolidated && (
+                        <span className="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-400 text-[10px] font-bold align-middle">
+                          <Sparkles className="w-3 h-3" /> {t('tree.consolidated')}
+                        </span>
+                      )}
                     </p>
                     {tree.framing && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{tree.framing}</p>}
                   </div>
+                  {consolidated ? (
+                    <button
+                      onClick={e => { e.preventDefault(); startReview(tree.id) }}
+                      disabled={reviewBusy === tree.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 text-amber-300 text-[11px] font-medium hover:bg-amber-500/20 transition-colors flex-shrink-0 disabled:opacity-50"
+                      title={t('tree.reviewHint')}
+                    >
+                      {reviewBusy === tree.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      {t('tree.review')}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={e => { e.preventDefault(); markComplete(tree.id) }}
+                      disabled={settling}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground text-[11px] font-medium hover:text-amber-300 hover:border-amber-400/40 hover:bg-amber-500/10 transition-colors flex-shrink-0 disabled:opacity-50"
+                      title={t('tree.markCompleteHint')}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {t('tree.markComplete')}
+                    </button>
+                  )}
                   <button
                     onClick={e => { e.preventDefault(); deleteTree(tree.id) }}
                     className="p-1.5 rounded-md text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors flex-shrink-0"
@@ -221,7 +306,7 @@ export default function TreePage() {
                 <div className="mt-3 flex items-center gap-3">
                   <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                     <div
-                      className={cn('h-full rounded-full transition-all', pct === 100 ? 'bg-emerald-400' : 'bg-primary')}
+                      className={cn('h-full rounded-full transition-all', consolidated ? 'bg-amber-400' : pct === 100 ? 'bg-emerald-400' : 'bg-primary')}
                       style={{ width: `${pct}%` }}
                     />
                   </div>
@@ -229,7 +314,7 @@ export default function TreePage() {
                     {tree.understoodCount}/{tree.nodeCount} · {pct}%
                   </span>
                 </div>
-              </div>
+              </motion.div>
             </Link>
           )
         })}

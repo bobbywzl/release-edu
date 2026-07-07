@@ -59,14 +59,19 @@ stepper at tree creation.
 ## Key Code Map
 
 - `src/lib/tree-engine.ts` — seeding, expansion proposals (with clarify), explainers,
-  checkpoint verification (`judgeCheckpointAnswer`, `markNodeVerified`,
-  `MASTERY_TARGET`), `sessionDirectives()`, `ANSWER_STANDARD`. The heart of the product.
-- `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat routes.
-  The node chat route holds Bob's workspace prompt, the Haiku contextual pre-pass
-  (gap/wrong-streak/directive + node-discovery + move-recommendation + project-progress
-  detection), the `[NODE_INTRO]` hook, and `[[TREE_SUGGEST]]`/`[[XP]]` stream markers;
-  Bob's own text carries `[[QUIZ]]` checkpoint blocks, answered via the quiz route
-  (MCQ judged locally, short answers by Sonnet; XP + mastery tally live there).
+  checkpoint verification (`judgeCheckpointAnswer`, `markNodeVerified`),
+  `sessionDirectives()`, `ANSWER_STANDARD`. The heart of the product.
+- `src/lib/mastery.ts` — client-safe single source of truth: `MASTERY_TARGET`,
+  `parseQuizState`, the `PendingQuiz` shape. UI strings interpolate `{n}` from it.
+- `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat/review
+  routes. The node chat route holds Bob's workspace prompt, the Haiku contextual
+  pre-pass (gap/wrong-streak/directive + node-discovery + move-recommendation +
+  project-progress detection), the `[NODE_INTRO]`/`[NODE_REVIEW]` hooks, and
+  `[[TREE_SUGGEST]]`/`[[XP]]` stream markers. Bob's `[[QUIZ]]` blocks are captured
+  server-side: the full quiz (answer key) lives in `TreeNode.quizState.pending`,
+  clients only ever see a sanitized `{kind, question, options}` marker (stream AND
+  persisted message). The quiz route judges against the stored copy; verified-node
+  grinding pays ~25% XP (reviews pay full and stamp `reviewedAt`).
 - `src/app/dashboard/tree/**` — tree list + session-onboarding stepper; the canvas
   (organic layout, string-tension drag physics, shape-preserving subtree follow,
   hierarchy clamps) and the searchable list view.
@@ -78,7 +83,9 @@ stepper at tree creation.
   daily goal, streaks, badges, sounds (`src/lib/sfx.ts`). Checkpoint answers pay
   `quiz_correct` / `quiz_attempt` / tiered `combo_bonus`; showing up pays via
   `updateStreak` (daily streak + first session), fired by `/api/xp/checkin` from
-  `DailyCheckin` in the dashboard layout.
+  `DailyCheckin` in the dashboard layout. Streak day boundaries use the USER's
+  timezone (`StudentProfile.lastCheckinDay`, compare-and-set so parallel tabs can't
+  double-award); all XP writes are atomic increments.
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,

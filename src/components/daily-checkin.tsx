@@ -16,7 +16,15 @@ export function DailyCheckin() {
   useEffect(() => {
     if (fired.current) return
     fired.current = true
-    fetch('/api/xp/checkin', { method: 'POST' })
+    // Send the browser's IANA timezone so the streak's "new day" boundary
+    // is the learner's midnight, not the server's.
+    let timeZone: string | undefined
+    try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone } catch { /* fallback: server tz */ }
+    fetch('/api/xp/checkin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeZone }),
+    })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (Array.isArray(d?.awards) && d.awards.length > 0) {
