@@ -27,9 +27,20 @@ export interface BadgeEvent {
 type XpListener = (event: XpEvent) => void
 const listeners = new Set<XpListener>()
 
+// Lightweight "XP totals changed" bus — the XP panel/ring subscribes to
+// re-fetch its summary whenever any award lands (daily check-in, quiz answer),
+// so the streak/goal display never sits stale until a manual reload.
+type ChangeListener = () => void
+const changeListeners = new Set<ChangeListener>()
+export function subscribeXpChange(fn: ChangeListener): () => void {
+  changeListeners.add(fn)
+  return () => { changeListeners.delete(fn) }
+}
+
 export function emitXpEvent(event: Omit<XpEvent, 'id'>) {
   const full: XpEvent = { ...event, id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
   listeners.forEach(fn => fn(full))
+  changeListeners.forEach(fn => { try { fn() } catch { /* non-critical */ } })
 }
 
 // Convenience: emit from API response xpAwards array

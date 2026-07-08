@@ -17,7 +17,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Flame, ChevronRight, X, Star, Volume2, VolumeX } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLanguage } from '@/lib/i18n'
-import { emitBadgeEvents, type BadgeEvent } from '@/components/xp-toast'
+import { emitBadgeEvents, subscribeXpChange, type BadgeEvent } from '@/components/xp-toast'
 import { sfxEnabled, setSfxEnabled } from '@/lib/sfx'
 
 interface BadgeInfo {
@@ -95,6 +95,19 @@ export function XpPanel() {
     } catch { /* transient */ }
   }, [])
   useEffect(() => { load() }, [load])
+  // Refresh when any XP award lands (daily check-in, quiz answer) so the
+  // streak-at-risk flame and daily-goal ring never sit stale — the check-in
+  // fires on the same mount as this panel, and a once-on-mount fetch would
+  // otherwise show a false "streak at risk" for the whole visit. Debounced so
+  // a burst of staggered awards triggers a single refetch.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const unsub = subscribeXpChange(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { void load() }, 1200)
+    })
+    return () => { if (timer) clearTimeout(timer); unsub() }
+  }, [load])
 
   async function toggleFeature(badge: BadgeInfo) {
     if (!badge.earned || !data) return

@@ -82,7 +82,11 @@ function WorkspaceInner() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
-  const [showNotes, setShowNotes] = useState(true)
+  // Open by default on desktop, CLOSED on phones — otherwise the fixed-width
+  // notes panel covers the whole viewport and the Bob chat (where mastery is
+  // actually proven) opens at zero width and reads as missing. (Client-only
+  // component under Suspense, so window is available at first render.)
+  const [showNotes, setShowNotes] = useState<boolean>(() => (typeof window === 'undefined' ? true : window.innerWidth >= 1024))
   const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files' | 'log'>('notes')
   const [explainerLoading, setExplainerLoading] = useState(false)
   const [notesDraft, setNotesDraft] = useState<string | null>(null)
@@ -96,6 +100,7 @@ function WorkspaceInner() {
   // A silent default would poison the calibration counters (sureWrong).
   const [quizConf, setQuizConf] = useState<'sure' | 'unsure' | null>(null)
   const [quizBusy, setQuizBusy] = useState(false)
+  const [quizError, setQuizError] = useState(false)
   // correctIndex arrives from the server on submit — the answer key never
   // ships with the card itself.
   const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
@@ -110,6 +115,12 @@ function WorkspaceInner() {
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // Latest node in view + the pending quiz-resync timer — so an async resync
+  // that resolves after the user switches nodes can't clobber the new node's
+  // chat, and the timer is cancelled on switch.
+  const nodeIdRef = useRef(nodeId)
+  const quizTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => { nodeIdRef.current = nodeId }, [nodeId])
 
   // Annotations come from HIGHLIGHTS made directly on the conversation —
   // select any text in Bob's messages, pick a color, attach a comment
@@ -180,7 +191,10 @@ function WorkspaceInner() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
-  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null) }, [nodeId])
+  useEffect(() => {
+    if (quizTimerRef.current) { clearTimeout(quizTimerRef.current); quizTimerRef.current = null }
+    setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+  }, [nodeId])
 
   // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
   // first-open trigger — Bob speaks without a student bubble appearing.
@@ -225,7 +239,7 @@ function WorkspaceInner() {
       const { quiz } = splitQuiz(full)
       if (quiz) {
         setActiveQuiz(quiz)
-        setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null)
+        setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
         // Attention arbiter (client side): the checkpoint card is the one
         // CTA this turn — a lingering discovery card yields to it.
         setSuggestion(null)
@@ -306,14 +320,20 @@ function WorkspaceInner() {
     if (!suggestion || suggestion.type !== 'add' || !treeId || !nodeId || suggestionBusy) return
     setSuggestionBusy(true)
     try {
-      await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
+      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'add_child', title: suggestion.title, summary: suggestion.summary }),
       })
-      setSuggestion(null)
-      loadTree()
-    } finally {
+      // Only dismiss the card once the node actually joined the tree — the
+      // discovery card is ephemeral client state, not a persisted ghost, so
+      // clearing it on a failed add would silently lose the growth the user
+      // approved (permission granted, nothing grew). Keep it armed to retry.
+      if (res.ok) {
+        setSuggestion(null)
+        loadTree()
+      }
+    } catch { /* keep the card armed for retry */ } finally {
       setSuggestionBusy(false)
     }
   }
@@ -355,30 +375,41 @@ function WorkspaceInner() {
         body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf ?? undefined, lang: language }),
       })
       const body = await res.json().catch(() => null)
+      // Only apply a resync if the user is still on the node we answered.
+      const answeredNode = nodeId
+      const resyncChat = () => {
+        if (nodeIdRef.current !== answeredNode) return
+        fetch(`/api/tree/${treeId}/node/${answeredNode}/chat`, { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => { if (nodeIdRef.current === answeredNode && d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
+          .catch(() => {})
+      }
       if (res.status === 400 || res.status === 404 || res.status === 409) {
         // Permanently unanswerable card (stale after a newer checkpoint, or
         // malformed) — retire it and resync rather than dead-ending the
         // student on a Submit button that never resolves.
         setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
-        fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
-          .then(r => (r.ok ? r.json() : null))
-          .then(d => { if (d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
-          .catch(() => {})
+        resyncChat()
         return
       }
       if (!res.ok || !body) throw new Error('quiz error')
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
       setQuizResult({ correct: !!body.correct, verified: !!body.verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
-      setTimeout(() => {
-        fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
-          .then(r => (r.ok ? r.json() : null))
-          .then(d => { if (d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
-          .catch(() => {})
+      if (quizTimerRef.current) clearTimeout(quizTimerRef.current)
+      quizTimerRef.current = setTimeout(() => {
+        quizTimerRef.current = null
+        resyncChat()
         loadTree()
-        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText('')
+        // Only retire the card if we're still on the answered node — the
+        // node-switch reset effect already cleared it otherwise.
+        if (nodeIdRef.current === answeredNode) { setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText('') }
       }, 1600)
+      setQuizError(false)
     } catch {
-      /* transient — leave the card armed so the student can retry */
+      // Transient (judge unavailable / network) — surface it so the button
+      // doesn't silently revert from "Judging…" to "Submit"; the card stays
+      // armed and the server re-arms the pending, so retry is safe.
+      setQuizError(true)
     } finally {
       setQuizBusy(false)
     }
@@ -594,14 +625,17 @@ function WorkspaceInner() {
                     {quizResult.correct ? t('workspace.quizCorrect') : t('workspace.quizIncorrect')}
                   </p>
                 ) : (
-                  <button
-                    onClick={submitQuiz}
-                    disabled={quizBusy || (activeQuiz.kind === 'mcq' ? quizSel === null : !quizText.trim())}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-40"
-                  >
-                    {quizBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                    {quizBusy ? t('workspace.quizJudging') : t('workspace.quizSubmit')}
-                  </button>
+                  <div className="space-y-1.5">
+                    {quizError && <p className="text-[11px] text-amber-400">{t('workspace.connectError')}</p>}
+                    <button
+                      onClick={submitQuiz}
+                      disabled={quizBusy || (activeQuiz.kind === 'mcq' ? quizSel === null : !quizText.trim())}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-40"
+                    >
+                      {quizBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                      {quizBusy ? t('workspace.quizJudging') : quizError ? t('workspace.quizRetry') : t('workspace.quizSubmit')}
+                    </button>
+                  </div>
                 )}
               </motion.div>
             )}
@@ -698,9 +732,11 @@ function WorkspaceInner() {
           </div>
         </div>
 
-        {/* Formal notes panel — retained knowledge above Notes/Annotations/Files tabs */}
+        {/* Formal notes panel — retained knowledge above Notes/Annotations/Files
+            tabs. Inline column on desktop; a right-side overlay on phones so it
+            never squeezes the chat to zero width. */}
         {showNotes && (
-          <div className="w-96 flex-shrink-0 border-l border-border bg-card/40 overflow-y-auto">
+          <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl bg-card lg:static lg:z-auto lg:w-96 lg:max-w-none lg:shadow-none lg:bg-card/40 flex-shrink-0 border-l border-border overflow-y-auto">
             <div className="p-4 space-y-4">
               <div>
                 <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5 mb-2">
