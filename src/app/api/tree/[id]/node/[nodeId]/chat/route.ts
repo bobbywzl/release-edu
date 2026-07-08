@@ -59,6 +59,7 @@ async function haikuReflect(
   lastBobMsg: string,
   studentMsg: string,
   prior: Reflection | null,
+  sessionLang?: string,
 ): Promise<Reflection | null> {
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default
@@ -89,7 +90,7 @@ Assess and return ONLY JSON:
  "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
  "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>,
  "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}
-Write "projectProgress" and "misconception" in the same language as the student's messages (they are shown to the student).`,
+Write the human-readable strings — suggestNode's "title" and "summary", "projectProgress", and "misconception" — entirely in ${sessionLang === 'zh' ? 'Simplified Chinese (简体中文)' : 'English'} (the session language; these are persisted and shown to the student, e.g. an approved suggestNode becomes a real tree node).`,
       }],
     })
     try {
@@ -173,7 +174,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
     const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
-    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior)
+    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior, tree.language ?? lang)
     if (r) {
       // ── ANALOGY BRIDGE (the insight moat at work) ──
       // 2+ confused turns → stop re-explaining in the abstract. Pull the
@@ -210,12 +211,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Reinforce-over-duplicate: haikuReflect emits a misconception when it
         // RECURS, so an unconditional create would stack near-identical rows
         // (the same bug fixed for struggles). Bump the existing one instead.
+        const zhSession = (tree.language ?? lang) === 'zh'
         void (async () => {
           try {
             const { clampText } = await import('@/lib/clamp')
-            const tag = `(at "${node.title}")`
+            // Localized wrapper (no English scaffolding in a 中文 panel); dedup
+            // matches on the BARE title so it works across both quote styles.
+            const tag = zhSession ? `（出现在「${node.title}」）` : `(at "${node.title}")`
             const existing = await prisma.insight.findFirst({
-              where: { userId, type: 'misconception', status: 'active', content: { contains: tag } },
+              where: {
+                userId, type: 'misconception', status: 'active',
+                OR: [{ content: { contains: `"${node.title}"` } }, { content: { contains: `「${node.title}」` } }],
+              },
               orderBy: { lastConfirmedAt: 'desc' },
             })
             if (existing) {

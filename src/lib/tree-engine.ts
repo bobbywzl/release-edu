@@ -642,8 +642,14 @@ ${sessionDirectives(tree, lang)}`,
  */
 export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string, lang?: string): Promise<void> {
   try {
+    // Match the DELIMITED title in either quote style ("title" EN / 「title」
+    // 中文). Delimiters keep dedup cross-language AND collision-immune — a bare
+    // substring would let a miss on "递归" bump the "尾递归" row.
     const existing = await prisma.insight.findFirst({
-      where: { userId, type: 'struggle', status: 'active', content: { contains: `"${nodeTitle}"` } },
+      where: {
+        userId, type: 'struggle', status: 'active',
+        OR: [{ content: { contains: `"${nodeTitle}"` } }, { content: { contains: `「${nodeTitle}」` } }],
+      },
       orderBy: { lastConfirmedAt: 'desc' },
     }).catch(() => null)
     if (existing) {

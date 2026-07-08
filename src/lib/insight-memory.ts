@@ -133,10 +133,14 @@ export async function markStrugglesResolved(userId: string, subjectText: string)
       .split(/[\s,，、:：\-—()（）]+/)
       .map(k => k.trim())
       .filter(k => k.length >= 4 && !RESOLVE_STOPWORDS.has(k))
-    // The exact quoted title (both structured writers embed `"${node.title}"`)
-    // is the strongest signal and matches even single-word titles.
-    const titlePhrase = `"${lowerSubject}"`
-    if (keywords.length === 0) return
+    // The DELIMITED title (either quote style) is the strongest signal and the
+    // sole one for Chinese/whitespace-less titles (which don't split into
+    // keywords). Delimiters keep it collision-immune: 「递归」 does not match
+    // 「尾递归」, so verifying one node never resolves a different node's struggle.
+    const titlePhrases = lowerSubject ? [`"${lowerSubject}"`, `「${lowerSubject}」`] : []
+    // Chinese/whitespace-less titles yield no keywords — the title phrase is
+    // then the sole signal, so do NOT early-return on empty keywords.
+    if (keywords.length === 0 && !lowerSubject) return
 
     const struggles = await prisma.insight.findMany({
       where: { userId, status: 'active', type: { in: ['struggle', 'weakness', 'misconception'] } },
@@ -144,10 +148,10 @@ export async function markStrugglesResolved(userId: string, subjectText: string)
     const resolvedIds = struggles
       .filter(s => {
         const c = s.content.toLowerCase()
-        // Exact title phrase, OR ≥2 meaningful keyword hits (one generic word
-        // shared by chance is not enough), OR the single meaningful keyword of
-        // a one-concept title.
-        if (c.includes(titlePhrase)) return true
+        // Delimited title phrase (either quote style), OR ≥2 meaningful keyword
+        // hits (one generic word shared by chance is not enough), OR the single
+        // meaningful keyword of a one-concept title.
+        if (titlePhrases.some(p => c.includes(p))) return true
         const hits = keywords.filter(k => c.includes(k)).length
         return keywords.length === 1 ? hits === 1 : hits >= 2
       })
