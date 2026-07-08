@@ -207,17 +207,37 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       let misconceptionBlock = ''
       if (r.misconception) {
         misconceptionBlock = `\n- MISCONCEPTION DETECTED: "${r.misconception}" — this is a systematic wrong model, not a slip. Refute it DIRECTLY and memorably (name the belief, show precisely why it fails, replace it), per repair theory. More examples alone will not fix it.`
-        try {
-          const { extractInsightsBackground: _ } = await import('@/lib/insight-extraction')
-          const { clampText } = await import('@/lib/clamp')
-          void prisma.insight.create({
-            data: {
-              userId, type: 'misconception',
-              content: `${clampText(r.misconception, 250)} (at "${node.title}")`,
-              confidence: 0.7, importance: 0.6, source: 'reflection',
-            },
-          }).catch(() => null)
-        } catch { /* non-critical */ }
+        // Reinforce-over-duplicate: haikuReflect emits a misconception when it
+        // RECURS, so an unconditional create would stack near-identical rows
+        // (the same bug fixed for struggles). Bump the existing one instead.
+        void (async () => {
+          try {
+            const { clampText } = await import('@/lib/clamp')
+            const tag = `(at "${node.title}")`
+            const existing = await prisma.insight.findFirst({
+              where: { userId, type: 'misconception', status: 'active', content: { contains: tag } },
+              orderBy: { lastConfirmedAt: 'desc' },
+            })
+            if (existing) {
+              await prisma.insight.update({
+                where: { id: existing.id },
+                data: {
+                  timesObserved: { increment: 1 },
+                  lastConfirmedAt: new Date(),
+                  confidence: Math.min(1, (existing.confidence ?? 0.5) + 0.05),
+                },
+              })
+            } else {
+              await prisma.insight.create({
+                data: {
+                  userId, type: 'misconception',
+                  content: `${clampText(r.misconception!, 250)} ${tag}`,
+                  confidence: 0.7, importance: 0.6, source: 'reflection',
+                },
+              })
+            }
+          } catch { /* non-critical */ }
+        })()
       }
 
       // Perseverance XP: struggle that keeps going is visibly rewarded —
@@ -570,9 +590,13 @@ Return ONLY JSON: {"recitable": true|false}`,
       if (persistContent) {
         await store.addMessage(convId, 'assistant', persistContent).catch(() => null)
         // Keep the insight moat: background extraction every ~5th message.
+        // Skip trigger turns ([NODE_INTRO]/[NODE_REVIEW]) — the control token
+        // is not a student utterance, and feeding it as the "student message"
+        // alongside Bob's topic-rich reply is exactly the tutor→student
+        // mis-attribution shape the anti-hallucination rule guards against.
         try {
           const count = await prisma.message.count({ where: { conversationId: convId } })
-          if (count % 5 === 0) {
+          if (!isTrigger && count % 5 === 0) {
             const { extractInsightsBackground } = await import('@/lib/insight-extraction')
             void extractInsightsBackground(apiKey, message.trim(), persistContent, userId)
           }

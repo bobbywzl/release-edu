@@ -51,7 +51,10 @@ function AchievementsSection() {
   }, [])
 
   if (!data) return null
-  const earned = data.badges.filter(b => b.earned)
+  // Exclude dormant Release EDU badge ladders (chapters/tracks/projects) from
+  // the portfolio — this surface certifies Tree EDU mastery only and must
+  // never surface pre-pivot "Mastered 25 chapters"-style evidence.
+  const earned = data.badges.filter(b => b.earned && !/^(ch_|track_|proj_)/.test(b.id))
   if (earned.length === 0) return null
   const featured = earned.filter(b => b.featured)
   const shown = (featured.length > 0 ? featured : earned).slice(0, 4)
@@ -101,7 +104,11 @@ function ForestSection() {
       .catch(() => {})
   }, [])
 
-  const completed = (trees ?? []).filter(tr => tr.status === 'completed')
+  // The Forest certifies VERIFIED mastery, never attendance: a tree qualifies
+  // only when every branch node was actually checkpoint-verified — the
+  // self-declared "Mark as complete" (status only) is not enough. Mirrors
+  // countMasteredTrees in badges.ts.
+  const completed = (trees ?? []).filter(tr => tr.status === 'completed' && tr.nodeCount > 0 && tr.understoodCount === tr.nodeCount)
   if (completed.length === 0) return null
 
   return (

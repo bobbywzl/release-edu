@@ -156,7 +156,10 @@ export async function getBadgeStats(userId: string): Promise<BadgeStats> {
     prisma.chapter.count({ where: { track: { userId }, status: 'completed' } }).catch(() => 0),
     prisma.track.count({ where: { userId, trackStatus: 'completed' } }).catch(() => 0),
     prisma.subjectProject.count({ where: { track: { userId }, status: 'completed' } }).catch(() => 0),
-    prisma.treeNode.count({ where: { tree: { userId }, pending: false, status: 'understood' } }).catch(() => 0),
+    // parentId filter: the root auto-flips to 'understood' when a tree
+    // completes, but it is not a masterable node — exclude it so verified-node
+    // badges count only genuinely checkpoint-verified branches.
+    prisma.treeNode.count({ where: { tree: { userId }, pending: false, parentId: { not: null }, status: 'understood' } }).catch(() => 0),
     countMasteredTrees(userId),
   ])
   return {

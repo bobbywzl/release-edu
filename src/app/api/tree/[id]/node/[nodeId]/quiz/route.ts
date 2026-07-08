@@ -158,7 +158,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
       const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, answer, body.confidence, body.lang)
       correct = j.correct
       feedback = j.feedback
-      if (!correct) void recordCheckpointStruggle(userId, node.title, feedback)
+      if (!correct) void recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined)
     }
   } catch (err) {
     console.error('[tree] quiz judge failed:', err)
@@ -240,7 +240,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   let treeCompleted = false
   if (!isVerifiedNode && tally.correct >= MASTERY_TARGET && tally.shortCorrect >= MASTERY_MIN_SHORT) {
     try {
-      const r = await markNodeVerified(userId, id, nodeId)
+      const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
       verified = true
       treeCompleted = r.treeCompleted
       xp.push(...r.xp)

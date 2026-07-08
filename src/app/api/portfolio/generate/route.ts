@@ -85,8 +85,17 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
     select: { name: true, workId: true, addedAt: true },
   })
 
-  const realNodes = trees.flatMap(t => t.nodes.filter(n => !n.pending))
+  // Root nodes (the problem statements) auto-flip to 'understood' on tree
+  // completion but are not masterable — exclude them so verified counts match
+  // the rest of the app and never overstate mastery.
+  const realNodes = trees.flatMap(t => t.nodes.filter(n => !n.pending && n.parentId !== null))
   const verifiedNodes = realNodes.filter(n => n.status === 'understood')
+  // A tree is genuinely MASTERED only when every branch node was verified —
+  // the self-declared "Mark as complete" alone does not certify mastery.
+  const masteredTrees = trees.filter(t => {
+    const branches = t.nodes.filter(n => !n.pending && n.parentId !== null)
+    return t.status === 'completed' && branches.length > 0 && branches.every(n => n.status === 'understood')
+  }).length
   const userMessages = nodeConvs.flatMap(c => c.messages.filter(m => m.role === 'user'))
 
   // Bob's accumulated insight memory — the personalization moat. Curated
@@ -172,7 +181,7 @@ Use ONLY the session data below. Do NOT reference, assume, or import anything fr
 ## Student
 Name: ${name}
 XP: ${profileRow?.xp ?? 0} | Streak: ${profileRow?.streak ?? 0} days
-Trees (sessions): ${trees.length} total, ${trees.filter(t => t.status === 'completed').length} completed
+Trees (sessions): ${trees.length} total, ${masteredTrees} fully verified (every branch checkpoint-passed)
 Nodes: ${verifiedNodes.length}/${realNodes.length} verified as understood (${completionRate}%)
 Evidence files uploaded: ${nodeFiles.length}
 Workspace messages written by the student: ${userMessages.length}

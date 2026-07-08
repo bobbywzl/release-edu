@@ -494,10 +494,11 @@ export interface XpAwardLite { awarded: number; label: string; levelUp: boolean;
  * the tree-completion check. Returns the XP awards for client celebration.
  */
 export async function markNodeVerified(
-  userId: string, treeId: string, nodeId: string,
+  userId: string, treeId: string, nodeId: string, lang?: string,
 ): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean }> {
   const node = await prisma.treeNode.findUnique({ where: { id: nodeId } })
   if (!node) throw new Error('Node not found')
+  const zh = lang === 'zh'
   const xp: XpAwardLite[] = []
   let treeCompleted = false
 
@@ -516,7 +517,11 @@ export async function markNodeVerified(
       data: {
         userId,
         type: 'knowledge',
-        content: `Verified understanding of "${node.title}" (transfer-tested): ${clampText(node.summary, 140)}`,
+        // Localized so the "What Bob knows about you" panel never mixes an
+        // English wrapper onto Chinese content in a 中文 session.
+        content: zh
+          ? `已通过迁移测试验证对「${node.title}」的理解：${clampText(node.summary, 140)}`
+          : `Verified understanding of "${node.title}" (transfer-tested): ${clampText(node.summary, 140)}`,
         confidence: 0.95,
         importance: 0.7,
         source: 'verification',
@@ -635,7 +640,7 @@ ${sessionDirectives(tree, lang)}`,
  * existing struggle insight instead of stacking near-identical rows
  * (a bad afternoon must not clutter Bob's memory).
  */
-export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string): Promise<void> {
+export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string, lang?: string): Promise<void> {
   try {
     const existing = await prisma.insight.findFirst({
       where: { userId, type: 'struggle', status: 'active', content: { contains: `"${nodeTitle}"` } },
@@ -656,7 +661,10 @@ export async function recordCheckpointStruggle(userId: string, nodeTitle: string
       data: {
         userId,
         type: 'struggle',
-        content: `Missed a checkpoint on "${nodeTitle}": ${clampText(feedback, 180)}`,
+        // Localized wrapper so a 中文 open learner model stays all-Chinese.
+        content: lang === 'zh'
+          ? `在「${nodeTitle}」上答错了一道检查题：${clampText(feedback, 180)}`
+          : `Missed a checkpoint on "${nodeTitle}": ${clampText(feedback, 180)}`,
         confidence: 0.85,
         importance: 0.55,
         source: 'verification',
