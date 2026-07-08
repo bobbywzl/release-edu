@@ -486,7 +486,7 @@ Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
   return { correct: score >= 7, score, feedback: clampText(parsed.feedback ?? '', 600) }
 }
 
-export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number }
+export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number; source?: string }
 
 /**
  * Flip a node to "understood" with every mastery side effect: XP, the
@@ -525,12 +525,19 @@ export async function markNodeVerified(
     const { markStrugglesResolved } = await import('@/lib/insight-memory')
     await markStrugglesResolved(userId, node.title)
   } catch { /* non-critical */ }
-  // A fully-understood tree completes the problem.
+  // A fully-understood tree completes the problem. The ROOT is the problem
+  // statement, not a masterable pain point — it is excluded from the
+  // requirement (verifying "your own question" was an unreachable dead-end)
+  // and flips green automatically as the crown once every branch verifies.
   try {
     const remaining = await prisma.treeNode.count({
-      where: { treeId, pending: false, status: { not: 'understood' } },
+      where: { treeId, pending: false, parentId: { not: null }, status: { not: 'understood' } },
     })
     if (remaining === 0) {
+      await prisma.treeNode.updateMany({
+        where: { treeId, parentId: null },
+        data: { status: 'understood' },
+      }).catch(() => null)
       await prisma.problemTree.update({ where: { id: treeId }, data: { status: 'completed' } })
       const { awardXp } = await import('@/lib/xp-engine')
       const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })

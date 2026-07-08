@@ -24,7 +24,7 @@ import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { emitXpAwards } from '@/components/xp-toast'
-import { MASTERY_TARGET, parseQuizState } from '@/lib/mastery'
+import { MASTERY_TARGET, MASTERY_MIN_SHORT, parseQuizState } from '@/lib/mastery'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
 interface NodeData {
@@ -355,6 +355,17 @@ function WorkspaceInner() {
         body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf ?? undefined, lang: language }),
       })
       const body = await res.json().catch(() => null)
+      if (res.status === 400 || res.status === 404 || res.status === 409) {
+        // Permanently unanswerable card (stale after a newer checkpoint, or
+        // malformed) — retire it and resync rather than dead-ending the
+        // student on a Submit button that never resolves.
+        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
+        fetch(`/api/tree/${treeId}/node/${nodeId}/chat`, { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => { if (d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
+          .catch(() => {})
+        return
+      }
       if (!res.ok || !body) throw new Error('quiz error')
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
       setQuizResult({ correct: !!body.correct, verified: !!body.verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
@@ -405,21 +416,43 @@ function WorkspaceInner() {
           </span>
         ) : (
           /* Mastery pips: correct checkpoint answers toward verification —
-             the checkpoints live in the chat itself, "Quiz me" just asks Bob. */
-          <div className="flex items-center gap-2 flex-shrink-0" title={t('workspace.masteryHint').replace('{n}', String(MASTERY_TARGET))}>
-            <div className="flex items-center gap-1">
-              {Array.from({ length: MASTERY_TARGET }).map((_, i) => (
-                <span key={i} className={cn('w-2 h-2 rounded-full transition-colors', i < Math.min(parseQuizState(node?.quizState).correct, MASTERY_TARGET) ? 'bg-emerald-400' : 'bg-border')} />
-              ))}
-            </div>
-            <button
-              onClick={() => streamFromBob(t('workspace.quizMeMessage'), true)}
-              disabled={streaming}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-            >
-              <HelpCircle className="w-3.5 h-3.5" /> {t('workspace.quizMeBtn')}
-            </button>
-          </div>
+             the checkpoints live in the chat itself, "Quiz me" just asks Bob.
+             The LAST pip is reserved for the own-words short answer: MCQs alone
+             can only fill the first MASTERY_TARGET-1, so a full meter never
+             lies about verification (recognition alone never verifies). */
+          (() => {
+            const qs = parseQuizState(node?.quizState)
+            const needShort = qs.shortCorrect < MASTERY_MIN_SHORT
+            const filled = needShort ? Math.min(qs.correct, MASTERY_TARGET - MASTERY_MIN_SHORT) : Math.min(qs.correct, MASTERY_TARGET)
+            return (
+              <div className="flex items-center gap-2 flex-shrink-0" title={t('workspace.masteryHint').replace('{n}', String(MASTERY_TARGET))}>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: MASTERY_TARGET }).map((_, i) => {
+                    const isShortPip = i >= MASTERY_TARGET - MASTERY_MIN_SHORT
+                    return (
+                      <span
+                        key={i}
+                        className={cn(
+                          'w-2 h-2 rounded-full transition-colors',
+                          i < filled ? 'bg-emerald-400' : isShortPip && needShort ? 'bg-border ring-1 ring-emerald-400/40' : 'bg-border',
+                        )}
+                      />
+                    )
+                  })}
+                </div>
+                {qs.correct >= MASTERY_TARGET - MASTERY_MIN_SHORT && needShort && (
+                  <span className="text-[10px] text-amber-400/90 hidden sm:inline">{t('workspace.needShort')}</span>
+                )}
+                <button
+                  onClick={() => streamFromBob(t('workspace.quizMeMessage'), true)}
+                  disabled={streaming}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                >
+                  <HelpCircle className="w-3.5 h-3.5" /> {t('workspace.quizMeBtn')}
+                </button>
+              </div>
+            )
+          })()
         )}
         <button
           onClick={() => setShowNotes(s => !s)}

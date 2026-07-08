@@ -449,7 +449,15 @@ Memory fades; this visit exists to interrupt that.
         } catch { /* non-critical */ }
       } catch (err) {
         console.error('[tree] node chat failed:', err)
-        if (!full) controller.enqueue(encoder.encode("I'm having trouble connecting right now. Please try again in a moment."))
+        // The stream returns HTTP 200, so the client's localized catch never
+        // fires — this fallback IS what the student reads, so it must obey the
+        // session language (no English leaking into a 中文 session).
+        if (!full) {
+          const zhSession = (tree.language ?? lang) === 'zh'
+          controller.enqueue(encoder.encode(zhSession
+            ? '现在连接有些问题，请稍后再试。'
+            : "I'm having trouble connecting right now. Please try again in a moment."))
+        }
       }
 
       // ── Checkpoint capture ──
