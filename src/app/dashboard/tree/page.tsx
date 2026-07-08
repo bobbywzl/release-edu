@@ -3,13 +3,14 @@
  * Tree home — your problem trees. State a problem, grow a tree.
  * Problem-first: this page IS the front door of learning in the Tree model.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Sprout, Plus, Trash2, CheckCircle2, Loader2, RefreshCw, Sparkles } from 'lucide-react'
+import { Sprout, Plus, Trash2, CheckCircle2, Loader2, RefreshCw, Sparkles, ClipboardList, Copy, X } from 'lucide-react'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import { MarkdownRenderer } from '@/components/markdown-renderer'
 
 interface TreeSummary {
   id: string
@@ -28,10 +29,14 @@ export default function TreePage() {
   const [problem, setProblem] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Session onboarding — every tree starts with language, background, and
-  // difficulty, so the whole session is calibrated before the first branch.
+  // Session onboarding — 5 questions, never more: language → the problem →
+  // the PURPOSE behind it (what "relevant" means for this session) → the
+  // student's background → target depth (explainable ↔ deployable). All of
+  // it calibrates every AI output before the first branch grows.
   const [step, setStep] = useState(0)
+  const STEPS = 5
   const [sessLang, setSessLang] = useState<'en' | 'zh'>(language === 'zh' ? 'zh' : 'en')
+  const [purpose, setPurpose] = useState('')
   const [background, setBackground] = useState('')
   const [difficulty, setDifficulty] = useState<string>('intermediate')
 
@@ -52,7 +57,7 @@ export default function TreePage() {
       const res = await fetch('/api/tree', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ problem: p, lang: sessLang, difficulty, personalContext: background.trim() || undefined }),
+        body: JSON.stringify({ problem: p, lang: sessLang, difficulty, personalContext: background.trim() || undefined, purpose: purpose.trim() || undefined }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'failed')
@@ -88,6 +93,49 @@ export default function TreePage() {
       setTrees(prev => prev?.map(tr => (tr.id === id ? { ...tr, status: 'completed' } : tr)) ?? prev)
       setConsolidating(null)
     }, 950)
+  }
+
+  // ── Tree Digest: the session's status report, built from tree state ──
+  // Key numbers (strictly from real evidence), findings, progress made,
+  // blockages, next actions — readable in place or copied to your team.
+  const [digestFor, setDigestFor] = useState<{ id: string; title: string } | null>(null)
+  const [digestText, setDigestText] = useState<string | null>(null)
+  const [digestBusy, setDigestBusy] = useState(false)
+  const [digestCopied, setDigestCopied] = useState(false)
+  // Staleness guard: generation takes seconds — a slow response for one tree
+  // must never land in a modal that has since switched to another tree.
+  const digestReqRef = useRef<string | null>(null)
+  async function loadDigest(id: string, refresh: boolean) {
+    digestReqRef.current = id
+    setDigestBusy(true)
+    setDigestCopied(false)
+    try {
+      const res = await fetch(`/api/tree/${id}/digest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh, lang: language }),
+      })
+      const body = await res.json().catch(() => null)
+      if (digestReqRef.current !== id) return
+      setDigestText(res.ok && body?.digest ? body.digest : t('tree.digestFailed'))
+    } catch {
+      if (digestReqRef.current !== id) return
+      setDigestText(t('tree.digestFailed'))
+    }
+    setDigestBusy(false)
+  }
+  function openDigest(tr: TreeSummary) {
+    setDigestFor({ id: tr.id, title: tr.title })
+    setDigestText(null)
+    void loadDigest(tr.id, false)
+  }
+  async function copyDigest() {
+    if (!digestText) return
+    try {
+      await navigator.clipboard.writeText(digestText)
+      setDigestCopied(true)
+      setTimeout(() => setDigestCopied(false), 1600)
+    } catch { /* clipboard unavailable */ }
   }
 
   // ── Review: retention practice on a completed tree ──
@@ -126,7 +174,7 @@ export default function TreePage() {
       >
         {/* Step dots */}
         <div className="flex items-center gap-2">
-          {[0, 1, 2, 3].map(i => (
+          {Array.from({ length: STEPS }, (_, i) => (
             <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-primary' : i < step ? 'w-3 bg-primary/50' : 'w-3 bg-muted'}`} />
           ))}
           <span className="ml-2 text-[11px] text-muted-foreground">{t('tree.sessionSetup')}</span>
@@ -153,12 +201,14 @@ export default function TreePage() {
 
         {step === 1 && (
           <div className="space-y-3">
-            <label className="text-sm font-bold text-foreground block">{t('tree.stepBackground')}</label>
+            <label className="text-sm font-bold text-foreground block">{t('tree.problemPrompt')}</label>
             <textarea
-              value={background}
-              onChange={e => setBackground(e.target.value)}
-              placeholder={t('tree.backgroundPlaceholder')}
-              rows={3}
+              value={problem}
+              onChange={e => setProblem(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (problem.trim()) setStep(2) } }}
+              placeholder={t('tree.problemPlaceholder')}
+              rows={2}
+              autoFocus
               className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
@@ -166,13 +216,44 @@ export default function TreePage() {
 
         {step === 2 && (
           <div className="space-y-3">
+            <label className="text-sm font-bold text-foreground block">{t('tree.stepPurpose')}</label>
+            <p className="text-[11px] text-muted-foreground leading-snug -mt-1">{t('tree.purposeHint')}</p>
+            <textarea
+              value={purpose}
+              onChange={e => setPurpose(e.target.value)}
+              placeholder={t('tree.purposePlaceholder')}
+              rows={3}
+              autoFocus
+              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-3">
+            <label className="text-sm font-bold text-foreground block">{t('tree.stepBackground')}</label>
+            <textarea
+              value={background}
+              onChange={e => setBackground(e.target.value)}
+              placeholder={t('tree.backgroundPlaceholder')}
+              rows={3}
+              autoFocus
+              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="space-y-3">
             <label className="text-sm font-bold text-foreground block">{t('tree.stepDifficulty')}</label>
+            <p className="text-[11px] text-muted-foreground leading-snug -mt-1">{t('tree.difficultyHint')}</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {(['beginner', 'intermediate', 'advanced', 'professional'] as const).map(level => (
                 <button
                   key={level}
                   onClick={() => setDifficulty(level)}
-                  className={`text-left rounded-xl border p-3 transition-colors ${
+                  disabled={creating}
+                  className={`text-left rounded-xl border p-3 transition-colors disabled:opacity-60 ${
                     difficulty === level ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent'
                   }`}
                 >
@@ -181,22 +262,6 @@ export default function TreePage() {
                 </button>
               ))}
             </div>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="space-y-3">
-            <label className="text-sm font-bold text-foreground block">{t('tree.problemPrompt')}</label>
-            <textarea
-              value={problem}
-              onChange={e => setProblem(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); createTree() } }}
-              placeholder={t('tree.problemPlaceholder')}
-              rows={2}
-              disabled={creating}
-              autoFocus
-              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
-            />
           </div>
         )}
 
@@ -209,10 +274,11 @@ export default function TreePage() {
               {t('tree.back')}
             </button>
           )}
-          {step < 3 ? (
+          {step < STEPS - 1 ? (
             <button
               onClick={() => setStep(s => s + 1)}
-              className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              disabled={step === 1 && !problem.trim()}
+              className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40"
             >
               {t('tree.next')}
             </button>
@@ -274,6 +340,14 @@ export default function TreePage() {
                     </p>
                     {tree.framing && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{tree.framing}</p>}
                   </div>
+                  <button
+                    onClick={e => { e.preventDefault(); openDigest(tree) }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground text-[11px] font-medium hover:text-primary hover:border-primary/40 hover:bg-primary/10 transition-colors flex-shrink-0"
+                    title={t('tree.digestHint')}
+                  >
+                    <ClipboardList className="w-3.5 h-3.5" />
+                    {t('tree.digest')}
+                  </button>
                   {consolidated ? (
                     <button
                       onClick={e => { e.preventDefault(); startReview(tree.id) }}
@@ -319,6 +393,51 @@ export default function TreePage() {
           )
         })}
       </div>
+
+      {/* Tree Digest modal — the session's status report, copy-ready */}
+      {digestFor && (
+        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDigestFor(null)}>
+          <div
+            className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-card border border-border rounded-2xl p-5 space-y-3"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-base font-bold text-foreground flex items-center gap-2 min-w-0">
+                <ClipboardList className="w-4 h-4 text-primary flex-shrink-0" />
+                <span className="truncate">{t('tree.digestTitle')} — {digestFor.title}</span>
+              </h3>
+              <button onClick={() => setDigestFor(null)} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto border border-border rounded-xl bg-background/60 px-4 py-3 text-sm leading-relaxed">
+              {digestBusy || digestText === null ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin" /> {t('tree.digestLoading')}
+                </div>
+              ) : (
+                <MarkdownRenderer content={digestText} />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={copyDigest}
+                disabled={digestBusy || !digestText}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                <Copy className="w-4 h-4" /> {digestCopied ? t('tree.digestCopied') : t('tree.digestCopy')}
+              </button>
+              <button
+                onClick={() => digestFor && loadDigest(digestFor.id, true)}
+                disabled={digestBusy}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40"
+              >
+                <RefreshCw className={cn('w-4 h-4', digestBusy && 'animate-spin')} /> {t('tree.digestRefresh')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

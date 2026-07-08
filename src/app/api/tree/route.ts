@@ -37,14 +37,14 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const userId = await getUserId()
-  const { problem, lang, difficulty, personalContext } = (await req.json().catch(() => ({}))) as {
-    problem?: string; lang?: string; difficulty?: string; personalContext?: string
+  const { problem, lang, difficulty, personalContext, purpose } = (await req.json().catch(() => ({}))) as {
+    problem?: string; lang?: string; difficulty?: string; personalContext?: string; purpose?: string
   }
   if (!problem?.trim()) {
     return NextResponse.json({ error: 'A problem statement is required' }, { status: 400 })
   }
   try {
-    const treeId = await seedTree(userId, problem.trim(), { lang, difficulty, personalContext })
+    const treeId = await seedTree(userId, problem.trim(), { lang, difficulty, personalContext, purpose })
     return NextResponse.json({ id: treeId }, { status: 201 })
   } catch (err) {
     console.error('[tree] seed failed:', err)

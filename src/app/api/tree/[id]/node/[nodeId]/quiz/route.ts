@@ -130,17 +130,43 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   }
 
   // ── Tally the node's checkpoint state (pending consumed, review stamped) ──
-  qs.attempts += 1
+  // Judging took seconds — re-read fresh state before the write so we never
+  // clobber anything stored in the meantime (e.g. a new pending card).
+  const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
+  const tally = parseQuizState(freshRow?.quizState ?? node.quizState)
+  tally.attempts += 1
   if (correct) {
-    qs.correct += 1
-    qs.combo += 1
-    if (quiz.kind === 'short') qs.shortCorrect += 1
+    tally.correct += 1
+    tally.combo += 1
+    if (quiz.kind === 'short') tally.shortCorrect += 1
   } else {
-    qs.combo = 0
+    tally.combo = 0
   }
-  qs.pending = null
-  if (isReview) qs.reviewedAt = new Date().toISOString()
-  await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } }).catch(() => null)
+  // Confidence calibration: sure-but-wrong is the node's blind spot (future
+  // checkpoints target it); sure-and-right is healthy calibration.
+  if (body.confidence === 'sure') {
+    if (correct) tally.sureRight += 1
+    else tally.sureWrong += 1
+  }
+  // Delayed-retest bookkeeping: a correct retest clears the missed entry, a
+  // wrong retest re-arms it for the next return visit, and a fresh miss
+  // queues for retest hours later (cap 5, newest kept).
+  const retestOf = usePending ? quiz.retestOf : undefined
+  if (retestOf) {
+    tally.missed = correct
+      ? tally.missed.filter(m => m.question !== retestOf)
+      : tally.missed.map(m => (m.question === retestOf ? { ...m, missedAt: new Date().toISOString() } : m))
+  } else if (!correct) {
+    tally.missed = [
+      ...tally.missed.filter(m => m.question !== quiz.question),
+      { question: quiz.question.slice(0, 300), missedAt: new Date().toISOString() },
+    ].slice(-5)
+  }
+  // Consume the pending only if it's still the card we judged — never wipe
+  // a newer card Bob stored while we were judging.
+  if (tally.pending?.question === quiz.question) tally.pending = null
+  if (isReview) tally.reviewedAt = new Date().toISOString()
+  await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(tally) } }).catch(() => null)
 
   // ── XP: every meaningful answer pays; mastered material can't be farmed ──
   const isVerifiedNode = node.status === 'understood'
@@ -152,8 +178,8 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
       const difficulty = isVerifiedNode && !isReview ? baseDifficulty * 0.25 : baseDifficulty
       const a = await awardXp(userId, 'quiz_correct', { difficulty })
       if (a) xp.push(a)
-      if (!isVerifiedNode && (qs.combo === 3 || qs.combo === 5 || qs.combo === 10)) {
-        const c = await awardXp(userId, 'combo_bonus', { combo: qs.combo })
+      if (!isVerifiedNode && (tally.combo === 3 || tally.combo === 5 || tally.combo === 10)) {
+        const c = await awardXp(userId, 'combo_bonus', { combo: tally.combo })
         if (c) xp.push(c)
       }
     } else if (!isVerifiedNode || isReview) {
@@ -165,7 +191,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // ── Mastery: the in-chat tally IS the verification ──
   let verified = false
   let treeCompleted = false
-  if (!isVerifiedNode && qs.correct >= MASTERY_TARGET && qs.shortCorrect >= MASTERY_MIN_SHORT) {
+  if (!isVerifiedNode && tally.correct >= MASTERY_TARGET && tally.shortCorrect >= MASTERY_MIN_SHORT) {
     try {
       const r = await markNodeVerified(userId, id, nodeId)
       verified = true
@@ -193,7 +219,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     correctIndex,
     feedback,
     xp,
-    mastery: { correct: qs.correct, target: MASTERY_TARGET, shortCorrect: qs.shortCorrect, needShort: qs.shortCorrect < MASTERY_MIN_SHORT },
+    mastery: { correct: tally.correct, target: MASTERY_TARGET, shortCorrect: tally.shortCorrect, needShort: tally.shortCorrect < MASTERY_MIN_SHORT },
     verified,
     treeCompleted,
     review: isReview,

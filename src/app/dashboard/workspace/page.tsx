@@ -30,7 +30,7 @@ interface Msg { id: string; role: 'user' | 'assistant'; content: string }
 interface NodeData {
   id: string; parentId: string | null; kind: string; title: string; summary: string
   explainer: string | null; status: string; annotations: string | null; notes: string | null
-  quizState: string | null
+  quizState: string | null; progressLog: string | null
 }
 interface TreeData { id: string; title: string; framing: string | null; nodes: NodeData[] }
 interface NodeFileRow { id: string; name: string; type?: string | null }
@@ -83,7 +83,7 @@ function WorkspaceInner() {
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [showNotes, setShowNotes] = useState(true)
-  const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files'>('notes')
+  const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files' | 'log'>('notes')
   const [explainerLoading, setExplainerLoading] = useState(false)
   const [notesDraft, setNotesDraft] = useState<string | null>(null)
   const [notesSaved, setNotesSaved] = useState(false)
@@ -92,7 +92,9 @@ function WorkspaceInner() {
   const [activeQuiz, setActiveQuiz] = useState<QuizPayload | null>(null)
   const [quizSel, setQuizSel] = useState<number | null>(null)
   const [quizText, setQuizText] = useState('')
-  const [quizConf, setQuizConf] = useState<'sure' | 'unsure'>('sure')
+  // Confidence is an ACTIVE self-assessment — null until the student taps.
+  // A silent default would poison the calibration counters (sureWrong).
+  const [quizConf, setQuizConf] = useState<'sure' | 'unsure' | null>(null)
   const [quizBusy, setQuizBusy] = useState(false)
   // correctIndex arrives from the server on submit — the answer key never
   // ships with the card itself.
@@ -115,6 +117,19 @@ function WorkspaceInner() {
   const { highlights, addHighlight, updateHighlight, deleteHighlight } = useHighlights(conversationId)
 
   const node = tree?.nodes.find(n => n.id === nodeId) ?? null
+
+  // The node's build log (real-world progress Bob detected in chat) —
+  // newest first for the runbook card. Tolerates malformed JSON.
+  const buildLog: Array<{ text: string; createdAt?: string }> = (() => {
+    try {
+      const parsed = JSON.parse(node?.progressLog ?? '[]') as Array<{ text?: string; createdAt?: string }>
+      return Array.isArray(parsed)
+        ? parsed.filter(e => e && typeof e.text === 'string').map(e => ({ text: e.text as string, createdAt: e.createdAt })).reverse()
+        : []
+    } catch {
+      return []
+    }
+  })()
 
   const loadTree = useCallback(async () => {
     if (!treeId) return
@@ -165,7 +180,7 @@ function WorkspaceInner() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
-  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf('sure'); setQuizResult(null) }, [nodeId])
+  useEffect(() => { setNotesDraft(null); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowClarify(null); setGrowDone(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null) }, [nodeId])
 
   // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
   // first-open trigger — Bob speaks without a student bubble appearing.
@@ -210,7 +225,10 @@ function WorkspaceInner() {
       const { quiz } = splitQuiz(full)
       if (quiz) {
         setActiveQuiz(quiz)
-        setQuizSel(null); setQuizText(''); setQuizConf('sure'); setQuizResult(null)
+        setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null)
+        // Attention arbiter (client side): the checkpoint card is the one
+        // CTA this turn — a lingering discovery card yields to it.
+        setSuggestion(null)
       }
       // Swap temp ids for persisted ids so text in this turn is highlightable.
       setTimeout(() => {
@@ -334,7 +352,7 @@ function WorkspaceInner() {
       const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/quiz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf, lang: language }),
+        body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf ?? undefined, lang: language }),
       })
       const body = await res.json().catch(() => null)
       if (!res.ok || !body) throw new Error('quiz error')
@@ -701,9 +719,9 @@ function WorkspaceInner() {
                 </button>
               </div>
 
-              {/* Tabs: Notes (editable) · Annotations · Files — all retained per node */}
+              {/* Tabs: Notes (editable) · Annotations · Files · Build log — all retained per node */}
               <div className="flex gap-1 border-b border-border">
-                {(['notes', 'annotations', 'files'] as const).map(tab => (
+                {(['notes', 'annotations', 'files', 'log'] as const).map(tab => (
                   <button
                     key={tab}
                     onClick={() => setPanelTab(tab)}
@@ -714,8 +732,9 @@ function WorkspaceInner() {
                         : 'text-muted-foreground border-transparent hover:text-foreground',
                     )}
                   >
-                    {tab === 'notes' ? t('workspace.tabNotes') : tab === 'annotations' ? t('workspace.annotations') : t('workspace.files')}
+                    {tab === 'notes' ? t('workspace.tabNotes') : tab === 'annotations' ? t('workspace.annotations') : tab === 'files' ? t('workspace.files') : t('workspace.tabLog')}
                     {tab === 'files' && files.length > 0 ? ` (${files.length})` : ''}
+                    {tab === 'log' && buildLog.length > 0 ? ` (${buildLog.length})` : ''}
                   </button>
                 ))}
               </div>
@@ -761,6 +780,23 @@ function WorkspaceInner() {
                             ✕
                           </button>
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {panelTab === 'log' && (
+                <div>
+                  {/* The runbook: real-world execution Bob detected in your
+                      chats — what you actually built, ran, and measured. */}
+                  <p className="text-[11px] text-muted-foreground leading-snug mb-2">{t('workspace.logHint')}</p>
+                  <div className="space-y-1.5">
+                    {buildLog.length === 0 && <p className="text-[11px] text-muted-foreground">{t('workspace.noLog')}</p>}
+                    {buildLog.map((entry, li) => (
+                      <div key={li} className="text-xs border-l-2 border-emerald-400/60 rounded-r-md px-2.5 py-1.5 bg-background/60">
+                        <p className="text-foreground/90">{entry.text}</p>
+                        <span className="text-[10px] text-muted-foreground/60">{entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : ''}</span>
                       </div>
                     ))}
                   </div>

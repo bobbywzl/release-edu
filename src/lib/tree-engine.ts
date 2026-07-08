@@ -25,16 +25,22 @@ function langDirective(lang?: string): string {
     : 'Respond in English.'
 }
 
-// Difficulty tiers, calibrated to university course levels (same ideology
-// as Release EDU's advancement levels).
+// Difficulty tiers: the axis runs from a general understanding you can
+// EXPLAIN up to a professional understanding you can DEPLOY in real life
+// (university course levels kept as a familiar calibration anchor).
 const DIFFICULTY_GUIDE: Record<string, string> = {
-  beginner: 'friendly introduction (≈ university 100-level) — plain language, generous analogies, no assumed background',
-  intermediate: 'solid working depth (≈ 200–300-level) — real terminology, quantitative where natural, some assumed fundamentals',
-  advanced: 'rigorous treatment (≈ 400-level / early graduate) — formal precision, edge cases, primary mechanisms',
-  professional: 'practitioner/expert depth (≈ graduate seminar) — full technical rigor, current practice, open problems',
+  beginner: 'general understanding (≈ university 100-level) — plain language, generous analogies, no assumed background; the goal is being able to EXPLAIN the ideas clearly, not operate them',
+  intermediate: 'working understanding (≈ 200–300-level) — real terminology, quantitative where natural, some assumed fundamentals; the goal is applying the ideas to guided, well-defined cases',
+  advanced: 'rigorous understanding (≈ 400-level / early graduate) — formal precision, edge cases, primary mechanisms; the goal is independently attacking novel variants of the problem',
+  professional: 'deployable understanding (≈ practitioner/graduate seminar) — full technical rigor, current practice, failure modes, open problems; the goal is building and operating a REAL-LIFE solution end to end',
 }
 
-interface SessionFields { language?: string | null; difficulty?: string | null; personalContext?: string | null }
+interface SessionFields {
+  language?: string | null
+  difficulty?: string | null
+  personalContext?: string | null
+  purpose?: string | null
+}
 
 /**
  * The Answer Standard (FOUNDATION.md — law): every learner-facing answer must
@@ -61,11 +67,14 @@ export function sessionDirectives(tree: SessionFields, fallbackLang?: string): s
   if (tree.personalContext) {
     parts.push(`THE STUDENT'S BACKGROUND for this problem (stated at session start): "${tree.personalContext.slice(0, 400)}" — connect examples to it and skip what it already covers.`)
   }
+  if (tree.purpose) {
+    parts.push(`THE STUDENT'S PURPOSE for mastering this (stated at session start): "${tree.purpose.slice(0, 400)}" — this defines RELEVANT for the whole session: keep every branch, answer, and checkpoint in service of this purpose, and calibrate depth to what the purpose actually needs (the Answer Standard's relevance test).`)
+  }
   return parts.join('\n')
 }
 
 
-async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify') {
+async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest') {
   try {
     const { recordAnthropicUsage } = await import('@/lib/usage')
     recordAnthropicUsage(result.usage as Parameters<typeof recordAnthropicUsage>[0], { userId, model, feature })
@@ -122,7 +131,7 @@ interface SeedResult { framing: string; rootSummary: string; solutions: SeedNode
 export async function seedTree(
   userId: string,
   problem: string,
-  opts: { lang?: string; difficulty?: string; personalContext?: string } = {},
+  opts: { lang?: string; difficulty?: string; personalContext?: string; purpose?: string } = {},
 ): Promise<string> {
   const client = await anthropic()
   const grounding = await studentGrounding(userId)
@@ -130,6 +139,7 @@ export async function seedTree(
     language: opts.lang === 'zh' ? 'zh' : opts.lang ? 'en' : null,
     difficulty: opts.difficulty && DIFFICULTY_GUIDE[opts.difficulty] ? opts.difficulty : null,
     personalContext: opts.personalContext?.trim().slice(0, 1000) || null,
+    purpose: opts.purpose?.trim().slice(0, 1000) || null,
   }
 
   const model = await getTeachingModel()
@@ -177,6 +187,7 @@ Return ONLY JSON:
       language: session.language,
       difficulty: session.difficulty,
       personalContext: session.personalContext,
+      purpose: session.purpose,
     },
   })
   const root = await prisma.treeNode.create({
@@ -228,6 +239,42 @@ export function sketchTree(nodes: TreeNode[]): string {
   }
   walk(null, 0)
   return lines.join('\n')
+}
+
+/**
+ * THE EVIDENCE LOCKER — every real artifact uploaded anywhere on this tree
+ * (files live on nodes via LinkedFile workType "tree-node"). Fed to every
+ * explainer and chat turn so Bob grounds numbers and claims in the student's
+ * REAL work instead of inventing plausible examples. Text files are
+ * excerpted; binaries listed by name; `excludeNodeId` skips the node whose
+ * files are already shown in full detail.
+ */
+export async function evidenceLocker(
+  userId: string, nodes: TreeNode[], excludeNodeId?: string,
+  opts: { maxFiles?: number; excerpt?: number } = {},
+): Promise<string> {
+  const { maxFiles = 6, excerpt = 700 } = opts
+  try {
+    const nodeIds = nodes.filter(n => !n.pending && n.id !== excludeNodeId).map(n => n.id)
+    if (nodeIds.length === 0) return ''
+    const titleById = new Map(nodes.map(n => [n.id, n.title]))
+    const files = await prisma.linkedFile.findMany({
+      where: { userId, workType: 'tree-node', workId: { in: nodeIds } },
+      select: { name: true, content: true, workId: true },
+      orderBy: { addedAt: 'desc' },
+      take: maxFiles,
+    })
+    if (files.length === 0) return ''
+    return `\n## TREE EVIDENCE LOCKER (real artifacts uploaded across this tree — ground every number and claim in these; NEVER invent measurements when evidence exists)\n` + files.map(f => {
+      const isText = !(f.content ?? '').startsWith('data:')
+      const at = titleById.get(f.workId ?? '') ?? 'tree'
+      return isText
+        ? `### ${f.name} (at "${at}")\n${(f.content ?? '').slice(0, excerpt)}${(f.content ?? '').length > excerpt ? '\n…(truncated)' : ''}`
+        : `### ${f.name} (at "${at}") — binary/image, content not inlined`
+    }).join('\n\n')
+  } catch {
+    return ''
+  }
 }
 
 /** Path from root to the node — grounds explainers in their lineage. */
@@ -334,6 +381,7 @@ export async function generateExplainer(userId: string, treeId: string, nodeId: 
   const path = nodePath(tree.nodes, nodeId)
   const client = await anthropic()
   const grounding = await studentGrounding(userId)
+  const locker = await evidenceLocker(userId, tree.nodes)
 
   const model = await getTeachingModel()
   const result = await client.messages.create({
@@ -350,6 +398,7 @@ THIS NODE: "${node.title}" — ${node.summary}
 SIBLING/TREE CONTEXT:
 ${sketchTree(tree.nodes)}
 ${grounding}
+${locker}
 
 Write in markdown (400-700 words):
 1. **What this is** — precise but plain-language definition
@@ -491,6 +540,86 @@ export async function markNodeVerified(
   } catch { /* non-critical */ }
 
   return { xp, treeCompleted }
+}
+
+// ── Tree Digest (the project's status report, built from tree state) ─────
+
+/**
+ * Generate the TREE DIGEST — a shareable status report of the whole
+ * problem-mastery session: key numbers (only from real evidence/logs),
+ * findings, progress made, blockages, and next actions. Cached on the tree
+ * (digest/digestAt); regenerate on demand.
+ */
+export async function generateTreeDigest(userId: string, treeId: string, lang?: string): Promise<{ digest: string; digestAt: Date }> {
+  const tree = await getTreeWithNodes(userId, treeId)
+  if (!tree) throw new Error('Tree not found')
+  const real = tree.nodes.filter(n => !n.pending)
+
+  const { parseQuizState } = await import('@/lib/mastery')
+  const nodeLines = real.map(n => {
+    const qs = parseQuizState(n.quizState)
+    const bits = [
+      `status: ${n.status}`,
+      qs.attempts > 0 ? `checkpoints: ${qs.correct} correct / ${qs.attempts} attempts` : '',
+      qs.sureWrong > 0 ? `confidently-wrong ×${qs.sureWrong}` : '',
+      qs.missed.length > 0 ? `open misses: ${qs.missed.map(m => `"${m.question.slice(0, 80)}"`).join('; ')}` : '',
+    ].filter(Boolean).join(' · ')
+    return `- "${n.title}" — ${bits}`
+  }).join('\n')
+
+  const progressLines = real.flatMap(n => {
+    try {
+      const log = JSON.parse(n.progressLog ?? '[]') as Array<{ text: string; createdAt: string }>
+      return log.slice(-5).map(e => `- [${(e.createdAt ?? '').slice(0, 10)}] (${n.title}) ${e.text}`)
+    } catch { return [] }
+  }).join('\n')
+
+  const notesLines = real.filter(n => n.notes?.trim()).map(n => `- (${n.title}) ${n.notes!.slice(0, 250)}`).join('\n')
+  const locker = await evidenceLocker(userId, tree.nodes, undefined, { maxFiles: 8, excerpt: 500 })
+
+  const client = await anthropic()
+  const model = await getJudgeModel()
+  const result = await client.messages.create({
+    model,
+    max_tokens: 1600,
+    messages: [{
+      role: 'user',
+      content: `Write the TREE DIGEST — a dense, copy-ready status report of one problem-mastery session, for the learner to read or paste to their team.
+
+PROBLEM (root): "${tree.title}"
+${tree.framing ? `FRAMING: ${tree.framing}` : ''}
+${tree.purpose ? `PURPOSE (why they're mastering this): ${tree.purpose}` : ''}
+Verified: ${real.filter(n => n.status === 'understood').length}/${real.length} nodes.
+
+NODES:
+${nodeLines || '(none)'}
+
+BUILD LOG (real-world execution detected in chats):
+${progressLines || '(none recorded)'}
+
+STUDENT NOTES:
+${notesLines || '(none)'}
+${locker || '\n(no evidence files uploaded)'}
+
+Write markdown with EXACTLY these sections (omit a section only if truly empty, saying so in one line):
+## TL;DR — 2-3 sentences: where this problem stands right now.
+## Key numbers — every real metric found in the evidence/logs/notes as "metric: value (→ target if stated)". STRICT: only numbers that literally appear above; if none exist, write "No measured numbers yet — upload evidence to track them."
+## Findings — what has been established (verified nodes' core takeaways, discoveries from the build log).
+## Progress made — what was actually done, newest first.
+## Blockages & open questions — unverified nodes standing in the way, missed checkpoints not yet retested, confidently-wrong blind spots, unanswered real-world questions.
+## Next actions — 3-5 concrete, ordered steps (learning AND real-world doing).
+
+Dense and factual — no praise, no filler, no invented data.
+${sessionDirectives(tree, lang)}`,
+    }],
+  })
+  void recordUsage(result, userId, model, 'tree-digest')
+  const digest = (result.content[0] as { text?: string })?.text?.trim() ?? ''
+  if (!digest) throw new Error('Digest generation failed')
+
+  const digestAt = new Date()
+  await prisma.problemTree.update({ where: { id: treeId }, data: { digest, digestAt } }).catch(() => null)
+  return { digest, digestAt }
 }
 
 /**

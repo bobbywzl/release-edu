@@ -89,9 +89,12 @@ learner-facing answers (node chat, explainers) embeds this standard — see
 
 ## Sessions
 
-Every tree is a self-contained **session**, onboarded at creation: language (EN/中文),
-the learner's personal background for this problem, and target difficulty
-(beginner/intermediate/advanced/professional, mapped to university course tiers).
+Every tree is a self-contained **session**, onboarded at creation by a stepper of
+**at most five questions**: language (EN/中文), the specific problem, the **purpose**
+behind it (what the learner will do with mastery — this defines "relevant" for the
+whole session, per the Answer Standard), the learner's personal background, and
+target depth on the **explainable ↔ deployable axis** (beginner "general
+understanding you can explain" → professional "real-life deployable understanding").
 These calibrate every AI output inside the session. The global first-run interview
 ends with the bolded question — **"What is the specific problem you want to master?"**
 — whose answer plants the first tree.

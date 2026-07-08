@@ -53,8 +53,9 @@ AI discovery cards in chat and manual add. Mastery is AI-verified — no self-ma
 through **in-chat checkpoint questions**: Bob emits `[[QUIZ]]` blocks (MCQ /
 short-answer cards) in the workspace chat; 3 correct incl. ≥1 own-words short answer
 flips the node (`MASTERY_TARGET` in tree-engine). There is no separate verify screen.
-Each session carries its own language / difficulty / personal background, set by a
-stepper at tree creation.
+Each session carries its own language / difficulty / personal background / PURPOSE
+(why the learner wants mastery — it defines "relevant" for the session), set by a
+5-question stepper at tree creation (never more than 5).
 
 ## Key Code Map
 
@@ -89,10 +90,10 @@ stepper at tree creation.
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,
-  `tree-expand`, `tree-explainer`, `tree-verify`, `node-chat`, `reflection`,
-  `insight`, `onboarding`, `portfolio`, `title`, `image`, `other` (legacy values
-  render with "(legacy)" labels). Every new AI call MUST record usage with a fitting
-  feature tag.
+  `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `node-chat`,
+  `reflection`, `insight`, `onboarding`, `portfolio`, `title`, `image`, `other`
+  (legacy values render with "(legacy)" labels). Every new AI call MUST record usage
+  with a fitting feature tag.
 
 ## The Insight Constellation (the moat — grounded in learning-science research)
 

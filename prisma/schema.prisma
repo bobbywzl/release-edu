@@ -52,6 +52,12 @@ model ProblemTree {
   language        String?  // 'en' | 'zh' — chosen at session start, drives all AI output
   difficulty      String?  // beginner | intermediate | advanced | professional
   personalContext String?  // the student's background relevant to THIS problem
+  // Session onboarding depth: WHY the student wants to master this problem
+  // (what they'll do with it) — drives relevance of every branch and answer.
+  purpose     String?
+  // Cached tree digest (markdown) + generation stamp — regenerated on demand.
+  digest      String?
+  digestAt    DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   nodes       TreeNode[]

@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, type XpAwardLite } from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, type XpAwardLite } from '@/lib/tree-engine'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 
@@ -88,7 +88,8 @@ Assess and return ONLY JSON:
  "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers: {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
  "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
  "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>,
- "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}`,
+ "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}
+Write "projectProgress" and "misconception" in the same language as the student's messages (they are shown to the student).`,
       }],
     })
     try {
@@ -133,12 +134,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return new Response('Not configured', { status: 503 })
 
-  // One conversation per node, found by context tag.
+  // One conversation per node, found by context tag. The window must be the
+  // LATEST 40 messages (desc + reverse to chronological) — an ascending take
+  // would pin Bob's context and the return-visit gate to the conversation's
+  // ancient head once it grows past 40 messages.
   const contextTag = `tree-node:${nodeId}`
   let conv = await prisma.conversation.findFirst({
     where: { userId, context: contextTag },
-    include: { messages: { orderBy: { createdAt: 'asc' }, take: 40 } },
+    include: { messages: { orderBy: { createdAt: 'desc' }, take: 40 } },
   })
+  if (conv) conv.messages.reverse()
   if (!conv) {
     const created = await store.createConversation(node.title.slice(0, 60), contextTag)
     conv = { ...created, messages: [] } as typeof conv & { messages: [] }
@@ -295,8 +300,32 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
     }
   } catch { /* non-critical */ }
 
+  // Evidence locker: real artifacts uploaded anywhere on the tree (this
+  // node's files are already shown in full above) — Bob grounds numbers in
+  // these instead of inventing plausible examples.
+  const lockerBlock = await evidenceLocker(userId, tree.nodes, nodeId)
+
   const path = nodePath(tree.nodes, nodeId)
   const quizStateNow = parseQuizState(node.quizState)
+
+  // ── Delayed retest (memory needs the gap) ──
+  // When the student RETURNS to this node after hours away and a checkpoint
+  // was missed last time, Bob re-probes that exact gap from a new angle —
+  // a re-ask five minutes later only tests short-term memory.
+  const RETEST_GAP_MS = 3 * 60 * 60 * 1000
+  let retestTarget: string | null = null
+  if (!isTrigger && quizStateNow.missed.length > 0) {
+    // conv.messages was fetched BEFORE this turn's user message was
+    // persisted, so the last entry is genuinely the previous visit's tail.
+    const msgs = conv!.messages ?? []
+    const lastMsgAt = msgs.length > 0 ? new Date(msgs[msgs.length - 1].createdAt).getTime() : 0
+    const returning = lastMsgAt > 0 && Date.now() - lastMsgAt >= RETEST_GAP_MS
+    if (returning) {
+      const due = quizStateNow.missed.find(m => Date.now() - new Date(m.missedAt).getTime() >= RETEST_GAP_MS)
+      if (due) retestTarget = due.question
+    }
+  }
+
   const systemPrompt = `You are Bob, the student's expert mentor inside the Tree EDU problem-mastery tree.
 
 ## THE TREE (the student's whole learning world right now)
@@ -310,6 +339,7 @@ The student is working on the node: "${node.title}" — ${node.summary}
 Path from root: ${path.map(n => `"${n.title}"`).join(' → ')}
 ${node.explainer ? `\nThe node's explainer (already shown to the student):\n${node.explainer.slice(0, 2500)}` : ''}
 ${filesBlock}
+${lockerBlock}
 
 ## HOW TO TEACH HERE
 - Everything you say serves ONE goal: this student genuinely understanding THIS node in service of the root problem.
@@ -344,6 +374,8 @@ or
 - The chat UI renders the block as an interactive card — introduce it naturally in prose ("Quick check:"), but do NOT repeat the question or options in your prose, and NEVER mention the JSON or the marker.
 - Question, options, explanation and rubric all follow the session's language.
 - There is NO "Verify understanding" button — never mention one. When the node verifies, congratulate briefly and point to the next unverified node in service of the root problem.
+${quizStateNow.sureWrong >= 2 && quizStateNow.sureWrong > quizStateNow.sureRight ? `- CONFIDENCE CALIBRATION: the student has been confidently wrong ${quizStateNow.sureWrong} times on this node (vs ${quizStateNow.sureRight} confidently right) — a real blind-spot pattern, not a slip. Aim checkpoints at exactly the claims they were sure-but-wrong about, and weight a confident tone in their answers as weak evidence until their calibration recovers.` : ''}
+${retestTarget ? `- DELAYED RETEST DUE: on their last visit the student MISSED this checkpoint: "${retestTarget.slice(0, 300)}". After addressing their current message, re-probe that exact gap THIS TURN with a checkpoint block asking it from a NEW angle (different scenario and wording — never reuse the old question), and include "retest": true inside that checkpoint's JSON so the system links it to the missed one (omit the flag on any unrelated checkpoint). If the contextual read says SUPPORT FIRST, teach now and retest on the next calm turn instead.` : ''}
 
 ## VISUAL EXPLANATIONS (a diagram where words strain)
 - Use a visual when the student explicitly asks for one, OR when the concept is inherently visual — structure, spatial layout, flow/sequence, timelines/waterfalls, comparisons, geometry — and prose alone is straining. Place EXACTLY this block at the point in your explanation where the diagram belongs:
@@ -425,6 +457,7 @@ Memory fades; this visit exists to interrupt that.
       // the client — stream AND persisted message — gets only a sanitized
       // {kind, question, options} marker to render the card from.
       let persistContent = full
+      let quizShipped = false
       const qIdx = full.indexOf(QUIZ_MARK)
       if (qIdx !== -1) {
         const prose = full.slice(0, qIdx).trimEnd()
@@ -441,12 +474,67 @@ Memory fades; this visit exists to interrupt that.
             && (parsed.correctIndex as number) >= 0 && (parsed.correctIndex as number) < parsed.options.length
           const validShort = parsed.kind === 'short'
           if (typeof parsed.question === 'string' && parsed.question.trim() && (validMcq || validShort)) {
-            const qs = parseQuizState(node.quizState)
-            qs.pending = { ...parsed, review: isReview || undefined, askedAt: new Date().toISOString() }
-            await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } }).catch(() => null)
-            const sanitized = JSON.stringify({ kind: parsed.kind, question: parsed.question, ...(validMcq ? { options: parsed.options } : {}) })
-            try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
-            persistContent = `${prose}\n\n${QUIZ_MARK}${sanitized}`
+            // ── DIFFERENTIATOR LINT ──
+            // A checkpoint answerable by copying from Bob's own text tests
+            // recall, not understanding — auto-reject it (the Differentiator
+            // Principle enforced mechanically). Strict-only and fail-open:
+            // lint errors never block a checkpoint.
+            let recitable = false
+            try {
+              const Anthropic = (await import('@anthropic-ai/sdk')).default
+              const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+              const lintClient = new Anthropic({ apiKey })
+              const prevBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
+              const lint = await lintClient.messages.create({
+                model: pickBackgroundModel(),
+                max_tokens: 60,
+                messages: [{
+                  role: 'user',
+                  content: `Quality lint for a tutoring checkpoint (the Differentiator Principle: it must separate understanding from recall).
+
+TUTOR'S CURRENT MESSAGE (the checkpoint follows it):
+"${prose.slice(-1200)}"
+TUTOR'S PREVIOUS MESSAGE:
+"${prevBob.slice(0, 800)}"
+
+CHECKPOINT QUESTION: "${parsed.question.slice(0, 400)}"
+${validMcq ? `OPTIONS: ${(parsed.options as string[]).map(o => String(o)).join(' | ').slice(0, 400)}` : ''}
+
+Could a student answer this correctly PURELY by copying or recalling sentences from the two tutor messages above, without understanding (the answer is stated or strongly implied verbatim in the text)? Be strict only when it is clearly recitable — transfer questions that merely share vocabulary are fine.
+Return ONLY JSON: {"recitable": true|false}`,
+                }],
+              })
+              try {
+                const { recordAnthropicUsage } = await import('@/lib/usage')
+                recordAnthropicUsage(lint.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
+              } catch { /* non-critical */ }
+              recitable = /"recitable"\s*:\s*true/.test((lint.content[0] as { text?: string })?.text ?? '')
+            } catch { /* lint unavailable — fail open, keep the checkpoint */ }
+
+            if (!recitable) {
+              // Re-read quizState fresh: the request-start copy is seconds
+              // stale by stream end, and writing it back would clobber a
+              // tally the student just earned by answering the previous card.
+              const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
+              const qs = parseQuizState(freshRow?.quizState ?? node.quizState)
+              // retestOf links this card to the missed checkpoint ONLY when
+              // Bob marked it as the retest — an unrelated checkpoint on a
+              // retest turn must not clear the queue (if he forgets the
+              // flag, the entry just stays queued: the safe direction).
+              qs.pending = {
+                ...parsed,
+                review: isReview || undefined,
+                retestOf: parsed.retest && retestTarget ? retestTarget : undefined,
+                askedAt: new Date().toISOString(),
+              }
+              await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } }).catch(() => null)
+              const sanitized = JSON.stringify({ kind: parsed.kind, question: parsed.question, ...(validMcq ? { options: parsed.options } : {}) })
+              try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
+              persistContent = `${prose}\n\n${QUIZ_MARK}${sanitized}`
+              quizShipped = true
+            }
+            // Linted-out checkpoints are silently dropped (prose stays; a
+            // dangling "Quick check:" lead-in is rare and self-corrects).
           }
         } catch { /* malformed quiz JSON — drop the marker, keep the prose */ }
       } else {
@@ -458,10 +546,11 @@ Memory fades; this visit exists to interrupt that.
         }
       }
 
-      // Discovery card — sent to the client as a trailing machine marker,
-      // never persisted as message content. One CTA per turn: if Bob asked a
-      // checkpoint this turn, the card yields (it can resurface next turn).
-      if (suggestion && !full.includes('[[QUIZ]]')) {
+      // ── ATTENTION ARBITER: at most ONE interactive card per turn ──
+      // Priority: checkpoint card > discovery/move card. XP toasts are
+      // ambient (not CTAs) and exempt. A yielded discovery card resurfaces
+      // on a later turn via the reflection pass if it still matters.
+      if (suggestion && !quizShipped) {
         try { controller.enqueue(encoder.encode(`\n\n[[TREE_SUGGEST]]${JSON.stringify(suggestion)}`)) } catch { /* closed */ }
       }
       // XP earned during this turn (perseverance) — trailing marker, the
