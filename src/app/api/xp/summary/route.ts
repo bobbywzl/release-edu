@@ -50,7 +50,14 @@ export async function GET() {
   const earnedById = new Map(earnedRows.map(r => [r.badgeId, r]))
   const stats = await getBadgeStats(userId)
 
-  const badges = BADGES.map(b => {
+  // Legacy Release EDU ladders (chapters/courses/projects) are unearnable in
+  // the Tree product — hide them unless the user actually carries legacy
+  // progress or already earned the badge (earned trophies are never hidden).
+  const legacyMetrics = new Set<keyof typeof stats>(['chaptersCompleted', 'tracksCompleted', 'projectsCompleted'])
+  const visibleBadges = BADGES.filter(b =>
+    earnedById.has(b.id) || !legacyMetrics.has(b.metric) || stats[b.metric] > 0)
+
+  const badges = visibleBadges.map(b => {
     const row = earnedById.get(b.id)
     return {
       id: b.id,

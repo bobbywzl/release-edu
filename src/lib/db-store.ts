@@ -139,10 +139,19 @@ export interface DbScopedStore {
 }
 
 function createDbScopedStore(userId: string): DbScopedStore {
-  // Helper: ensure the user row exists (never creates rows for demo- users)
+  // Helper: ensure the user row exists.
   async function ensureUser(): Promise<User> {
+    // Demo visitors get a real (ephemeral) User row: every active table FKs
+    // onto User, so without one the demo path 502s on its very first write
+    // (tree seeding billed Opus, then failed the insert). The cleanup-demo
+    // cron already deletes `demo-*` users after 24h — rows are the designed
+    // shape, the old throw here was the bug.
     if (userId.startsWith('demo-')) {
-      throw new Error(`[dbStore] ensureUser blocked for demo userId=${userId}`)
+      return prisma.user.upsert({
+        where: { id: userId },
+        update: {},
+        create: { id: userId, email: `${userId}@release.edu`, name: 'Demo Student' },
+      })
     }
     let user = await prisma.user.findUnique({ where: { id: userId } })
     if (!user) {

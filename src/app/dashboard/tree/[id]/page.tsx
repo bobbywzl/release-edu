@@ -594,7 +594,13 @@ function TreeCanvasInner() {
       })))
       setTimeout(() => {
         setNodes(tree.nodes.map(n => mk(n, target(n))))
-        setTimeout(() => setSettling(false), 950)
+        setTimeout(() => {
+          setSettling(false)
+          // Mount-time fitView ran before the organic layout settled, which
+          // left first-run trees as a tiny corner cluster — refit now so the
+          // tree greets the user centered and readable.
+          setTimeout(() => { try { flow.fitView({ padding: 0.25, maxZoom: 1.5, duration: 500 }) } catch { /* non-critical */ } }, 30)
+        }, 950)
       }, 60)
     } else {
       setNodes(tree.nodes.map(n => mk(n, target(n))))
@@ -739,6 +745,15 @@ function TreeCanvasInner() {
             </ReactFlow>
             {/* The ground the tree grows from */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-emerald-500/[0.08] to-transparent" />
+            {/* First-run guidance — nothing else on this screen says what a
+                node IS or what to do; disappears once any node is verified. */}
+            {tree && tree.nodes.some(n => !n.pending) && tree.nodes.filter(n => !n.pending).every(n => n.status !== 'understood') && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-4">
+                <div className="px-4 py-2 rounded-full border border-primary/40 bg-card/95 backdrop-blur text-xs text-foreground shadow-lg text-center">
+                  {t('tree.firstRunHint')}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Node side panel */}

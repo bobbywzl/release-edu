@@ -60,16 +60,41 @@ annotate AI generated comprehensive explainers/ summaries.
   "grow this branch" questions, (b) AI discovery — repeated questions circling an
   uncovered field produce a suggestion card the learner must approve, (c) manual
   add. Vague growth requests get ONE clarifying question back, not guesses.
-- **Mastery is verified, never self-declared.** A node flips to "understood" only by
-  passing a Differentiator-principle mini problem set (transfer/what-if questions that
-  separate understanding from memorization). A fully verified tree = a mastered
-  problem.
+- **Mastery is verified, never self-declared.** Verification lives IN the workspace
+  chat: Bob asks Differentiator-principle **checkpoint questions** (MCQ and own-words
+  short answers, AI-judged) as interactive cards while teaching. A node flips to
+  "understood" only after 3 correct checkpoint answers including at least one
+  own-words short answer — recognition alone never verifies. There is no separate
+  test screen. A fully verified tree = a mastered problem.
+
+## The Answer Standard — Relevant & Informative (law)
+
+Every answer Bob gives in the workspace must pass BOTH tests before it ships:
+
+- **Relevant** — it answers the question the learner actually asked, scoped to THIS
+  node and in service of the root problem. Not a survey of the field, not a lecture
+  at a depth the question never called for. Depth is calibrated to what this problem
+  needs — going deeper than the pain point is as irrelevant as staying too shallow
+  to touch it.
+- **Informative** — it always teaches the science underneath. A bare verdict, recipe,
+  or fact ("use variety X", "yes, that works") is a failed answer even when correct:
+  every answer carries enough of the mechanism or principle behind it (the WHY) that
+  the learner gains transferable understanding, not a disconnected fact.
+
+The two failure modes to design against: **too general** (a textbook chapter dumped
+on a specific question) and **too specific** (an answer with no scientific background
+that resolves the moment but teaches nothing). Every prompt that produces
+learner-facing answers (node chat, explainers) embeds this standard — see
+`ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 
 ## Sessions
 
-Every tree is a self-contained **session**, onboarded at creation: language (EN/中文),
-the learner's personal background for this problem, and target difficulty
-(beginner/intermediate/advanced/professional, mapped to university course tiers).
+Every tree is a self-contained **session**, onboarded at creation by a stepper of
+**at most five questions**: language (EN/中文), the specific problem, the **purpose**
+behind it (what the learner will do with mastery — this defines "relevant" for the
+whole session, per the Answer Standard), the learner's personal background, and
+target depth on the **explainable ↔ deployable axis** (beginner "general
+understanding you can explain" → professional "real-life deployable understanding").
 These calibrate every AI output inside the session. The global first-run interview
 ends with the bolded question — **"What is the specific problem you want to master?"**
 — whose answer plants the first tree.
@@ -80,9 +105,10 @@ ends with the bolded question — **"What is the specific problem you want to ma
    branches, bud nodes, drag physics with string tension and shape-preserving subtree
    follow) plus a searchable list view carrying each node's full record.
 2. **Workspace** — the per-node work area: Bob's chat (syllabus-style opening hook,
-   Socratic where earned, Haiku contextual pre-pass each turn), the cached
-   comprehensive explainer, editable notes, conversation highlights as annotations,
-   and file evidence Bob can actually read.
+   Socratic where earned, Haiku contextual pre-pass each turn, in-chat checkpoint
+   question cards that carry mastery), the cached comprehensive explainer, editable
+   notes, conversation highlights as annotations, and file evidence Bob can
+   actually read.
 3. **Dashboard** — XP status, rank, daily goal, streak, badges, per-tree node
    progress.
 4. **Portfolio** — the record: the Forest of completed trees, verified-node evidence,
@@ -91,15 +117,22 @@ ends with the bolded question — **"What is the specific problem you want to ma
 
 ## Retention & Moat
 
-- **XP system**: daily goal ring, streak with loss-aversion at-risk state, tiered
-  badges, named ranks, reward sounds — small steps ding (node verified = the core
-  unit of progress).
+- **XP system**: every checkpoint answer pays (correct answers most, attempts a
+  little, escalating combo bonuses at 3/5/10 in a row, perseverance rewarded during
+  struggle); showing up pays (daily check-in streak XP that scales with streak
+  length + first-session bonus); daily goal ring, streak with loss-aversion at-risk
+  state, tiered badges (incl. verified-node and mastered-tree ladders), named ranks,
+  reward sounds — small steps ding (node verified = the core unit of progress).
 - **Insight memory** (the moat): Bob's curated long-term memory of the learner —
   extracted from workspace conversations with anti-hallucination rules, consolidated,
   reinforced — personalizes seeding, explainers, and the portfolio's portrait.
   Preserve it in every future change.
 - **Project execution awareness**: Bob detects concrete real-world progress on the
   problem (code written, experiments run) and flags it per node.
+- **Review loop**: verified knowledge fades, so completed trees carry a **Review**
+  action — Bob revisits the stalest verified node with one fresh transfer checkpoint
+  at full XP. Learners close out a tree with **Mark as complete**, which consolidates
+  it (golden panel) into the Forest while keeping it reviewable forever.
 
 ## What survives from Release EDU
 

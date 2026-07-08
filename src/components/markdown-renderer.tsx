@@ -10,6 +10,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
+import { GeneratedVisual } from '@/components/generated-visual'
 
 const mdComponents = {
   code({ children, className }: { children?: React.ReactNode; className?: string }) {
@@ -63,12 +64,25 @@ const mdComponents = {
   },
 }
 
-export function MarkdownRenderer({ content }: { content: string }) {
+export function MarkdownRenderer({ content, imageContext }: { content: string; imageContext?: string }) {
+  // ```image blocks become AI-generated educational diagrams. The code
+  // component is overridden per-render so the visual can be grounded in the
+  // surrounding lesson (imageContext = e.g. the node's title + summary).
+  const components = {
+    ...mdComponents,
+    code(props: { children?: React.ReactNode; className?: string }) {
+      if (props.className?.includes('language-image')) {
+        const prompt = String(props.children ?? '').trim()
+        if (prompt) return <GeneratedVisual prompt={prompt} context={imageContext ?? ''} />
+      }
+      return mdComponents.code(props)
+    },
+  }
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
-      components={mdComponents as Parameters<typeof ReactMarkdown>[0]['components']}
+      components={components as Parameters<typeof ReactMarkdown>[0]['components']}
     >
       {content}
     </ReactMarkdown>

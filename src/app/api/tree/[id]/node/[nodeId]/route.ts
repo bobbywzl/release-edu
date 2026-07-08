@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
  *   { action: 'delete' }             — delete this node AND its descendants (root protected)
  *
  * NOTE: there is deliberately NO action to set status to 'understood' —
- * mastery is AI-verified only (see ./verify).
+ * mastery is AI-verified only, via in-chat checkpoint answers (see ./quiz).
  */
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'

@@ -39,6 +39,10 @@ export interface BadgeStats {
   tracksCompleted: number
   projectsCompleted: number
   xp: number
+  // Tree EDU units of progress: checkpoint-verified nodes and fully
+  // mastered problem trees.
+  nodesVerified: number
+  treesCompleted: number
 }
 
 export const BADGES: BadgeDef[] = [
@@ -86,6 +90,28 @@ export const BADGES: BadgeDef[] = [
     name: { en: 'Serial Builder',    zh: '连续创造者' },
     desc: { en: 'Shipped 3 real projects',              zh: '完整交付 3 个实践项目' } },
 
+  // ── Verified understanding (tree nodes — the Tree EDU core unit) ──
+  { id: 'node_1',  tier: 'bronze', icon: '🌱', metric: 'nodesVerified', target: 1,
+    name: { en: 'First Sprout',      zh: '初芽' },
+    desc: { en: 'Verified understanding of a first tree node',  zh: '首次通过检查题验证一个节点' } },
+  { id: 'node_10', tier: 'silver', icon: '🌿', metric: 'nodesVerified', target: 10,
+    name: { en: 'Branch Builder',    zh: '枝干建造者' },
+    desc: { en: 'Verified understanding of 10 tree nodes',      zh: '验证掌握 10 个节点' } },
+  { id: 'node_25', tier: 'gold',   icon: '🌳', metric: 'nodesVerified', target: 25,
+    name: { en: 'Canopy Grower',     zh: '树冠培育者' },
+    desc: { en: 'Verified understanding of 25 tree nodes',      zh: '验证掌握 25 个节点' } },
+  { id: 'node_50', tier: 'legendary', icon: '🌲', metric: 'nodesVerified', target: 50,
+    name: { en: 'Old-Growth Mind',   zh: '参天心智' },
+    desc: { en: 'Verified understanding of 50 tree nodes',      zh: '验证掌握 50 个节点' } },
+
+  // ── Problem mastery (whole trees) ──
+  { id: 'tree_1', tier: 'gold',      icon: '🏆', metric: 'treesCompleted', target: 1,
+    name: { en: 'Problem Master',    zh: '问题大师' },
+    desc: { en: 'Mastered an entire problem tree end-to-end',   zh: '完整掌握一整棵问题树' } },
+  { id: 'tree_3', tier: 'legendary', icon: '👑', metric: 'treesCompleted', target: 3,
+    name: { en: 'Forest Sovereign',  zh: '森林之主' },
+    desc: { en: 'Mastered 3 entire problem trees',              zh: '完整掌握 3 棵问题树' } },
+
   // ── Dedication (lifetime XP) ──
   { id: 'xp_1000',  tier: 'bronze', icon: '⚡', metric: 'xp', target: 1000,
     name: { en: 'Rising Star',       zh: '新星' },
@@ -104,7 +130,7 @@ export function getBadge(id: string): BadgeDef | undefined {
 
 /** Gather the durable stats every badge criterion reads from. */
 export async function getBadgeStats(userId: string): Promise<BadgeStats> {
-  const [profile, chaptersCompleted, tracksCompleted, projectsCompleted] = await Promise.all([
+  const [profile, chaptersCompleted, tracksCompleted, projectsCompleted, nodesVerified, treesCompleted] = await Promise.all([
     prisma.studentProfile.findUnique({
       where: { userId },
       select: { xp: true, streak: true, longestStreak: true },
@@ -112,6 +138,8 @@ export async function getBadgeStats(userId: string): Promise<BadgeStats> {
     prisma.chapter.count({ where: { track: { userId }, status: 'completed' } }).catch(() => 0),
     prisma.track.count({ where: { userId, trackStatus: 'completed' } }).catch(() => 0),
     prisma.subjectProject.count({ where: { track: { userId }, status: 'completed' } }).catch(() => 0),
+    prisma.treeNode.count({ where: { tree: { userId }, pending: false, status: 'understood' } }).catch(() => 0),
+    prisma.problemTree.count({ where: { userId, status: 'completed' } }).catch(() => 0),
   ])
   return {
     // Schema-lag safe: before longestStreak is pushed, fall back to streak.
@@ -120,6 +148,8 @@ export async function getBadgeStats(userId: string): Promise<BadgeStats> {
     tracksCompleted,
     projectsCompleted,
     xp: profile?.xp ?? 0,
+    nodesVerified,
+    treesCompleted,
   }
 }
 

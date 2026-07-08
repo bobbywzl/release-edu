@@ -30,10 +30,17 @@ Read this before making changes.
 - **Framework**: Next.js 14.2 (App Router), TypeScript strict mode
 - **Database**: PostgreSQL (Supabase) via Prisma 6
 - **Auth**: NextAuth 4 with Google OAuth + a `demo-mode` cookie fallback
-- **AI**: Anthropic SDK — Opus (`claude-opus-4-8`) for teaching-quality output (tree
-  seeding, node explainers, workspace chat), Sonnet (`claude-sonnet-4-6`) for
-  structured proposals/judging, Haiku (via `pickBackgroundModel()`) for background
-  passes (reflection, insight extraction). Gemini for image/file analysis.
+- **AI**: Anthropic SDK — the teaching tier (tree seeding, node explainers, workspace
+  chat) and judging tier (proposals, checkpoint judging) resolve through
+  `src/lib/model-resolver.ts`, which auto-adopts the NEWEST Opus/Sonnet release from
+  the /v1/models catalog (6h cache; pinned `CHAT_MODELS` fallback — never hardcode
+  a model id in a new Bob feature, use `getTeachingModel()`/`getJudgeModel()`).
+  Haiku (via `pickBackgroundModel()`) stays pinned for background passes (reflection,
+  insight extraction). Gemini for image/file analysis AND generated visuals: Bob
+  emits ```image fenced blocks (chat + explainers) that `MarkdownRenderer` →
+  `GeneratedVisual` turns into diagrams via `/api/image/generate` (latest Gemini
+  flash image first, durable prompt-hash cache, usage tag `image`; needs
+  `GEMINI_API_KEY`).
 - **UI**: Tailwind CSS, Radix primitives, Framer Motion, React Flow (the tree canvas),
   KaTeX.
 
@@ -42,18 +49,30 @@ Read this before making changes.
 One **ProblemTree** per problem-mastery **session**: root (the problem) → solution
 branches → component/leaf nodes (pain points). Growth is permission-based only:
 learner questions → AI proposals (pending ghost nodes) → explicit approval; plus
-AI discovery cards in chat and manual add. Mastery is AI-verified via
-Differentiator-principle mini problem sets — no self-marking. Each session carries its
-own language / difficulty / personal background, set by a stepper at tree creation.
+AI discovery cards in chat and manual add. Mastery is AI-verified — no self-marking —
+through **in-chat checkpoint questions**: Bob emits `[[QUIZ]]` blocks (MCQ /
+short-answer cards) in the workspace chat; 3 correct incl. ≥1 own-words short answer
+flips the node (`MASTERY_TARGET` in tree-engine). There is no separate verify screen.
+Each session carries its own language / difficulty / personal background / PURPOSE
+(why the learner wants mastery — it defines "relevant" for the session), set by a
+5-question stepper at tree creation (never more than 5).
 
 ## Key Code Map
 
 - `src/lib/tree-engine.ts` — seeding, expansion proposals (with clarify), explainers,
-  verification, `sessionDirectives()`. The heart of the product.
-- `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/verify/chat routes.
-  The node chat route holds Bob's workspace prompt, the Haiku contextual pre-pass
-  (gap/wrong-streak/directive + node-discovery + move-recommendation + project-progress
-  detection), the `[NODE_INTRO]` hook, and `[[TREE_SUGGEST]]` stream markers.
+  checkpoint verification (`judgeCheckpointAnswer`, `markNodeVerified`),
+  `sessionDirectives()`, `ANSWER_STANDARD`. The heart of the product.
+- `src/lib/mastery.ts` — client-safe single source of truth: `MASTERY_TARGET`,
+  `parseQuizState`, the `PendingQuiz` shape. UI strings interpolate `{n}` from it.
+- `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat/review
+  routes. The node chat route holds Bob's workspace prompt, the Haiku contextual
+  pre-pass (gap/wrong-streak/directive + node-discovery + move-recommendation +
+  project-progress detection), the `[NODE_INTRO]`/`[NODE_REVIEW]` hooks, and
+  `[[TREE_SUGGEST]]`/`[[XP]]` stream markers. Bob's `[[QUIZ]]` blocks are captured
+  server-side: the full quiz (answer key) lives in `TreeNode.quizState.pending`,
+  clients only ever see a sanitized `{kind, question, options}` marker (stream AND
+  persisted message). The quiz route judges against the stored copy; verified-node
+  grinding pays ~25% XP (reviews pay full and stamp `reviewedAt`).
 - `src/app/dashboard/tree/**` — tree list + session-onboarding stepper; the canvas
   (organic layout, string-tension drag physics, shape-preserving subtree follow,
   hierarchy clamps) and the searchable list view.
@@ -62,14 +81,19 @@ own language / difficulty / personal background, set by a stepper at tree creati
 - `src/lib/insight-memory.ts` + `src/lib/insight-extraction.ts` — the personalization
   moat. PRESERVE in every change; extraction runs from workspace chats.
 - `src/lib/xp-engine.ts`, `src/lib/badges.ts`, `src/components/xp-panel.tsx` — XP,
-  daily goal, streaks, badges, sounds (`src/lib/sfx.ts`).
+  daily goal, streaks, badges, sounds (`src/lib/sfx.ts`). Checkpoint answers pay
+  `quiz_correct` / `quiz_attempt` / tiered `combo_bonus`; showing up pays via
+  `updateStreak` (daily streak + first session), fired by `/api/xp/checkin` from
+  `DailyCheckin` in the dashboard layout. Streak day boundaries use the USER's
+  timezone (`StudentProfile.lastCheckinDay`, compare-and-set so parallel tabs can't
+  double-award); all XP writes are atomic increments.
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,
-  `tree-expand`, `tree-explainer`, `tree-verify`, `node-chat`, `reflection`,
-  `insight`, `onboarding`, `portfolio`, `title`, `image`, `other` (legacy values
-  render with "(legacy)" labels). Every new AI call MUST record usage with a fitting
-  feature tag.
+  `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `node-chat`,
+  `reflection`, `insight`, `onboarding`, `portfolio`, `title`, `image`, `other`
+  (legacy values render with "(legacy)" labels). Every new AI call MUST record usage
+  with a fitting feature tag.
 
 ## The Insight Constellation (the moat — grounded in learning-science research)
 
@@ -98,12 +122,23 @@ knowledge per skill, not presumed learner speed; wheel-spinning is predictable a
 means change-the-intervention; learning-styles adaptation is debunked — never adapt
 on it.
 
+## The Answer Standard (Relevant & Informative — law)
+
+Every workspace answer must be BOTH: **Relevant** (answers the asked question at the
+depth THIS problem needs — no generic field lectures, no uncalled-for depth) and
+**Informative** (never a bare answer — always carries the scientific background /
+mechanism that makes it transferable understanding). Canonical wording lives in
+FOUNDATION.md; prompts consume it via `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
+Apply it to any new answer-producing feature.
+
 ## The Differentiator Principle (assessment ideology — still law)
 
 Every verification question must separate a student who MEMORIZED content from one who
 TRULY UNDERSTANDS it: transfer to unseen contexts, why/what-if probes, edge cases where
 the memorized rule breaks. A question answerable by reciting an explainer is a failed
-question. Implementation: `generateVerification` in `src/lib/tree-engine.ts`.
+question. Implementation: the CHECKPOINT QUESTIONS section of the node chat prompt
+(Bob authors every `[[QUIZ]]` under this law) + `judgeCheckpointAnswer` in
+`src/lib/tree-engine.ts` (short answers judged against the same bar).
 
 ## Database Rules
 
@@ -112,7 +147,7 @@ question. Implementation: `generateVerification` in `src/lib/tree-engine.ts`.
   stay in `prisma/schema.prisma` because the build runs `prisma db push` against the
   shared production database — dropping them is a deliberate, separate migration
   decision. Never build new features on them.
-- Active models: ProblemTree, TreeNode (status/pending/notes/annotations/progressLog),
+- Active models: ProblemTree, TreeNode (status/pending/notes/annotations/progressLog/quizState),
   Conversation (workspace chats use `context = "tree-node:<nodeId>"`), Message,
   MessageHighlight (annotations), LinkedFile (`workType = "tree-node"`), Insight,
   UserBadge, UsageEvent, StudentProfile, PortfolioCache.
