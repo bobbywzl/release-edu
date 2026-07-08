@@ -65,6 +65,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   const isReview = quiz.review === true
 
+  // Validate the answer SHAPE before claiming, so a malformed request never
+  // consumes the pending (which would strand the card behind a 400).
+  const mcqIdx = quiz.kind === 'mcq'
+    ? (typeof body.answer === 'number' ? body.answer : parseInt(String(body.answer), 10))
+    : -1
+  if (quiz.kind === 'mcq') {
+    const optLen = Array.isArray(quiz.options) ? quiz.options.length : 0
+    if (optLen < 2 || !Number.isInteger(mcqIdx) || mcqIdx < 0 || mcqIdx >= optLen
+      || !Number.isInteger(quiz.correctIndex) || (quiz.correctIndex as number) < 0 || (quiz.correctIndex as number) >= optLen) {
+      return NextResponse.json({ error: 'invalid mcq answer' }, { status: 400 })
+    }
+  } else if (!String(body.answer ?? '').trim()) {
+    return NextResponse.json({ error: 'answer required' }, { status: 400 })
+  }
+
   // ── ATOMIC CLAIM (exactly-once) ──
   // Consume the pending BEFORE the slow judge, gated on the exact quizState
   // string we just read (optimistic compare-and-set). Of N concurrent
@@ -90,12 +105,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     if (quiz.kind === 'mcq') {
-      const options = Array.isArray(quiz.options) ? quiz.options.map(o => String(o)) : []
-      const idx = typeof body.answer === 'number' ? body.answer : parseInt(String(body.answer), 10)
-      if (options.length < 2 || !Number.isInteger(idx) || idx < 0 || idx >= options.length
-        || !Number.isInteger(quiz.correctIndex) || (quiz.correctIndex as number) < 0 || (quiz.correctIndex as number) >= options.length) {
-        return NextResponse.json({ error: 'invalid mcq answer' }, { status: 400 })
-      }
+      // Shape already validated pre-claim; mcqIdx and options are safe here.
+      const options = (quiz.options as string[]).map(o => String(o))
+      const idx = mcqIdx
       correctIndex = quiz.correctIndex as number
       correct = idx === correctIndex
       answerText = `${String.fromCharCode(65 + idx)}) ${options[idx].slice(0, 300)}`
@@ -141,8 +153,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
         )
       }
     } else {
-      const answer = String(body.answer ?? '').trim()
-      if (!answer) return NextResponse.json({ error: 'answer required' }, { status: 400 })
+      const answer = String(body.answer ?? '').trim() // non-empty (validated pre-claim)
       answerText = answer.slice(0, 1200)
       const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, answer, body.confidence, body.lang)
       correct = j.correct
