@@ -88,13 +88,25 @@ async function anthropic() {
   return new Anthropic({ apiKey })
 }
 
+/**
+ * Robustly pull a JSON value out of a model reply, even when the model wraps
+ * it in prose or a code fence. Tries, in order: a ```json fence, the whole
+ * string, then the first balanced {...} object, then the first [...] array.
+ * A fragile parser here silently produced empty proposals — "Propose
+ * branches" would create nothing and fail without a trace.
+ */
 function extractJSON<T>(text: string): T | null {
-  try {
-    const match = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-    return JSON.parse((match?.[1] ?? text).trim()) as T
-  } catch {
-    return null
+  const tryParse = (s: string): T | null => {
+    try { return JSON.parse(s.trim()) as T } catch { return null }
   }
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fence?.[1]) { const r = tryParse(fence[1]); if (r !== null) return r }
+  const whole = tryParse(text); if (whole !== null) return whole
+  const o1 = text.indexOf('{'), o2 = text.lastIndexOf('}')
+  if (o1 !== -1 && o2 > o1) { const r = tryParse(text.slice(o1, o2 + 1)); if (r !== null) return r }
+  const a1 = text.indexOf('['), a2 = text.lastIndexOf(']')
+  if (a1 !== -1 && a2 > a1) { const r = tryParse(text.slice(a1, a2 + 1)); if (r !== null) return r }
+  return null
 }
 
 /** Student grounding for calibrated output (level, interests, memory). */

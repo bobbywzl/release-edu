@@ -351,8 +351,13 @@ function WorkspaceInner() {
         body: JSON.stringify({ nodeId, question: q, lang: language }),
       })
       const body = await res.json().catch(() => ({}))
-      if (body.clarify) setGrowClarify(body.clarify)
-      else if (Array.isArray(body.proposals)) { setGrowDone(body.proposals.length); setGrowQ('') }
+      if (!res.ok) { setGrowClarify(t('tree.proposeFailed')); return }
+      if (body.clarify) { setGrowClarify(body.clarify); return }
+      const n = Array.isArray(body.proposals) ? body.proposals.length : 0
+      if (n > 0) { setGrowDone(n); setGrowQ('') }
+      else setGrowClarify(t('tree.proposeNone'))
+    } catch {
+      setGrowClarify(t('tree.proposeFailed'))
     } finally {
       setGrowBusy(false)
     }

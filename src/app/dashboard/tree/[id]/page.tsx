@@ -421,6 +421,7 @@ function TreeCanvasInner() {
   const [growQuestion, setGrowQuestion] = useState('')
   const [growing, setGrowing] = useState(false)
   const [growClarify, setGrowClarify] = useState<string | null>(null)
+  const [growNote, setGrowNote] = useState<string | null>(null)
   const [addingChild, setAddingChild] = useState(false)
   const [childTitle, setChildTitle] = useState('')
   const [childSummary, setChildSummary] = useState('')
@@ -440,6 +441,8 @@ function TreeCanvasInner() {
     } catch { /* transient */ }
   }, [params.id, router])
   useEffect(() => { load() }, [load])
+  // Fresh node selection → clear the grow box + any stale clarify/status note.
+  useEffect(() => { setGrowClarify(null); setGrowNote(null); setGrowQuestion('') }, [selectedId])
 
   const act = useCallback(async (nodeId: string, action: 'approve' | 'reject') => {
     await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
@@ -635,6 +638,7 @@ function TreeCanvasInner() {
     if (!selected || !growQuestion.trim() || growing) return
     setGrowing(true)
     setGrowClarify(null)
+    setGrowNote(null)
     try {
       const res = await fetch(`/api/tree/${params.id}/expand`, {
         method: 'POST',
@@ -642,9 +646,23 @@ function TreeCanvasInner() {
         body: JSON.stringify({ nodeId: selected.id, question: growQuestion.trim(), lang: language }),
       })
       const body = await res.json().catch(() => ({}))
-      if (body.clarify) setGrowClarify(body.clarify)
-      else setGrowQuestion('')
-      await load()
+      if (!res.ok) { setGrowNote(t('tree.proposeFailed')); return }
+      if (body.clarify) { setGrowClarify(body.clarify); return }
+      const n = Array.isArray(body.proposals) ? body.proposals.length : 0
+      if (n > 0) {
+        // New ghost nodes were created — reload, announce, and pan/zoom so the
+        // pending nodes (awaiting approve/reject) are actually in view.
+        setGrowQuestion('')
+        setGrowNote(t('tree.proposedN').replace('{n}', String(n)))
+        await load()
+        setTimeout(() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }, 150)
+      } else {
+        // No proposals and no clarifying question — never leave the click
+        // looking like it did nothing.
+        setGrowNote(t('tree.proposeNone'))
+      }
+    } catch {
+      setGrowNote(t('tree.proposeFailed'))
     } finally {
       setGrowing(false)
     }
@@ -830,6 +848,9 @@ function TreeCanvasInner() {
                     />
                     {growClarify && (
                       <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.clarifyLabel')}</span> {growClarify}</p>
+                    )}
+                    {growNote && (
+                      <p className="text-[11px] text-muted-foreground leading-snug">{growNote}</p>
                     )}
                     <button
                       onClick={grow}
