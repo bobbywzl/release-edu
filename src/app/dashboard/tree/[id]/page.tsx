@@ -422,6 +422,8 @@ function TreeCanvasInner() {
   const [growing, setGrowing] = useState(false)
   const [growClarify, setGrowClarify] = useState<string | null>(null)
   const [growNote, setGrowNote] = useState<string | null>(null)
+  const [growRefine, setGrowRefine] = useState('')
+  const [growLastQuestion, setGrowLastQuestion] = useState('')
   const [addingChild, setAddingChild] = useState(false)
   const [childTitle, setChildTitle] = useState('')
   const [childSummary, setChildSummary] = useState('')
@@ -442,7 +444,7 @@ function TreeCanvasInner() {
   }, [params.id, router])
   useEffect(() => { load() }, [load])
   // Fresh node selection → clear the grow box + any stale clarify/status note.
-  useEffect(() => { setGrowClarify(null); setGrowNote(null); setGrowQuestion('') }, [selectedId])
+  useEffect(() => { setGrowClarify(null); setGrowNote(null); setGrowQuestion(''); setGrowRefine(''); setGrowLastQuestion('') }, [selectedId])
 
   const act = useCallback(async (nodeId: string, action: 'approve' | 'reject') => {
     await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
@@ -634,33 +636,50 @@ function TreeCanvasInner() {
   const understood = tree?.nodes.filter(n => !n.pending && n.parentId !== null && n.status === 'understood').length ?? 0
   const total = tree?.nodes.filter(n => !n.pending && n.parentId !== null).length ?? 0
 
+  // Shared: create the ghost nodes from an expand response, reveal them, and
+  // surface the OPTIONAL refinement question (never blocks — proposals always
+  // land; the clarify is a chance to reconfigure them).
+  async function applyExpand(question: string, replacePending: boolean) {
+    const res = await fetch(`/api/tree/${params.id}/expand`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodeId: selected!.id, question, lang: language, replacePending }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) { setGrowNote(t('tree.proposeFailed')); return }
+    const n = Array.isArray(body.proposals) ? body.proposals.length : 0
+    setGrowNote(n > 0 ? t('tree.proposedN').replace('{n}', String(n)) : t('tree.proposeNone'))
+    setGrowClarify(typeof body.clarify === 'string' && body.clarify.trim() ? body.clarify : null)
+    await load()
+    setTimeout(() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }, 150)
+  }
+
   async function grow() {
     if (!selected || !growQuestion.trim() || growing) return
     setGrowing(true)
     setGrowClarify(null)
     setGrowNote(null)
+    setGrowRefine('')
     try {
-      const res = await fetch(`/api/tree/${params.id}/expand`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodeId: selected.id, question: growQuestion.trim(), lang: language }),
-      })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) { setGrowNote(t('tree.proposeFailed')); return }
-      if (body.clarify) { setGrowClarify(body.clarify); return }
-      const n = Array.isArray(body.proposals) ? body.proposals.length : 0
-      if (n > 0) {
-        // New ghost nodes were created — reload, announce, and pan/zoom so the
-        // pending nodes (awaiting approve/reject) are actually in view.
-        setGrowQuestion('')
-        setGrowNote(t('tree.proposedN').replace('{n}', String(n)))
-        await load()
-        setTimeout(() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }, 150)
-      } else {
-        // No proposals and no clarifying question — never leave the click
-        // looking like it did nothing.
-        setGrowNote(t('tree.proposeNone'))
-      }
+      const q = growQuestion.trim()
+      setGrowLastQuestion(q)
+      await applyExpand(q, false)
+      setGrowQuestion('')
+    } catch {
+      setGrowNote(t('tree.proposeFailed'))
+    } finally {
+      setGrowing(false)
+    }
+  }
+
+  // Answer the optional refinement → REPLACE the current ghosts with sharper
+  // ones configured to the added detail.
+  async function refineBranches() {
+    if (!selected || !growRefine.trim() || growing || !growLastQuestion) return
+    setGrowing(true)
+    try {
+      await applyExpand(`${growLastQuestion}\n\nAdded specifics: ${growRefine.trim()}`, true)
+      setGrowRefine('')
     } catch {
       setGrowNote(t('tree.proposeFailed'))
     } finally {
@@ -846,9 +865,6 @@ function TreeCanvasInner() {
                       rows={2}
                       className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
                     />
-                    {growClarify && (
-                      <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.clarifyLabel')}</span> {growClarify}</p>
-                    )}
                     {growNote && (
                       <p className="text-[11px] text-muted-foreground leading-snug">{growNote}</p>
                     )}
@@ -860,6 +876,29 @@ function TreeCanvasInner() {
                       {growing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sprout className="w-3.5 h-3.5" />}
                       {growing ? t('tree.proposing') : t('tree.propose')}
                     </button>
+
+                    {/* Optional refinement — answer to reconfigure the ghosts,
+                        or ignore it and just approve them on the canvas. */}
+                    {growClarify && (
+                      <div className="mt-1 rounded-lg border border-amber-400/30 bg-amber-500/[0.06] p-2.5 space-y-1.5">
+                        <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.refineLabel')}</span> {growClarify}</p>
+                        <textarea
+                          value={growRefine}
+                          onChange={e => setGrowRefine(e.target.value)}
+                          placeholder={t('tree.refinePlaceholder')}
+                          rows={2}
+                          className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-amber-400/40"
+                        />
+                        <button
+                          onClick={refineBranches}
+                          disabled={!growRefine.trim() || growing}
+                          className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-300 text-[11px] font-medium py-1.5 hover:bg-amber-500/25 transition-colors disabled:opacity-40"
+                        >
+                          {growing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sprout className="w-3 h-3" />}
+                          {t('tree.refine')}
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Manual add child */}

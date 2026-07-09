@@ -352,10 +352,12 @@ function WorkspaceInner() {
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) { setGrowClarify(t('tree.proposeFailed')); return }
-      if (body.clarify) { setGrowClarify(body.clarify); return }
+      // Proposals always land now; the clarify is an OPTIONAL refinement shown
+      // alongside the count — answer it on the canvas to reconfigure the ghosts.
       const n = Array.isArray(body.proposals) ? body.proposals.length : 0
-      if (n > 0) { setGrowDone(n); setGrowQ('') }
-      else setGrowClarify(t('tree.proposeNone'))
+      setGrowDone(n)
+      if (n > 0) setGrowQ('')
+      setGrowClarify(typeof body.clarify === 'string' && body.clarify.trim() ? body.clarify : null)
     } catch {
       setGrowClarify(t('tree.proposeFailed'))
     } finally {
@@ -789,7 +791,7 @@ function WorkspaceInner() {
                   className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
                 />
                 {growClarify && (
-                  <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.clarifyLabel')}</span> {growClarify}</p>
+                  <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.refineLabel')}</span> {growClarify} <span className="text-muted-foreground">{t('tree.refineOnCanvas')}</span></p>
                 )}
                 {growDone !== null && (
                   <Link href={`/dashboard/tree/${treeId}`} className="block text-[11px] text-emerald-300 hover:underline">
