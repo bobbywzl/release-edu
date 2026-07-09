@@ -170,10 +170,10 @@ const TIERS: RankTier[] = [
 
 export interface RankInfo {
   key: string
-  tier: number       // index in TIERS (0..7)
-  division: number   // 3→1 within a tier; 0 for the undivided top tier
-  en: string         // composed label incl. numeral, e.g. "Gold II"
-  zh: string         // e.g. "黄金 II"
+  tier: number       // index in TIERS (0..9)
+  division: number   // 3→1 within a mid tier; 0 for the undivided Rookie + top tiers
+  en: string         // composed label incl. numeral, e.g. "Scholar II"
+  zh: string         // e.g. "学者 II"
   color: string
   glow: string
   emblem: string
@@ -184,7 +184,10 @@ const ROMAN = ['', 'I', 'II', 'III']
 
 /**
  * The rank for a level: its tier + division (III at the bottom of the tier,
- * I at the top, just below the next promotion). The top tier is undivided.
+ * I at the top, just below the next promotion). The base Rookie tier and the
+ * top tier are UNDIVIDED — a beginner is simply "Rookie" (never "Rookie II",
+ * which would collide with the full-circle endgame title), and the pinnacle
+ * "Rookie II" stands alone.
  */
 export function getRank(level: number): RankInfo {
   let idx = 0
@@ -194,7 +197,7 @@ export function getRank(level: number): RankInfo {
   const tier = TIERS[idx]
   const next = TIERS[idx + 1]
   let division = 0
-  if (next) {
+  if (next && idx > 0) {
     const span = Math.max(1, next.minLevel - tier.minLevel)
     const pos = Math.min(span - 1, Math.max(0, level - tier.minLevel))
     division = 3 - Math.floor((pos / span) * 3) // 3 (bottom) → 1 (top)
