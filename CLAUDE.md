@@ -86,7 +86,11 @@ Each session carries its own language / difficulty / personal background / PURPO
   `updateStreak` (daily streak + first session), fired by `/api/xp/checkin` from
   `DailyCheckin` in the dashboard layout. Streak day boundaries use the USER's
   timezone (`StudentProfile.lastCheckinDay`, compare-and-set so parallel tabs can't
-  double-award); all XP writes are atomic increments.
+  double-award); all XP writes are atomic increments. `getRank(level)` returns the
+  learning-journey rank (`RankInfo`: tier/division/color/emblem/vfx,
+  Rookie→Transcendent, derived from level — no schema); `awardXp`/`awardXpBatch` attach `rankUp`/`tierUp`/`rank`
+  so the client fires `playRankUp(vfx, tierUp)` (`src/lib/sfx.ts`, escalating
+  synthesized fanfare) + the rank-colored `RankUpOverlay` (`xp-toast.tsx`).
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,

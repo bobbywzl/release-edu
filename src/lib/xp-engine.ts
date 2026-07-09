@@ -62,6 +62,23 @@ interface XpAwardResult {
   newTotal: number
   levelUp: boolean
   newLevel: number
+  // Rank progression: rankUp = crossed a division or tier boundary; tierUp =
+  // reached a whole new tier (the epic celebration). rank carries the new
+  // rank so the client can theme the overlay + escalate the sound.
+  rankUp: boolean
+  tierUp: boolean
+  rank: RankInfo
+}
+
+/** Compute the rank-progression fields for a level transition. */
+function rankTransition(oldLevel: number, newLevel: number): { rankUp: boolean; tierUp: boolean; rank: RankInfo } {
+  const from = getRank(oldLevel)
+  const to = getRank(newLevel)
+  return {
+    rankUp: from.key !== to.key || from.division !== to.division,
+    tierUp: from.tier !== to.tier,
+    rank: to,
+  }
 }
 
 // ── Core Calculation ──
@@ -115,20 +132,82 @@ const XP_TABLE: Record<XpSource, { base: number; label: string }> = {
 // (~2 quiz answers + 1 objective), so "goal met" is a daily habit, not a chore.
 export const DAILY_GOAL_XP = 60
 
-// Named rank tiers give levels identity (Duolingo leagues / Khan avatars):
-// the current rank appears on the dashboard and the portfolio/résumé.
-const RANKS: Array<{ minLevel: number; en: string; zh: string }> = [
-  { minLevel: 40, en: 'Sage',       zh: '贤者' },
-  { minLevel: 30, en: 'Master',     zh: '大师' },
-  { minLevel: 20, en: 'Expert',     zh: '专家' },
-  { minLevel: 15, en: 'Adept',      zh: '能手' },
-  { minLevel: 10, en: 'Scholar',    zh: '学者' },
-  { minLevel: 5,  en: 'Apprentice', zh: '学徒' },
-  { minLevel: 1,  en: 'Novice',     zh: '新手' },
+// FPS-style competitive rank ladder (Valorant/CS grammar): 8 escalating
+// TIERS, each split into 3 divisions (III→II→I) so a promotion — the dopamine
+// hit — is always within a level or two. The top tier (Radiant) is
+// undivided. Every tier carries its own color + emblem + a `vfx` intensity
+// (0..1) that drives how grand the rank-up sound and animation get: climbing
+// the ladder should *feel* louder and shinier. Ranks derive purely from level
+// (no schema), and appear on the dashboard and the portfolio.
+export interface RankTier {
+  key: string
+  minLevel: number
+  en: string
+  zh: string
+  color: string   // emblem/name color (hex)
+  glow: string    // rgba glow for auras/shadows
+  emblem: string  // emoji emblem (self-contained, no assets)
+  vfx: number     // 0..1 grandeur scalar for sound + animation
+}
+
+// The journey of a mind, not a metal shelf: eight learning-themed titles that
+// climb from a first sprout of curiosity to transcendence, on an ascending
+// color spectrum (green → cyan → blue → indigo → violet → gold → fuchsia →
+// radiant). Each is a distinct, exciting rank to reach.
+const TIERS: RankTier[] = [
+  { key: 'rookie',       minLevel: 1,  en: 'Rookie',       zh: '新秀',   color: '#6EE7B7', glow: 'rgba(110,231,183,0.5)',  emblem: '🌱', vfx: 0.0 },
+  { key: 'seeker',       minLevel: 4,  en: 'Seeker',       zh: '探索者', color: '#22D3EE', glow: 'rgba(34,211,238,0.55)',  emblem: '🧭', vfx: 0.14 },
+  { key: 'scholar',      minLevel: 8,  en: 'Scholar',      zh: '学者',   color: '#60A5FA', glow: 'rgba(96,165,250,0.55)',  emblem: '📖', vfx: 0.28 },
+  { key: 'prodigy',      minLevel: 13, en: 'Prodigy',      zh: '奇才',   color: '#818CF8', glow: 'rgba(129,140,248,0.6)',  emblem: '⚡', vfx: 0.42 },
+  { key: 'virtuoso',     minLevel: 19, en: 'Virtuoso',     zh: '大匠',   color: '#A78BFA', glow: 'rgba(167,139,250,0.6)',  emblem: '🎯', vfx: 0.58 },
+  { key: 'luminary',     minLevel: 27, en: 'Luminary',     zh: '泰斗',   color: '#FBBF24', glow: 'rgba(251,191,36,0.65)',  emblem: '🌟', vfx: 0.72 },
+  { key: 'guru',         minLevel: 37, en: 'Guru',         zh: '宗师',   color: '#E879F9', glow: 'rgba(232,121,249,0.7)',  emblem: '🔮', vfx: 0.86 },
+  { key: 'transcendent', minLevel: 50, en: 'Transcendent', zh: '超凡',   color: '#FDE68A', glow: 'rgba(253,230,138,0.9)',  emblem: '🌌', vfx: 1.0 },
 ]
 
-export function getRank(level: number): { en: string; zh: string } {
-  return RANKS.find(r => level >= r.minLevel) ?? RANKS[RANKS.length - 1]
+export interface RankInfo {
+  key: string
+  tier: number       // index in TIERS (0..7)
+  division: number   // 3→1 within a tier; 0 for the undivided top tier
+  en: string         // composed label incl. numeral, e.g. "Gold II"
+  zh: string         // e.g. "黄金 II"
+  color: string
+  glow: string
+  emblem: string
+  vfx: number
+}
+
+const ROMAN = ['', 'I', 'II', 'III']
+
+/**
+ * The rank for a level: its tier + division (III at the bottom of the tier,
+ * I at the top, just below the next promotion). The top tier is undivided.
+ */
+export function getRank(level: number): RankInfo {
+  let idx = 0
+  for (let i = TIERS.length - 1; i >= 0; i--) {
+    if (level >= TIERS[i].minLevel) { idx = i; break }
+  }
+  const tier = TIERS[idx]
+  const next = TIERS[idx + 1]
+  let division = 0
+  if (next) {
+    const span = Math.max(1, next.minLevel - tier.minLevel)
+    const pos = Math.min(span - 1, Math.max(0, level - tier.minLevel))
+    division = 3 - Math.floor((pos / span) * 3) // 3 (bottom) → 1 (top)
+  }
+  const suffix = division ? ` ${ROMAN[division]}` : ''
+  return {
+    key: tier.key,
+    tier: idx,
+    division,
+    en: `${tier.en}${suffix}`,
+    zh: `${tier.zh}${suffix}`,
+    color: tier.color,
+    glow: tier.glow,
+    emblem: tier.emblem,
+    vfx: tier.vfx,
+  }
 }
 
 export { getLevel as getLevelForXp }
@@ -294,6 +373,7 @@ export async function awardXp(
     newTotal,
     levelUp: newLevel > oldLevel,
     newLevel,
+    ...rankTransition(oldLevel, newLevel),
   }
 }
 
@@ -333,6 +413,7 @@ export async function awardXpBatch(
       newTotal: running,
       levelUp: newLevel > oldLevel,
       newLevel,
+      ...rankTransition(oldLevel, newLevel),
     }
   })
 }
