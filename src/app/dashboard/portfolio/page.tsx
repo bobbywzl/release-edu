@@ -41,7 +41,7 @@ const BADGE_TIER_STYLES: Record<XpBadgeInfo['tier'], string> = {
 function AchievementsSection() {
   const { language, t } = useLanguage()
   const lang = language === 'zh' ? 'zh' : 'en'
-  const [data, setData] = useState<{ badges: XpBadgeInfo[]; level: number; rank: { en: string; zh: string }; xp: number } | null>(null)
+  const [data, setData] = useState<{ badges: XpBadgeInfo[]; level: number; rank: { en: string; zh: string; emblem?: string; color?: string }; xp: number } | null>(null)
 
   useEffect(() => {
     fetch('/api/xp/summary', { cache: 'no-store' })
@@ -66,7 +66,7 @@ function AchievementsSection() {
           <Award className="w-4 h-4 text-muted-foreground" />
           {t('xp.achievements')}
           <span className="text-[11px] font-normal text-muted-foreground">
-            · {t('common.level')} {data.level} — {data.rank[lang]} · {data.xp.toLocaleString()} XP
+            · {t('common.level')} {data.level} — <span style={{ color: data.rank.color }}>{data.rank.emblem} {data.rank[lang]}</span> · {data.xp.toLocaleString()} XP
           </span>
         </h2>
         <p className="text-[11px] text-muted-foreground mt-0.5">{t('xp.achievementsSub')}</p>

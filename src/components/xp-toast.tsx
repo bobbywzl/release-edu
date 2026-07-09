@@ -4,7 +4,21 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Zap, Trophy, Star, TrendingUp, Heart } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useT, useLanguage } from '@/lib/i18n'
-import { playXpDing, playLevelUp, playBadgeUnlock } from '@/lib/sfx'
+import { playXpDing, playLevelUp, playBadgeUnlock, playRankUp } from '@/lib/sfx'
+
+// The rank an award lands you at (mirrors RankInfo from xp-engine, sent over
+// the wire in the award payload). Powers the rank-up celebration.
+export interface RankInfo {
+  key: string
+  tier: number
+  division: number
+  en: string
+  zh: string
+  color: string
+  glow: string
+  emblem: string
+  vfx: number
+}
 
 interface XpEvent {
   id: string
@@ -13,6 +27,9 @@ interface XpEvent {
   levelUp: boolean
   newLevel: number
   source?: string
+  rankUp?: boolean
+  tierUp?: boolean
+  rank?: RankInfo
 }
 
 export interface BadgeEvent {
@@ -44,7 +61,7 @@ export function emitXpEvent(event: Omit<XpEvent, 'id'>) {
 }
 
 // Convenience: emit from API response xpAwards array
-export function emitXpAwards(awards: Array<{ awarded: number; label: string; levelUp: boolean; newLevel: number; source?: string }>) {
+export function emitXpAwards(awards: Array<{ awarded: number; label: string; levelUp: boolean; newLevel: number; source?: string; rankUp?: boolean; tierUp?: boolean; rank?: RankInfo }>) {
   // Stagger so multiple awards animate sequentially
   awards.forEach((a, i) => {
     setTimeout(() => emitXpEvent(a), i * 600)
@@ -147,6 +164,109 @@ function LevelUpOverlay({ level, onDone }: { level: number; onDone: () => void }
           <div className="text-xs font-bold text-yellow-400 uppercase tracking-[0.2em] mb-1">{t('xp.levelUp')}</div>
           <div className="text-4xl font-black text-white drop-shadow-[0_0_20px_rgba(250,204,21,0.4)]">
             {t('common.level')} {level}
+          </div>
+        </motion.div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ── Rank Up Overlay (the headline celebration) ──
+// Themed entirely to the new rank's color + emblem; grandeur scales with the
+// rank's vfx and whether a whole new TIER was reached. This is the moment the
+// gamification loop is built around — make it land.
+function RankUpOverlay({ rank, tierUp, onDone }: { rank: RankInfo; tierUp: boolean; onDone: () => void }) {
+  const t = useT()
+  const { language } = useLanguage()
+  const lang = language === 'zh' ? 'zh' : 'en'
+  const v = Math.max(0, Math.min(1, rank.vfx))
+  useEffect(() => {
+    const timer = setTimeout(onDone, tierUp ? 3600 : 2600)
+    return () => clearTimeout(timer)
+  }, [onDone, tierUp])
+
+  const particles = Math.round(10 + v * 18)      // denser burst for higher ranks
+  const rays = tierUp ? Math.round(8 + v * 8) : 0 // radiating rays only on tier-ups
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[320] flex items-center justify-center pointer-events-none overflow-hidden"
+    >
+      {/* Rank-tinted full-screen flash */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: [0, 0.18 + 0.22 * v, 0] }}
+        transition={{ duration: 1.6 }}
+        className="absolute inset-0"
+        style={{ background: `radial-gradient(circle at center, ${rank.color}, transparent 70%)` }}
+      />
+
+      {/* Radiating rays (tier-up only) */}
+      {Array.from({ length: rays }).map((_, i) => (
+        <motion.div
+          key={`ray-${i}`}
+          initial={{ opacity: 0, scaleY: 0 }}
+          animate={{ opacity: [0, 0.5, 0], scaleY: [0, 1, 1] }}
+          transition={{ duration: 1.6, delay: 0.2 + i * 0.02, ease: 'easeOut' }}
+          className="absolute top-1/2 left-1/2 origin-bottom"
+          style={{
+            width: 3, height: '48vh',
+            background: `linear-gradient(to top, ${rank.color}, transparent)`,
+            transform: `translate(-50%, -100%) rotate(${(360 / Math.max(1, rays)) * i}deg)`,
+          }}
+        />
+      ))}
+
+      <motion.div
+        initial={{ scale: 0, rotate: -14 }}
+        animate={{ scale: [0, 1.28, 1], rotate: [-14, 4, 0] }}
+        transition={{ duration: 0.6, ease: 'backOut' }}
+        className="relative flex flex-col items-center gap-4"
+      >
+        {/* Emblem in a rank-colored aura */}
+        <motion.div
+          animate={{ scale: [1, 1.06, 1] }}
+          transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+          className="relative w-32 h-32 rounded-full flex items-center justify-center"
+          style={{
+            background: `radial-gradient(circle, ${rank.color}33, transparent 72%)`,
+            boxShadow: `0 0 ${40 + v * 60}px ${rank.glow}, inset 0 0 30px ${rank.glow}`,
+          }}
+        >
+          <span className="text-6xl select-none drop-shadow-lg">{rank.emblem}</span>
+          {/* Particle burst — count + reach grow with rank */}
+          {Array.from({ length: particles }).map((_, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, scale: 0 }}
+              animate={{
+                opacity: [0, 1, 0],
+                scale: [0, 1, 0.4],
+                x: Math.cos((i * Math.PI * 2) / particles) * (70 + v * 60),
+                y: Math.sin((i * Math.PI * 2) / particles) * (70 + v * 60),
+              }}
+              transition={{ duration: 1.2, delay: 0.25 + i * 0.02 }}
+              className="absolute top-1/2 left-1/2 w-2 h-2 -ml-1 -mt-1 rounded-full"
+              style={{ background: rank.color }}
+            />
+          ))}
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 22 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="text-center"
+        >
+          <div className="text-xs font-black uppercase tracking-[0.3em] mb-1" style={{ color: rank.color }}>
+            {tierUp ? t('xp.tierUp') : t('xp.rankUp')}
+          </div>
+          <div
+            className="text-5xl font-black text-white"
+            style={{ textShadow: `0 0 24px ${rank.glow}` }}
+          >
+            {rank[lang]}
           </div>
         </motion.div>
       </motion.div>
@@ -313,6 +433,7 @@ function XpToastBanner({ event, onDone }: { event: XpEvent; onDone: () => void }
 export function XpToastProvider() {
   const [toasts, setToasts] = useState<XpEvent[]>([])
   const [levelUp, setLevelUp] = useState<{ level: number } | null>(null)
+  const [rankUp, setRankUp] = useState<{ rank: RankInfo; tierUp: boolean } | null>(null)
   const [badgeUnlock, setBadgeUnlock] = useState<BadgeEvent | null>(null)
   const [floaters, setFloaters] = useState<Array<{ id: string; amount: number; x: number; y: number }>>([])
 
@@ -333,8 +454,14 @@ export function XpToastProvider() {
         },
       ])
 
-      // Level up overlay + fanfare
-      if (event.levelUp) {
+      // Celebration: a rank promotion is the headline moment and supersedes
+      // the plain level-up overlay (a rank-up always implies a level-up). Its
+      // sound + animation escalate with the rank tier.
+      if (event.rankUp && event.rank) {
+        const rank = event.rank
+        const tierUp = !!event.tierUp
+        setTimeout(() => { setRankUp({ rank, tierUp }); playRankUp(rank.vfx, tierUp) }, 400)
+      } else if (event.levelUp) {
         setTimeout(() => { setLevelUp({ level: event.newLevel }); playLevelUp() }, 400)
       }
     }
@@ -377,6 +504,13 @@ export function XpToastProvider() {
       <AnimatePresence>
         {levelUp && (
           <LevelUpOverlay level={levelUp.level} onDone={() => setLevelUp(null)} />
+        )}
+      </AnimatePresence>
+
+      {/* Rank up overlay — the headline celebration */}
+      <AnimatePresence>
+        {rankUp && (
+          <RankUpOverlay rank={rankUp.rank} tierUp={rankUp.tierUp} onDone={() => setRankUp(null)} />
         )}
       </AnimatePresence>
 

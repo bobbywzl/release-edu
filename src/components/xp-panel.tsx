@@ -33,10 +33,22 @@ interface BadgeInfo {
   featured: boolean
 }
 
+interface RankInfo {
+  key: string
+  tier: number
+  division: number
+  en: string
+  zh: string
+  color: string
+  glow: string
+  emblem: string
+  vfx: number
+}
+
 interface XpSummary {
   xp: number
   level: number
-  rank: { en: string; zh: string }
+  rank: RankInfo
   levelProgress: number
   xpToday: number
   dailyGoal: number
@@ -139,14 +151,19 @@ export function XpPanel() {
     <>
       <div className="rounded-xl border border-border bg-card p-4 lg:p-5">
         <div className="flex items-center gap-4 lg:gap-6 flex-wrap">
-          {/* Level ring + rank */}
+          {/* Level ring + rank — ring and name themed to the current rank */}
           <div className="flex items-center gap-3">
-            <Ring progress={data.levelProgress} size={72} stroke={6} color="hsl(var(--primary))" track="hsl(var(--muted))">
+            <Ring progress={data.levelProgress} size={72} stroke={6} color={data.rank.color ?? 'hsl(var(--primary))'} track="hsl(var(--muted))">
               <span className="text-lg font-black text-foreground leading-none">{data.level}</span>
               <span className="text-[9px] text-muted-foreground uppercase tracking-wide">{t('xp.levelShort')}</span>
             </Ring>
             <div>
-              <p className="text-sm font-bold text-foreground">{data.rank[lang]}</p>
+              <p
+                className="text-sm font-black flex items-center gap-1.5"
+                style={{ color: data.rank.color, textShadow: `0 0 12px ${data.rank.glow ?? 'transparent'}` }}
+              >
+                <span className="text-base leading-none">{data.rank.emblem}</span>{data.rank[lang]}
+              </p>
               <p className="text-xs text-muted-foreground">{data.xp.toLocaleString()} XP</p>
             </div>
           </div>

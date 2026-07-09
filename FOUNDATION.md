@@ -121,8 +121,11 @@ ends with the bolded question — **"What is the specific problem you want to ma
   little, escalating combo bonuses at 3/5/10 in a row, perseverance rewarded during
   struggle); showing up pays (daily check-in streak XP that scales with streak
   length + first-session bonus); daily goal ring, streak with loss-aversion at-risk
-  state, tiered badges (incl. verified-node and mastered-tree ladders), named ranks,
-  reward sounds — small steps ding (node verified = the core unit of progress).
+  state, tiered badges (incl. verified-node and mastered-tree ladders), an
+  FPS-style competitive **rank ladder** (Bronze → Radiant, 8 tiers × 3
+  divisions) whose promotions fire escalating synthesized fanfares and a
+  rank-colored celebration overlay that grows grander with the tier, reward
+  sounds — small steps ding (node verified = the core unit of progress).
 - **Insight memory** (the moat): Bob's curated long-term memory of the learner —
   extracted from workspace conversations with anti-hallucination rules, consolidated,
   reinforced — personalizes seeding, explainers, and the portfolio's portrait.

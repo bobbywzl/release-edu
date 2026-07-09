@@ -413,6 +413,8 @@ const EN: Dict = {
 
   // ── XP toast ──
   'xp.levelUp': 'Level Up!',
+  'xp.rankUp': 'Rank Up',
+  'xp.tierUp': 'New Tier',
   'xp.perseveranceHint': 'Sticking with hard concepts is the learning.',
   'xp.award.quiz_correct': 'Checkpoint Correct',
   'xp.award.quiz_attempt': 'Good Attempt',
@@ -1017,6 +1019,8 @@ const ZH: Dict = {
 
   // ── XP toast ──
   'xp.levelUp': '升级了！',
+  'xp.rankUp': '段位提升',
+  'xp.tierUp': '晋级新阶',
   'xp.perseveranceHint': '坚持攻克难懂的概念，本身就是学习。',
   'xp.award.quiz_correct': '检查题答对',
   'xp.award.quiz_attempt': '尝试有奖',
