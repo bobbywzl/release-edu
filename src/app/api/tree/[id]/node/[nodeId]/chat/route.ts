@@ -157,7 +157,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   //                   idea, then one fresh checkpoint (full XP).
   const isIntro = message.trim() === '[NODE_INTRO]'
   const isReview = message.trim() === '[NODE_REVIEW]'
-  const isTrigger = isIntro || isReview
+  // [NODE_CHECKPOINT] — the client fires this after each answered checkpoint
+  // while the node is still unverified, so questions keep coming (with a brief
+  // clarify if they just missed) until the node is complete.
+  const isCheckpoint = message.trim() === '[NODE_CHECKPOINT]'
+  const isTrigger = isIntro || isReview || isCheckpoint
   if (!isTrigger) await store.addMessage(conv!.id, 'user', message.trim())
 
   // Contextual thinking (Haiku) before Bob speaks — persisted on the
@@ -396,6 +400,7 @@ ${node.status === 'understood'
 or
 [[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)"}
 - Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
+- SCOPE — test ONLY what THIS node ("${node.title}") teaches, using its explainer and this conversation as the whole-node content. Use the FULL TREE above to see the BOUNDARIES: concepts owned by OTHER nodes (siblings, children, other branches) are out of scope, and a correct answer here must NEVER require the student to explain another node's mechanism. Example of the trap to avoid: if this node is about the genetic/variety ceiling, do NOT make passing depend on naming a soil/watering/sunlight mechanism — that is a different node's material; ask instead about THIS node's own claim (e.g. why care alone can't beat the variety's ceiling). Cover the WHOLE of this node's material, and stay strictly inside it.
 - "short" (own-words) carries the mastery weight — use it for the WHY/transfer probes${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' (the student still needs one)' : ''}; "mcq" for quick discrimination checks. Vary the formats.
 - At most one checkpoint per message. Never in your opening hook. Skip it on turns where the contextual read says SUPPORT FIRST — and NEVER staple a checkpoint to a turn where the student just expressed confusion or you are clarifying a misunderstanding they voiced. Quizzing a lost student converts live confusion into a recorded failure; teach first, checkpoint only once they've re-explained or responded confidently (saying "no quiz yet — tell me back in your own words first" is itself good teaching).
 - The chat UI renders the block as an interactive card — introduce it naturally in prose ("Quick check:"), but do NOT repeat the question or options in your prose, and NEVER mention the JSON or the marker.
@@ -424,7 +429,12 @@ No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}
 ## THIS TURN: RETENTION REVIEW (the student clicked Review on this verified node — they have not spoken)
 Memory fades; this visit exists to interrupt that.
 1. In 2-4 sentences, reactivate the core idea as a recall cue — what it is and why it mattered to the ROOT problem ("${tree.title}"). No full re-lecture.
-2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${reflectionBlock}`
+2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${isCheckpoint ? `
+## THIS TURN: NEXT CHECKPOINT (keep going until the node verifies)
+The student just answered a checkpoint and this node is NOT yet verified (${quizStateNow.correct}/${MASTERY_TARGET} correct${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? `, and still needs ${MASTERY_MIN_SHORT} own-words short answer` : ''}). Keep the momentum:
+1. Glance at their last answer in the conversation. If it was wrong or shaky, give ONE tight sentence of clarification (no lecture); if it was correct, a 3-6 word "Good — next:" bridge is enough.
+2. Then END with exactly ONE NEW [[QUIZ]] checkpoint — different from every question already asked, scoped strictly to THIS node${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ', and make it a "short" own-words probe (the node still needs one to verify)' : ' (vary MCQ / short)'}.
+Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
 
   const history = (conv!.messages ?? [])
     .filter(m => m.role === 'user' || m.role === 'assistant')
