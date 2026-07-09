@@ -150,15 +150,19 @@ export interface RankTier {
   vfx: number     // 0..1 grandeur scalar for sound + animation
 }
 
+// The journey of a mind, not a metal shelf: eight learning-themed titles that
+// climb from a first sprout of curiosity to transcendence, on an ascending
+// color spectrum (green → cyan → blue → indigo → violet → gold → fuchsia →
+// radiant). Each is a distinct, exciting rank to reach.
 const TIERS: RankTier[] = [
-  { key: 'bronze',    minLevel: 1,  en: 'Bronze',    zh: '青铜', color: '#B45309', glow: 'rgba(180,83,9,0.55)',   emblem: '🥉', vfx: 0.0 },
-  { key: 'silver',    minLevel: 4,  en: 'Silver',    zh: '白银', color: '#94A3B8', glow: 'rgba(148,163,184,0.55)', emblem: '🥈', vfx: 0.14 },
-  { key: 'gold',      minLevel: 8,  en: 'Gold',      zh: '黄金', color: '#FACC15', glow: 'rgba(250,204,21,0.6)',   emblem: '🥇', vfx: 0.28 },
-  { key: 'platinum',  minLevel: 13, en: 'Platinum',  zh: '铂金', color: '#5EEAD4', glow: 'rgba(94,234,212,0.6)',   emblem: '💠', vfx: 0.42 },
-  { key: 'diamond',   minLevel: 19, en: 'Diamond',   zh: '钻石', color: '#38BDF8', glow: 'rgba(56,189,248,0.65)',  emblem: '💎', vfx: 0.58 },
-  { key: 'ascendant', minLevel: 27, en: 'Ascendant', zh: '超凡', color: '#34D399', glow: 'rgba(52,211,153,0.65)',  emblem: '🔱', vfx: 0.72 },
-  { key: 'immortal',  minLevel: 37, en: 'Immortal',  zh: '不朽', color: '#F43F5E', glow: 'rgba(244,63,94,0.7)',    emblem: '👑', vfx: 0.86 },
-  { key: 'radiant',   minLevel: 50, en: 'Radiant',   zh: '辐能', color: '#FDE68A', glow: 'rgba(253,230,138,0.85)', emblem: '☀️', vfx: 1.0 },
+  { key: 'rookie',       minLevel: 1,  en: 'Rookie',       zh: '新秀',   color: '#6EE7B7', glow: 'rgba(110,231,183,0.5)',  emblem: '🌱', vfx: 0.0 },
+  { key: 'seeker',       minLevel: 4,  en: 'Seeker',       zh: '探索者', color: '#22D3EE', glow: 'rgba(34,211,238,0.55)',  emblem: '🧭', vfx: 0.14 },
+  { key: 'scholar',      minLevel: 8,  en: 'Scholar',      zh: '学者',   color: '#60A5FA', glow: 'rgba(96,165,250,0.55)',  emblem: '📖', vfx: 0.28 },
+  { key: 'prodigy',      minLevel: 13, en: 'Prodigy',      zh: '奇才',   color: '#818CF8', glow: 'rgba(129,140,248,0.6)',  emblem: '⚡', vfx: 0.42 },
+  { key: 'virtuoso',     minLevel: 19, en: 'Virtuoso',     zh: '大匠',   color: '#A78BFA', glow: 'rgba(167,139,250,0.6)',  emblem: '🎯', vfx: 0.58 },
+  { key: 'luminary',     minLevel: 27, en: 'Luminary',     zh: '泰斗',   color: '#FBBF24', glow: 'rgba(251,191,36,0.65)',  emblem: '🌟', vfx: 0.72 },
+  { key: 'guru',         minLevel: 37, en: 'Guru',         zh: '宗师',   color: '#E879F9', glow: 'rgba(232,121,249,0.7)',  emblem: '🔮', vfx: 0.86 },
+  { key: 'transcendent', minLevel: 50, en: 'Transcendent', zh: '超凡',   color: '#FDE68A', glow: 'rgba(253,230,138,0.9)',  emblem: '🌌', vfx: 1.0 },
 ]
 
 export interface RankInfo {

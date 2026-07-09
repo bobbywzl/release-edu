@@ -87,8 +87,8 @@ Each session carries its own language / difficulty / personal background / PURPO
   `DailyCheckin` in the dashboard layout. Streak day boundaries use the USER's
   timezone (`StudentProfile.lastCheckinDay`, compare-and-set so parallel tabs can't
   double-award); all XP writes are atomic increments. `getRank(level)` returns the
-  FPS-style rank (`RankInfo`: tier/division/color/emblem/vfx, Bronze→Radiant, derived
-  from level — no schema); `awardXp`/`awardXpBatch` attach `rankUp`/`tierUp`/`rank`
+  learning-journey rank (`RankInfo`: tier/division/color/emblem/vfx,
+  Rookie→Transcendent, derived from level — no schema); `awardXp`/`awardXpBatch` attach `rankUp`/`tierUp`/`rank`
   so the client fires `playRankUp(vfx, tierUp)` (`src/lib/sfx.ts`, escalating
   synthesized fanfare) + the rank-colored `RankUpOverlay` (`xp-toast.tsx`).
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
