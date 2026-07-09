@@ -16,11 +16,13 @@ export async function GET() {
   const trees = await prisma.problemTree.findMany({
     where: { userId },
     orderBy: { updatedAt: 'desc' },
-    include: { nodes: { select: { id: true, status: true, pending: true } } },
+    include: { nodes: { select: { id: true, status: true, pending: true, parentId: true } } },
   }).catch(() => [])
   return NextResponse.json({
     trees: trees.map(t => {
-      const real = t.nodes.filter(n => !n.pending)
+      // The root (the problem statement) is not a masterable node — progress
+      // counts the branches only, so 100% is actually reachable.
+      const real = t.nodes.filter(n => !n.pending && n.parentId !== null)
       return {
         id: t.id,
         title: t.title,

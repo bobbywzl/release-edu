@@ -59,6 +59,7 @@ async function haikuReflect(
   lastBobMsg: string,
   studentMsg: string,
   prior: Reflection | null,
+  sessionLang?: string,
 ): Promise<Reflection | null> {
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default
@@ -89,7 +90,7 @@ Assess and return ONLY JSON:
  "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
  "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>,
  "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}
-Write "projectProgress" and "misconception" in the same language as the student's messages (they are shown to the student).`,
+Write the human-readable strings — suggestNode's "title" and "summary", "projectProgress", and "misconception" — entirely in ${sessionLang === 'zh' ? 'Simplified Chinese (简体中文)' : 'English'} (the session language; these are persisted and shown to the student, e.g. an approved suggestNode becomes a real tree node).`,
       }],
     })
     try {
@@ -173,7 +174,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
     const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
-    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior)
+    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior, tree.language ?? lang)
     if (r) {
       // ── ANALOGY BRIDGE (the insight moat at work) ──
       // 2+ confused turns → stop re-explaining in the abstract. Pull the
@@ -207,17 +208,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       let misconceptionBlock = ''
       if (r.misconception) {
         misconceptionBlock = `\n- MISCONCEPTION DETECTED: "${r.misconception}" — this is a systematic wrong model, not a slip. Refute it DIRECTLY and memorably (name the belief, show precisely why it fails, replace it), per repair theory. More examples alone will not fix it.`
-        try {
-          const { extractInsightsBackground: _ } = await import('@/lib/insight-extraction')
-          const { clampText } = await import('@/lib/clamp')
-          void prisma.insight.create({
-            data: {
-              userId, type: 'misconception',
-              content: `${clampText(r.misconception, 250)} (at "${node.title}")`,
-              confidence: 0.7, importance: 0.6, source: 'reflection',
-            },
-          }).catch(() => null)
-        } catch { /* non-critical */ }
+        // Reinforce-over-duplicate: haikuReflect emits a misconception when it
+        // RECURS, so an unconditional create would stack near-identical rows
+        // (the same bug fixed for struggles). Bump the existing one instead.
+        const zhSession = (tree.language ?? lang) === 'zh'
+        void (async () => {
+          try {
+            const { clampText } = await import('@/lib/clamp')
+            // Localized wrapper (no English scaffolding in a 中文 panel); dedup
+            // matches on the BARE title so it works across both quote styles.
+            const tag = zhSession ? `（出现在「${node.title}」）` : `(at "${node.title}")`
+            const existing = await prisma.insight.findFirst({
+              where: {
+                userId, type: 'misconception', status: 'active',
+                OR: [{ content: { contains: `"${node.title}"` } }, { content: { contains: `「${node.title}」` } }],
+              },
+              orderBy: { lastConfirmedAt: 'desc' },
+            })
+            if (existing) {
+              await prisma.insight.update({
+                where: { id: existing.id },
+                data: {
+                  timesObserved: { increment: 1 },
+                  lastConfirmedAt: new Date(),
+                  confidence: Math.min(1, (existing.confidence ?? 0.5) + 0.05),
+                },
+              })
+            } else {
+              await prisma.insight.create({
+                data: {
+                  userId, type: 'misconception',
+                  content: `${clampText(r.misconception!, 250)} ${tag}`,
+                  confidence: 0.7, importance: 0.6, source: 'reflection',
+                },
+              })
+            }
+          } catch { /* non-critical */ }
+        })()
       }
 
       // Perseverance XP: struggle that keeps going is visibly rewarded —
@@ -449,7 +476,15 @@ Memory fades; this visit exists to interrupt that.
         } catch { /* non-critical */ }
       } catch (err) {
         console.error('[tree] node chat failed:', err)
-        if (!full) controller.enqueue(encoder.encode("I'm having trouble connecting right now. Please try again in a moment."))
+        // The stream returns HTTP 200, so the client's localized catch never
+        // fires — this fallback IS what the student reads, so it must obey the
+        // session language (no English leaking into a 中文 session).
+        if (!full) {
+          const zhSession = (tree.language ?? lang) === 'zh'
+          controller.enqueue(encoder.encode(zhSession
+            ? '现在连接有些问题，请稍后再试。'
+            : "I'm having trouble connecting right now. Please try again in a moment."))
+        }
       }
 
       // ── Checkpoint capture ──
@@ -562,9 +597,13 @@ Return ONLY JSON: {"recitable": true|false}`,
       if (persistContent) {
         await store.addMessage(convId, 'assistant', persistContent).catch(() => null)
         // Keep the insight moat: background extraction every ~5th message.
+        // Skip trigger turns ([NODE_INTRO]/[NODE_REVIEW]) — the control token
+        // is not a student utterance, and feeding it as the "student message"
+        // alongside Bob's topic-rich reply is exactly the tutor→student
+        // mis-attribution shape the anti-hallucination rule guards against.
         try {
           const count = await prisma.message.count({ where: { conversationId: convId } })
-          if (count % 5 === 0) {
+          if (!isTrigger && count % 5 === 0) {
             const { extractInsightsBackground } = await import('@/lib/insight-extraction')
             void extractInsightsBackground(apiKey, message.trim(), persistContent, userId)
           }

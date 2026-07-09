@@ -149,9 +149,10 @@ const DOT_SIZE: Record<string, string> = {
 }
 
 function StatusDot({ status }: { status: string }) {
-  if (status === 'understood') return <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 flex-shrink-0" title="Understood" />
-  if (status === 'learning') return <span className="w-2.5 h-2.5 rounded-full bg-amber-400 flex-shrink-0" title="Learning" />
-  return <span className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40 flex-shrink-0" title="Not understood" />
+  const { t } = useLanguage()
+  if (status === 'understood') return <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 flex-shrink-0" title={t('status.understood')} />
+  if (status === 'learning') return <span className="w-2.5 h-2.5 rounded-full bg-amber-400 flex-shrink-0" title={t('status.learning')} />
+  return <span className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40 flex-shrink-0" title={t('status.notUnderstood')} />
 }
 
 interface FlowNodeData {
@@ -625,8 +626,10 @@ function TreeCanvasInner() {
 
   const selected = tree?.nodes.find(n => n.id === selectedId) ?? null
   const selectedProgress = parseArr<{ text: string; createdAt: string }>(selected?.progressLog)
-  const understood = tree?.nodes.filter(n => !n.pending && n.status === 'understood').length ?? 0
-  const total = tree?.nodes.filter(n => !n.pending).length ?? 0
+  // Root (the problem statement) is excluded — progress measures the
+  // branches a learner can actually verify, so 100% is reachable.
+  const understood = tree?.nodes.filter(n => !n.pending && n.parentId !== null && n.status === 'understood').length ?? 0
+  const total = tree?.nodes.filter(n => !n.pending && n.parentId !== null).length ?? 0
 
   async function grow() {
     if (!selected || !growQuestion.trim() || growing) return

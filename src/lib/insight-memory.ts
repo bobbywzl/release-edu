@@ -113,13 +113,34 @@ export async function getResolvedStruggles(userId: string, limit = 10): Promise<
  * three verified nodes). Matching is a conservative keyword overlap so we
  * never resolve an unrelated insight.
  */
+// Stopwords that must never drive a match — a title like "How the Water
+// Cycle Works" previously resolved an unrelated immune-system misconception
+// via the shared word "the". Keep this list to high-frequency function words.
+const RESOLVE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'from',
+  'how', 'why', 'what', 'when', 'which', 'that', 'this', 'these', 'those', 'it',
+  'its', 'is', 'are', 'was', 'were', 'be', 'been', 'do', 'does', 'did', 'your',
+  'you', 'as', 'at', 'by', 'into', 'about', 'own', 'itself', 'work', 'works',
+  'working', 'understanding', 'concept', 'basic', 'basics', 'intro',
+])
+
 export async function markStrugglesResolved(userId: string, subjectText: string): Promise<void> {
   try {
-    const keywords = subjectText
+    const lowerSubject = subjectText.toLowerCase().trim()
+    // Meaningful keywords only: drop stopwords and short fragments so a shared
+    // function word can never resolve an unrelated struggle/misconception.
+    const keywords = lowerSubject
       .split(/[\s,，、:：\-—()（）]+/)
-      .map(k => k.trim().toLowerCase())
-      .filter(k => k.length >= 2)
-    if (keywords.length === 0) return
+      .map(k => k.trim())
+      .filter(k => k.length >= 4 && !RESOLVE_STOPWORDS.has(k))
+    // The DELIMITED title (either quote style) is the strongest signal and the
+    // sole one for Chinese/whitespace-less titles (which don't split into
+    // keywords). Delimiters keep it collision-immune: 「递归」 does not match
+    // 「尾递归」, so verifying one node never resolves a different node's struggle.
+    const titlePhrases = lowerSubject ? [`"${lowerSubject}"`, `「${lowerSubject}」`] : []
+    // Chinese/whitespace-less titles yield no keywords — the title phrase is
+    // then the sole signal, so do NOT early-return on empty keywords.
+    if (keywords.length === 0 && !lowerSubject) return
 
     const struggles = await prisma.insight.findMany({
       where: { userId, status: 'active', type: { in: ['struggle', 'weakness', 'misconception'] } },
@@ -127,7 +148,12 @@ export async function markStrugglesResolved(userId: string, subjectText: string)
     const resolvedIds = struggles
       .filter(s => {
         const c = s.content.toLowerCase()
-        return keywords.some(k => c.includes(k))
+        // Delimited title phrase (either quote style), OR ≥2 meaningful keyword
+        // hits (one generic word shared by chance is not enough), OR the single
+        // meaningful keyword of a one-concept title.
+        if (titlePhrases.some(p => c.includes(p))) return true
+        const hits = keywords.filter(k => c.includes(k)).length
+        return keywords.length === 1 ? hits === 1 : hits >= 2
       })
       .map(s => s.id)
     if (resolvedIds.length === 0) return

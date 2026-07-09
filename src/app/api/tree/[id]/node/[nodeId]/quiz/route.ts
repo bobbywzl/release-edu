@@ -45,17 +45,57 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const node = tree?.nodes.find(n => n.id === nodeId)
   if (!tree || !node) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // The judged quiz is the server-stored pending one. Fallback to the
-  // client-sent payload only for legacy cards persisted before answer keys
-  // moved server-side (their markers still carry correctIndex/rubric).
+  // INTEGRITY: judge ONLY against the live server-stored pending checkpoint,
+  // and only when it matches the submitted card. Each checkpoint is answered
+  // exactly ONCE — after the first answer the pending is consumed, so a
+  // second submission (a duplicate tab, a resubmit) finds no live pending and
+  // is a no-op. Re-judging a client-sent payload would let one card be
+  // answered repeatedly, inflating the mastery tally past the
+  // distinct-checkpoints bar. 409 → the client retires the stale card.
   const qs = parseQuizState(node.quizState)
   const sent = body.quiz
-  const usePending = !!qs.pending && (!sent?.question || sent.question === qs.pending.question)
-  const quiz = usePending ? qs.pending! : (sent as PendingQuiz | undefined)
+  const quiz = qs.pending
   if (!quiz?.question || (quiz.kind !== 'mcq' && quiz.kind !== 'short')) {
-    return NextResponse.json({ error: 'quiz required' }, { status: 400 })
+    return NextResponse.json({ error: 'already-answered', code: 'no-pending' }, { status: 409 })
   }
-  const isReview = usePending && quiz.review === true
+  if (sent?.question && sent.question !== quiz.question) {
+    // The card the client is answering is not the one the server is waiting
+    // on (a superseded checkpoint) — do not judge it against the wrong key.
+    return NextResponse.json({ error: 'stale-card', code: 'mismatch' }, { status: 409 })
+  }
+  const isReview = quiz.review === true
+
+  // Validate the answer SHAPE before claiming, so a malformed request never
+  // consumes the pending (which would strand the card behind a 400).
+  const mcqIdx = quiz.kind === 'mcq'
+    ? (typeof body.answer === 'number' ? body.answer : parseInt(String(body.answer), 10))
+    : -1
+  if (quiz.kind === 'mcq') {
+    const optLen = Array.isArray(quiz.options) ? quiz.options.length : 0
+    if (optLen < 2 || !Number.isInteger(mcqIdx) || mcqIdx < 0 || mcqIdx >= optLen
+      || !Number.isInteger(quiz.correctIndex) || (quiz.correctIndex as number) < 0 || (quiz.correctIndex as number) >= optLen) {
+      return NextResponse.json({ error: 'invalid mcq answer' }, { status: 400 })
+    }
+  } else if (!String(body.answer ?? '').trim()) {
+    return NextResponse.json({ error: 'answer required' }, { status: 400 })
+  }
+
+  // ── ATOMIC CLAIM (exactly-once) ──
+  // Consume the pending BEFORE the slow judge, gated on the exact quizState
+  // string we just read (optimistic compare-and-set). Of N concurrent
+  // submissions of this card, only one wins the claim; the rest see count 0
+  // and 409 out — so a card can never be judged or tallied twice, even when
+  // both requests land inside the judging window. If the chat route stored a
+  // NEW card in the meantime the string won't match either, which is correct:
+  // this card is superseded, retire it.
+  const claimed = { ...qs, pending: null }
+  const claim = await prisma.treeNode.updateMany({
+    where: { id: nodeId, quizState: node.quizState },
+    data: { quizState: JSON.stringify(claimed) },
+  }).catch(() => ({ count: 0 }))
+  if (claim.count === 0) {
+    return NextResponse.json({ error: 'already-answered', code: 'lost-claim' }, { status: 409 })
+  }
 
   const zh = (tree.language ?? body.lang) === 'zh'
   let correct = false
@@ -65,12 +105,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     if (quiz.kind === 'mcq') {
-      const options = Array.isArray(quiz.options) ? quiz.options.map(o => String(o)) : []
-      const idx = typeof body.answer === 'number' ? body.answer : parseInt(String(body.answer), 10)
-      if (options.length < 2 || !Number.isInteger(idx) || idx < 0 || idx >= options.length
-        || !Number.isInteger(quiz.correctIndex) || (quiz.correctIndex as number) < 0 || (quiz.correctIndex as number) >= options.length) {
-        return NextResponse.json({ error: 'invalid mcq answer' }, { status: 400 })
-      }
+      // Shape already validated pre-claim; mcqIdx and options are safe here.
+      const options = (quiz.options as string[]).map(o => String(o))
+      const idx = mcqIdx
       correctIndex = quiz.correctIndex as number
       correct = idx === correctIndex
       answerText = `${String.fromCharCode(65 + idx)}) ${options[idx].slice(0, 300)}`
@@ -116,16 +153,26 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
         )
       }
     } else {
-      const answer = String(body.answer ?? '').trim()
-      if (!answer) return NextResponse.json({ error: 'answer required' }, { status: 400 })
+      const answer = String(body.answer ?? '').trim() // non-empty (validated pre-claim)
       answerText = answer.slice(0, 1200)
       const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, answer, body.confidence, body.lang)
       correct = j.correct
       feedback = j.feedback
-      if (!correct) void recordCheckpointStruggle(userId, node.title, feedback)
+      if (!correct) void recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined)
     }
   } catch (err) {
     console.error('[tree] quiz judge failed:', err)
+    // We already claimed (consumed) the pending; judging then failed. Re-arm
+    // it so a transient outage doesn't cost the student their card — restore
+    // onto fresh state unless a newer card has since taken the slot.
+    try {
+      const cur = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
+      const curQs = parseQuizState(cur?.quizState)
+      if (!curQs.pending) {
+        curQs.pending = quiz
+        await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(curQs) } })
+      }
+    } catch { /* best-effort re-arm */ }
     return NextResponse.json({ error: 'Judging is unavailable right now.' }, { status: 502 })
   }
 
@@ -151,7 +198,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // Delayed-retest bookkeeping: a correct retest clears the missed entry, a
   // wrong retest re-arms it for the next return visit, and a fresh miss
   // queues for retest hours later (cap 5, newest kept).
-  const retestOf = usePending ? quiz.retestOf : undefined
+  const retestOf = quiz.retestOf
   if (retestOf) {
     tally.missed = correct
       ? tally.missed.filter(m => m.question !== retestOf)
@@ -193,7 +240,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   let treeCompleted = false
   if (!isVerifiedNode && tally.correct >= MASTERY_TARGET && tally.shortCorrect >= MASTERY_MIN_SHORT) {
     try {
-      const r = await markNodeVerified(userId, id, nodeId)
+      const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
       verified = true
       treeCompleted = r.treeCompleted
       xp.push(...r.xp)

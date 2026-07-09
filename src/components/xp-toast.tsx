@@ -12,6 +12,7 @@ interface XpEvent {
   label: string
   levelUp: boolean
   newLevel: number
+  source?: string
 }
 
 export interface BadgeEvent {
@@ -26,13 +27,24 @@ export interface BadgeEvent {
 type XpListener = (event: XpEvent) => void
 const listeners = new Set<XpListener>()
 
+// Lightweight "XP totals changed" bus — the XP panel/ring subscribes to
+// re-fetch its summary whenever any award lands (daily check-in, quiz answer),
+// so the streak/goal display never sits stale until a manual reload.
+type ChangeListener = () => void
+const changeListeners = new Set<ChangeListener>()
+export function subscribeXpChange(fn: ChangeListener): () => void {
+  changeListeners.add(fn)
+  return () => { changeListeners.delete(fn) }
+}
+
 export function emitXpEvent(event: Omit<XpEvent, 'id'>) {
   const full: XpEvent = { ...event, id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
   listeners.forEach(fn => fn(full))
+  changeListeners.forEach(fn => { try { fn() } catch { /* non-critical */ } })
 }
 
 // Convenience: emit from API response xpAwards array
-export function emitXpAwards(awards: Array<{ awarded: number; label: string; levelUp: boolean; newLevel: number }>) {
+export function emitXpAwards(awards: Array<{ awarded: number; label: string; levelUp: boolean; newLevel: number; source?: string }>) {
   // Stagger so multiple awards animate sequentially
   awards.forEach((a, i) => {
     setTimeout(() => emitXpEvent(a), i * 600)
@@ -134,7 +146,7 @@ function LevelUpOverlay({ level, onDone }: { level: number; onDone: () => void }
         >
           <div className="text-xs font-bold text-yellow-400 uppercase tracking-[0.2em] mb-1">{t('xp.levelUp')}</div>
           <div className="text-4xl font-black text-white drop-shadow-[0_0_20px_rgba(250,204,21,0.4)]">
-            Level {level}
+            {t('common.level')} {level}
           </div>
         </motion.div>
       </motion.div>
@@ -218,13 +230,19 @@ function XpToastBanner({ event, onDone }: { event: XpEvent; onDone: () => void }
     return () => clearTimeout(timer)
   }, [onDone])
 
-  const isPerseverance = event.label.includes('Perseverance')
-  const icon = event.label.includes('Track') ? Trophy :
-               event.label.includes('Chapter') ? Star :
-               event.label.includes('Streak') ? TrendingUp :
+  const isPerseverance = event.source === 'perseverance' || event.label.includes('Perseverance')
+  const icon = event.source === 'track_completed' || event.label.includes('Track') ? Trophy :
+               event.source === 'chapter_completed' || event.label.includes('Chapter') ? Star :
+               event.source === 'daily_streak' || event.label.includes('Streak') ? TrendingUp :
                isPerseverance ? Heart : Zap
 
   const Icon = icon
+  // Localize the award name from its source key; XP_TABLE labels are English
+  // only, so a 中文 session must not surface them raw. Fall back to the raw
+  // label if the source is unknown or its key is missing.
+  const key = event.source ? `xp.award.${event.source}` : ''
+  const translated = key ? t(key as Parameters<typeof t>[0]) : ''
+  const displayLabel = translated && translated !== key ? translated : event.label
 
   // Perseverance gets a distinct rose/pink palette so the student feels it's
   // a different, supportive kind of reward — not the same yellow "you won".
@@ -277,7 +295,7 @@ function XpToastBanner({ event, onDone }: { event: XpEvent; onDone: () => void }
           <span className={palette.text}>XP</span>
         </div>
         <div className="text-xs text-muted-foreground">
-          {event.label}
+          {displayLabel}
           {isPerseverance && (
             <span className="block text-[10px] text-rose-300/80 mt-0.5">
               {t('xp.perseveranceHint')}

@@ -486,7 +486,7 @@ Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
   return { correct: score >= 7, score, feedback: clampText(parsed.feedback ?? '', 600) }
 }
 
-export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number }
+export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number; source?: string }
 
 /**
  * Flip a node to "understood" with every mastery side effect: XP, the
@@ -494,10 +494,11 @@ export interface XpAwardLite { awarded: number; label: string; levelUp: boolean;
  * the tree-completion check. Returns the XP awards for client celebration.
  */
 export async function markNodeVerified(
-  userId: string, treeId: string, nodeId: string,
+  userId: string, treeId: string, nodeId: string, lang?: string,
 ): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean }> {
   const node = await prisma.treeNode.findUnique({ where: { id: nodeId } })
   if (!node) throw new Error('Node not found')
+  const zh = lang === 'zh'
   const xp: XpAwardLite[] = []
   let treeCompleted = false
 
@@ -516,7 +517,11 @@ export async function markNodeVerified(
       data: {
         userId,
         type: 'knowledge',
-        content: `Verified understanding of "${node.title}" (transfer-tested): ${clampText(node.summary, 140)}`,
+        // Localized so the "What Bob knows about you" panel never mixes an
+        // English wrapper onto Chinese content in a 中文 session.
+        content: zh
+          ? `已通过迁移测试验证对「${node.title}」的理解：${clampText(node.summary, 140)}`
+          : `Verified understanding of "${node.title}" (transfer-tested): ${clampText(node.summary, 140)}`,
         confidence: 0.95,
         importance: 0.7,
         source: 'verification',
@@ -525,12 +530,19 @@ export async function markNodeVerified(
     const { markStrugglesResolved } = await import('@/lib/insight-memory')
     await markStrugglesResolved(userId, node.title)
   } catch { /* non-critical */ }
-  // A fully-understood tree completes the problem.
+  // A fully-understood tree completes the problem. The ROOT is the problem
+  // statement, not a masterable pain point — it is excluded from the
+  // requirement (verifying "your own question" was an unreachable dead-end)
+  // and flips green automatically as the crown once every branch verifies.
   try {
     const remaining = await prisma.treeNode.count({
-      where: { treeId, pending: false, status: { not: 'understood' } },
+      where: { treeId, pending: false, parentId: { not: null }, status: { not: 'understood' } },
     })
     if (remaining === 0) {
+      await prisma.treeNode.updateMany({
+        where: { treeId, parentId: null },
+        data: { status: 'understood' },
+      }).catch(() => null)
       await prisma.problemTree.update({ where: { id: treeId }, data: { status: 'completed' } })
       const { awardXp } = await import('@/lib/xp-engine')
       const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
@@ -628,10 +640,16 @@ ${sessionDirectives(tree, lang)}`,
  * existing struggle insight instead of stacking near-identical rows
  * (a bad afternoon must not clutter Bob's memory).
  */
-export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string): Promise<void> {
+export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string, lang?: string): Promise<void> {
   try {
+    // Match the DELIMITED title in either quote style ("title" EN / 「title」
+    // 中文). Delimiters keep dedup cross-language AND collision-immune — a bare
+    // substring would let a miss on "递归" bump the "尾递归" row.
     const existing = await prisma.insight.findFirst({
-      where: { userId, type: 'struggle', status: 'active', content: { contains: `"${nodeTitle}"` } },
+      where: {
+        userId, type: 'struggle', status: 'active',
+        OR: [{ content: { contains: `"${nodeTitle}"` } }, { content: { contains: `「${nodeTitle}」` } }],
+      },
       orderBy: { lastConfirmedAt: 'desc' },
     }).catch(() => null)
     if (existing) {
@@ -649,7 +667,10 @@ export async function recordCheckpointStruggle(userId: string, nodeTitle: string
       data: {
         userId,
         type: 'struggle',
-        content: `Missed a checkpoint on "${nodeTitle}": ${clampText(feedback, 180)}`,
+        // Localized wrapper so a 中文 open learner model stays all-Chinese.
+        content: lang === 'zh'
+          ? `在「${nodeTitle}」上答错了一道检查题：${clampText(feedback, 180)}`
+          : `Missed a checkpoint on "${nodeTitle}": ${clampText(feedback, 180)}`,
         confidence: 0.85,
         importance: 0.55,
         source: 'verification',

@@ -128,6 +128,24 @@ export function getBadge(id: string): BadgeDef | undefined {
   return BADGES.find(b => b.id === id)
 }
 
+/**
+ * Mastery badges are VERIFIED-only (never self-declared): a tree counts as
+ * mastered when every non-pending branch node passed its checkpoints — the
+ * "Mark as complete" consolidation alone earns no mastery badge. The root
+ * (the problem statement itself) is not a masterable node and is excluded.
+ */
+async function countMasteredTrees(userId: string): Promise<number> {
+  try {
+    const completed = await prisma.problemTree.findMany({
+      where: { userId, status: 'completed' },
+      select: { nodes: { where: { pending: false, parentId: { not: null } }, select: { status: true } } },
+    })
+    return completed.filter(t => t.nodes.length > 0 && t.nodes.every(n => n.status === 'understood')).length
+  } catch {
+    return 0
+  }
+}
+
 /** Gather the durable stats every badge criterion reads from. */
 export async function getBadgeStats(userId: string): Promise<BadgeStats> {
   const [profile, chaptersCompleted, tracksCompleted, projectsCompleted, nodesVerified, treesCompleted] = await Promise.all([
@@ -138,8 +156,11 @@ export async function getBadgeStats(userId: string): Promise<BadgeStats> {
     prisma.chapter.count({ where: { track: { userId }, status: 'completed' } }).catch(() => 0),
     prisma.track.count({ where: { userId, trackStatus: 'completed' } }).catch(() => 0),
     prisma.subjectProject.count({ where: { track: { userId }, status: 'completed' } }).catch(() => 0),
-    prisma.treeNode.count({ where: { tree: { userId }, pending: false, status: 'understood' } }).catch(() => 0),
-    prisma.problemTree.count({ where: { userId, status: 'completed' } }).catch(() => 0),
+    // parentId filter: the root auto-flips to 'understood' when a tree
+    // completes, but it is not a masterable node — exclude it so verified-node
+    // badges count only genuinely checkpoint-verified branches.
+    prisma.treeNode.count({ where: { tree: { userId }, pending: false, parentId: { not: null }, status: 'understood' } }).catch(() => 0),
+    countMasteredTrees(userId),
   ])
   return {
     // Schema-lag safe: before longestStreak is pushed, fall back to streak.

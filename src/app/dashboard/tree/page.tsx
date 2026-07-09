@@ -100,6 +100,7 @@ export default function TreePage() {
   // blockages, next actions — readable in place or copied to your team.
   const [digestFor, setDigestFor] = useState<{ id: string; title: string } | null>(null)
   const [digestText, setDigestText] = useState<string | null>(null)
+  const [digestAt, setDigestAt] = useState<string | null>(null)
   const [digestBusy, setDigestBusy] = useState(false)
   const [digestCopied, setDigestCopied] = useState(false)
   // Staleness guard: generation takes seconds — a slow response for one tree
@@ -118,15 +119,18 @@ export default function TreePage() {
       const body = await res.json().catch(() => null)
       if (digestReqRef.current !== id) return
       setDigestText(res.ok && body?.digest ? body.digest : t('tree.digestFailed'))
+      setDigestAt(res.ok && body?.digestAt ? String(body.digestAt) : null)
     } catch {
       if (digestReqRef.current !== id) return
       setDigestText(t('tree.digestFailed'))
+      setDigestAt(null)
     }
     setDigestBusy(false)
   }
   function openDigest(tr: TreeSummary) {
     setDigestFor({ id: tr.id, title: tr.title })
     setDigestText(null)
+    setDigestAt(null)
     void loadDigest(tr.id, false)
   }
   async function copyDigest() {
@@ -410,6 +414,13 @@ export default function TreePage() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+            {/* A cached report must never masquerade as live state — show
+                its age so "Refresh" is an informed choice. */}
+            {digestAt && !digestBusy && (
+              <p className="text-[10px] text-muted-foreground -mt-1">
+                {t('tree.digestGenerated')} {new Date(digestAt).toLocaleString()}
+              </p>
+            )}
             <div className="flex-1 overflow-y-auto border border-border rounded-xl bg-background/60 px-4 py-3 text-sm leading-relaxed">
               {digestBusy || digestText === null ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
