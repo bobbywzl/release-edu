@@ -164,8 +164,11 @@ const TIERS: RankTier[] = [
   { key: 'luminary',     minLevel: 27, en: 'Luminary',     zh: '泰斗',    color: '#FBBF24', glow: 'rgba(251,191,36,0.65)',  emblem: '🌟', vfx: 0.55 },
   { key: 'guru',         minLevel: 37, en: 'Guru',         zh: '宗师',    color: '#E879F9', glow: 'rgba(232,121,249,0.7)',  emblem: '🔮', vfx: 0.66 },
   { key: 'grandmaster',  minLevel: 47, en: 'Grandmaster',  zh: '大宗师',  color: '#F43F5E', glow: 'rgba(244,63,94,0.75)',   emblem: '🏆', vfx: 0.80 },
-  { key: 'transcendent', minLevel: 60, en: 'Transcendent', zh: '超凡',    color: '#FDE68A', glow: 'rgba(253,230,138,0.9)',  emblem: '🌌', vfx: 0.92 },
-  { key: 'rookie2',      minLevel: 75, en: 'Rookie II',    zh: '新秀 II', color: '#6EE7B7', glow: 'rgba(110,231,183,1)',    emblem: '♾️', vfx: 1.0 },
+  { key: 'transcendent',   minLevel: 60, en: 'Transcendent',    zh: '超凡',      color: '#FDE68A', glow: 'rgba(253,230,138,0.9)',  emblem: '🌌', vfx: 0.92 },
+  // The pinnacle is the anti-flex: the enlightened master who has come full
+  // circle and knows they are, at last, "A Real Beginner" (Zen beginner's
+  // mind). Its color is the original Rookie green again — full circle.
+  { key: 'real_beginner',  minLevel: 75, en: 'A Real Beginner', zh: '真·初学者', color: '#6EE7B7', glow: 'rgba(110,231,183,1)',    emblem: '🧘', vfx: 1.0 },
 ]
 
 export interface RankInfo {
@@ -185,9 +188,8 @@ const ROMAN = ['', 'I', 'II', 'III']
 /**
  * The rank for a level: its tier + division (III at the bottom of the tier,
  * I at the top, just below the next promotion). The base Rookie tier and the
- * top tier are UNDIVIDED — a beginner is simply "Rookie" (never "Rookie II",
- * which would collide with the full-circle endgame title), and the pinnacle
- * "Rookie II" stands alone.
+ * top tier are UNDIVIDED — a beginner is simply "Rookie" (a clean, humble
+ * start with no numeral), and the pinnacle "A Real Beginner" stands alone.
  */
 export function getRank(level: number): RankInfo {
   let idx = 0

@@ -124,7 +124,7 @@ ends with the bolded question — **"What is the specific problem you want to ma
   state, tiered badges (incl. verified-node and mastered-tree ladders), an
   learning-journey **rank ladder** (Rookie → Seeker → Scholar → Prodigy →
   Virtuoso → Luminary → Guru → Grandmaster → Transcendent → and finally the
-  full-circle **Rookie II** — 10 titles × 3 divisions) whose
+  full-circle **A Real Beginner** — 10 titles × 3 divisions) whose
   promotions fire escalating synthesized fanfares and a
   rank-colored celebration overlay that grows grander with the tier, reward
   sounds — small steps ding (node verified = the core unit of progress).
