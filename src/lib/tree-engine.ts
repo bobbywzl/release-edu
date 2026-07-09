@@ -305,23 +305,34 @@ export function nodePath(nodes: TreeNode[], nodeId: string): TreeNode[] {
 
 export interface ExpansionResult {
   proposals: TreeNode[]
-  /** When the ask is too vague to propose well, Bob asks this instead. */
+  /** OPTIONAL refinement question — the student may answer it to reconfigure
+   *  the proposals, or ignore it and approve the ghosts as-is. Never blocks. */
   clarify?: string
 }
 
 /**
- * The student asked a question at a node. Propose 1-4 child nodes that
- * answer it — persisted as pending=true ghosts the student must approve.
- * If the question is too vague to branch well, returns a clarifying
- * question instead of guessing.
+ * The student asked a question at a node. ALWAYS propose 1-4 child nodes that
+ * answer it (persisted as pending=true ghosts the student approves) — Bob
+ * never refuses. If the ask could sharpen, Bob ALSO returns an optional
+ * `clarify` the student may answer to reconfigure the ghosts.
+ *
+ * replacePending clears the node's existing pending ghosts first — used when
+ * the student answers the clarify to REFINE (replace) the current proposals.
  */
 export async function proposeExpansion(
   userId: string, treeId: string, nodeId: string, question: string, lang?: string,
+  replacePending = false,
 ): Promise<ExpansionResult> {
   const tree = await getTreeWithNodes(userId, treeId)
   if (!tree) throw new Error('Tree not found')
   const node = tree.nodes.find(n => n.id === nodeId)
   if (!node) throw new Error('Node not found')
+
+  // Refine flow: drop the node's current pending ghosts so the answer's
+  // sharper proposals replace them instead of piling up.
+  if (replacePending) {
+    await prisma.treeNode.deleteMany({ where: { treeId, parentId: nodeId, pending: true } }).catch(() => null)
+  }
 
   const client = await anthropic()
   const model = await getJudgeModel()
@@ -337,33 +348,28 @@ CURRENT TREE:
 ${sketchTree(tree.nodes)}
 
 TARGET NODE: "${node.title}" — ${node.summary}
-STUDENT'S QUESTION: "${question.slice(0, 500)}"
+STUDENT'S QUESTION: "${question.slice(0, 800)}"
 
-If the question is CLEAR enough to branch on, propose the FEWEST nodes that answer it — usually 1-2; propose 3-4 ONLY when the question genuinely spans that many distinct concepts (a beginner who asked one confused question does not want a mini-curriculum). Each must be a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution).
+ALWAYS propose branches — never refuse. Propose the FEWEST nodes that genuinely answer the question: usually 1-2; 3-4 ONLY when it truly spans that many distinct concepts (a beginner asking one question does not want a mini-curriculum). Each is a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution). Even a broad or slightly vague question gets your best proposals under the most likely reading — make reasonable assumptions rather than refusing.
 
-CONTINGENT QUESTIONS: if the right next node depends on a fact the student does not know yet (which tool/platform/server/library their project uses), propose ONLY the diagnostic or conceptual node that resolves the unknown — never a fan of per-option how-to leaves where most are guaranteed dead ends. The tree grows the matching how-to AFTER the unknown resolves.
+CONTINGENT QUESTIONS: if the right next node depends on a fact the student does not know yet (which tool/platform/server/library their project uses), propose ONLY the diagnostic or conceptual node that resolves the unknown — never a fan of per-option how-to leaves where most are guaranteed dead ends.
 
-If the question is TOO VAGUE or could branch in several very different directions, do NOT guess — ask ONE precise clarifying question instead (student-facing, warm but direct).
+OPTIONAL refinement: if a specific detail from the student would let you propose sharper or more relevant nodes, ALSO return a one-sentence "clarify" question naming that detail — but you STILL propose your best nodes now. Omit "clarify" (or null) when the proposals already fit well.
 
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON — one of:
-{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}]}
-{"clarify": "your one clarifying question"}`,
+Return ONLY JSON:
+{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}], "clarify": "optional one-sentence refinement question, or null"}`,
     }],
   })
 
   void recordUsage(result, userId, model, 'tree-expand')
   const text = (result.content[0] as { text?: string })?.text ?? ''
-  const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; clarify?: string }>(text)
+  const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; clarify?: string | null }>(text)
     // Tolerate a bare array (older shape).
     ?? { proposals: extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text) ?? [] }
 
-  if (parsed.clarify && !(parsed.proposals?.length)) {
-    return { proposals: [], clarify: parsed.clarify }
-  }
-
-  const existingCount = tree.nodes.filter(n => n.parentId === nodeId).length
+  const existing = await prisma.treeNode.count({ where: { treeId, parentId: nodeId } })
   const created: TreeNode[] = []
   const list = parsed.proposals ?? []
   for (let i = 0; i < Math.min(4, list.length); i++) {
@@ -374,11 +380,12 @@ Return ONLY JSON — one of:
         treeId, parentId: nodeId,
         kind: p.kind === 'leaf' ? 'leaf' : 'component',
         title: p.title.slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
-        pending: true, order: existingCount + i,
+        pending: true, order: existing + i,
       },
     }))
   }
-  return { proposals: created }
+  const clarify = typeof parsed.clarify === 'string' && parsed.clarify.trim() ? parsed.clarify.trim() : undefined
+  return { proposals: created, clarify }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────

@@ -14,12 +14,12 @@ import { proposeExpansion } from '@/lib/tree-engine'
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const userId = await getUserId()
-  const { nodeId, question, lang } = (await req.json().catch(() => ({}))) as { nodeId?: string; question?: string; lang?: string }
+  const { nodeId, question, lang, replacePending } = (await req.json().catch(() => ({}))) as { nodeId?: string; question?: string; lang?: string; replacePending?: boolean }
   if (!nodeId || !question?.trim()) {
     return NextResponse.json({ error: 'nodeId and question are required' }, { status: 400 })
   }
   try {
-    const result = await proposeExpansion(userId, id, nodeId, question.trim(), lang)
+    const result = await proposeExpansion(userId, id, nodeId, question.trim(), lang, !!replacePending)
     return NextResponse.json(result)
   } catch (err) {
     console.error('[tree] expand failed:', err)
