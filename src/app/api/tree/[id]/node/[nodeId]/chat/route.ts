@@ -418,14 +418,24 @@ one-sentence description of the diagram to draw — name every part and label ex
 - Labels inside the diagram follow the session's language. At most ONE per message. The Answer Standard applies to visuals too: a diagram must carry mechanism, never decoration.
 ${sessionDirectives(tree, lang)}
 ${isIntro ? `
-## THIS TURN: YOUR OPENING HOOK (the student just arrived at this node)
-Open the workspace yourself — the student has not spoken. Write a CONDENSED, syllabus-style hook (under ~150 words), formatted exactly like this:
-1. A bold one-line header naming the concept.
-2. **What this is** — 1-2 tight sentences introducing the core concept.
-3. **Where it sits** — one sentence locating it in the tree: name the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and how understanding it moves the student toward answering the ROOT problem ("${tree.title}").
-4. **You'll be able to** — 2-3 crisp bullet objectives (what they can do once this node is understood).
-5. End with ONE engaging question that pulls them in (a conversational question in prose — do NOT emit a [[QUIZ]] block in this opening hook).
-No filler, no welcome-to-the-platform talk — straight into the concept.` : ''}${isReview ? `
+## THIS TURN: THE NODE SYLLABUS (the student just arrived; they have NOT spoken)
+Open the workspace yourself with a proper SYLLABUS that frames this whole node — a well-structured chapter-syllabus, NOT a one-liner. It must be SPECIFIC to "${node.title}" (name the real mechanisms, choices, quantities, terms this node actually involves — never generic placeholders), comprehensive over the node's scope, and calibrated in depth/examples to the session's level, background, and PURPOSE. Use EXACTLY this markdown structure (\`##\`/\`###\` headers, short paragraphs, tight bullets):
+
+## <name the concept as a title>
+**The big idea** — 2-3 sentences: what this node is really about and the single most important thing it establishes.
+**Why it matters here** — 1-2 sentences connecting it along the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and stating how mastering it moves the student toward the ROOT problem ("${tree.title}") and their stated purpose.
+
+### What you'll cover
+A roadmap of the 3-5 specific sub-points this node contains — each a **bolded term** + one concrete sentence. If this node already has child nodes in the tree above, use those as the sub-points; otherwise lay out the facets an expert would break this into. This is the node's table of contents — make it genuinely cover the node's scope.
+
+### You'll be able to
+3-4 concrete, checkable objectives ("<action verb> <specific skill>") — what the student will be able to DO, phrased for THIS problem, not vague ("understand X").
+
+### The trap to avoid
+The single most common misconception or failure mode on this concept, in 1-2 sentences — the mistake this node exists to prevent.
+
+Close with ONE line noting the full explainer is a click away (the "Generate the explainer" button) and that mastery is proven by answering the checkpoint questions right here in chat — then ONE engaging question that pulls them straight into the first sub-point (conversational prose; do NOT emit a [[QUIZ]] block in this opener).
+Dense and specific throughout — every line about THIS node, zero platform/welcome filler.` : ''}${isReview ? `
 ## THIS TURN: RETENTION REVIEW (the student clicked Review on this verified node — they have not spoken)
 Memory fades; this visit exists to interrupt that.
 1. In 2-4 sentences, reactivate the core idea as a recall cue — what it is and why it mattered to the ROOT problem ("${tree.title}"). No full re-lecture.
