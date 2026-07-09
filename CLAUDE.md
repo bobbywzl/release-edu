@@ -67,7 +67,9 @@ Each session carries its own language / difficulty / personal background / PURPO
 - `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat/review
   routes. The node chat route holds Bob's workspace prompt, the Haiku contextual
   pre-pass (gap/wrong-streak/directive + node-discovery + move-recommendation +
-  project-progress detection), the `[NODE_INTRO]`/`[NODE_REVIEW]` hooks, and
+  project-progress detection), the `[NODE_INTRO]`/`[NODE_REVIEW]`/`[NODE_CHECKPOINT]`
+  hooks (the last keeps checkpoints coming until the node verifies; checkpoints
+  are scoped to THIS node's content, using the full tree only for boundaries), and
   `[[TREE_SUGGEST]]`/`[[XP]]` stream markers. Bob's `[[QUIZ]]` blocks are captured
   server-side: the full quiz (answer key) lives in `TreeNode.quizState.pending`,
   clients only ever see a sanitized `{kind, question, options}` marker (stream AND

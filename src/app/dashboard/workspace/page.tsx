@@ -377,34 +377,40 @@ function WorkspaceInner() {
       const body = await res.json().catch(() => null)
       // Only apply a resync if the user is still on the node we answered.
       const answeredNode = nodeId
-      const resyncChat = () => {
+      const resyncChat = async () => {
         if (nodeIdRef.current !== answeredNode) return
-        fetch(`/api/tree/${treeId}/node/${answeredNode}/chat`, { cache: 'no-store' })
-          .then(r => (r.ok ? r.json() : null))
-          .then(d => { if (nodeIdRef.current === answeredNode && d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) } })
-          .catch(() => {})
+        try {
+          const r = await fetch(`/api/tree/${treeId}/node/${answeredNode}/chat`, { cache: 'no-store' })
+          const d = r.ok ? await r.json() : null
+          if (nodeIdRef.current === answeredNode && d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) }
+        } catch { /* transient */ }
       }
       if (res.status === 400 || res.status === 404 || res.status === 409) {
         // Permanently unanswerable card (stale after a newer checkpoint, or
         // malformed) — retire it and resync rather than dead-ending the
         // student on a Submit button that never resolves.
         setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
-        resyncChat()
+        void resyncChat()
         return
       }
       if (!res.ok || !body) throw new Error('quiz error')
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
-      setQuizResult({ correct: !!body.correct, verified: !!body.verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
-      if (quizTimerRef.current) clearTimeout(quizTimerRef.current)
-      quizTimerRef.current = setTimeout(() => {
-        quizTimerRef.current = null
-        resyncChat()
-        loadTree()
-        // Only retire the card if we're still on the answered node — the
-        // node-switch reset effect already cleared it otherwise.
-        if (nodeIdRef.current === answeredNode) { setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText('') }
-      }, 1600)
+      const verified = !!body.verified
+      setQuizResult({ correct: !!body.correct, verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
       setQuizError(false)
+      if (quizTimerRef.current) clearTimeout(quizTimerRef.current)
+      quizTimerRef.current = setTimeout(async () => {
+        quizTimerRef.current = null
+        if (nodeIdRef.current !== answeredNode) return
+        await resyncChat()          // land the ✅/❌ feedback bubbles first
+        loadTree()                  // flip header pips / Verified chip
+        if (nodeIdRef.current !== answeredNode) return
+        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
+        // Keep checkpoints coming until the node is verified: ask Bob for the
+        // next one (he clarifies briefly if the last answer missed). When
+        // verified, stop — the Verified chip + celebration already fired.
+        if (!verified) void streamFromBob('[NODE_CHECKPOINT]', false)
+      }, verified ? 2200 : 1500)
     } catch {
       // Transient (judge unavailable / network) — surface it so the button
       // doesn't silently revert from "Judging…" to "Submit"; the card stays
@@ -621,9 +627,16 @@ function WorkspaceInner() {
                   ))}
                 </div>
                 {quizResult ? (
-                  <p className={cn('text-sm font-bold', quizResult.correct ? 'text-emerald-400' : 'text-amber-400')}>
-                    {quizResult.correct ? t('workspace.quizCorrect') : t('workspace.quizIncorrect')}
-                  </p>
+                  <div className="space-y-1">
+                    <p className={cn('text-sm font-bold', quizResult.correct ? 'text-emerald-400' : 'text-amber-400')}>
+                      {quizResult.correct ? t('workspace.quizCorrect') : t('workspace.quizIncorrect')}
+                    </p>
+                    {quizResult.verified && (
+                      <p className="text-sm font-black text-emerald-400 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4" /> {t('workspace.quizVerified')}
+                      </p>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-1.5">
                     {quizError && <p className="text-[11px] text-amber-400">{t('workspace.connectError')}</p>}
