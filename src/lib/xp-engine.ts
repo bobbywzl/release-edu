@@ -150,19 +150,22 @@ export interface RankTier {
   vfx: number     // 0..1 grandeur scalar for sound + animation
 }
 
-// The journey of a mind, not a metal shelf: eight learning-themed titles that
-// climb from a first sprout of curiosity to transcendence, on an ascending
-// color spectrum (green → cyan → blue → indigo → violet → gold → fuchsia →
-// radiant). Each is a distinct, exciting rank to reach.
+// The journey of a mind, not a metal shelf: ten learning-themed titles that
+// climb from a first sprout of curiosity through mastery to transcendence —
+// and then, the ultimate flex, loop back to "Rookie II": the enlightened
+// beginner's mind, come full circle (its color is the original Rookie green
+// again, but radiant). Ascending color spectrum, escalating grandeur.
 const TIERS: RankTier[] = [
-  { key: 'rookie',       minLevel: 1,  en: 'Rookie',       zh: '新秀',   color: '#6EE7B7', glow: 'rgba(110,231,183,0.5)',  emblem: '🌱', vfx: 0.0 },
-  { key: 'seeker',       minLevel: 4,  en: 'Seeker',       zh: '探索者', color: '#22D3EE', glow: 'rgba(34,211,238,0.55)',  emblem: '🧭', vfx: 0.14 },
-  { key: 'scholar',      minLevel: 8,  en: 'Scholar',      zh: '学者',   color: '#60A5FA', glow: 'rgba(96,165,250,0.55)',  emblem: '📖', vfx: 0.28 },
-  { key: 'prodigy',      minLevel: 13, en: 'Prodigy',      zh: '奇才',   color: '#818CF8', glow: 'rgba(129,140,248,0.6)',  emblem: '⚡', vfx: 0.42 },
-  { key: 'virtuoso',     minLevel: 19, en: 'Virtuoso',     zh: '大匠',   color: '#A78BFA', glow: 'rgba(167,139,250,0.6)',  emblem: '🎯', vfx: 0.58 },
-  { key: 'luminary',     minLevel: 27, en: 'Luminary',     zh: '泰斗',   color: '#FBBF24', glow: 'rgba(251,191,36,0.65)',  emblem: '🌟', vfx: 0.72 },
-  { key: 'guru',         minLevel: 37, en: 'Guru',         zh: '宗师',   color: '#E879F9', glow: 'rgba(232,121,249,0.7)',  emblem: '🔮', vfx: 0.86 },
-  { key: 'transcendent', minLevel: 50, en: 'Transcendent', zh: '超凡',   color: '#FDE68A', glow: 'rgba(253,230,138,0.9)',  emblem: '🌌', vfx: 1.0 },
+  { key: 'rookie',       minLevel: 1,  en: 'Rookie',       zh: '新秀',    color: '#6EE7B7', glow: 'rgba(110,231,183,0.5)',  emblem: '🌱', vfx: 0.0 },
+  { key: 'seeker',       minLevel: 4,  en: 'Seeker',       zh: '探索者',  color: '#22D3EE', glow: 'rgba(34,211,238,0.55)',  emblem: '🧭', vfx: 0.11 },
+  { key: 'scholar',      minLevel: 8,  en: 'Scholar',      zh: '学者',    color: '#60A5FA', glow: 'rgba(96,165,250,0.55)',  emblem: '📖', vfx: 0.22 },
+  { key: 'prodigy',      minLevel: 13, en: 'Prodigy',      zh: '奇才',    color: '#818CF8', glow: 'rgba(129,140,248,0.6)',  emblem: '⚡', vfx: 0.33 },
+  { key: 'virtuoso',     minLevel: 19, en: 'Virtuoso',     zh: '大匠',    color: '#A78BFA', glow: 'rgba(167,139,250,0.6)',  emblem: '🎯', vfx: 0.44 },
+  { key: 'luminary',     minLevel: 27, en: 'Luminary',     zh: '泰斗',    color: '#FBBF24', glow: 'rgba(251,191,36,0.65)',  emblem: '🌟', vfx: 0.55 },
+  { key: 'guru',         minLevel: 37, en: 'Guru',         zh: '宗师',    color: '#E879F9', glow: 'rgba(232,121,249,0.7)',  emblem: '🔮', vfx: 0.66 },
+  { key: 'grandmaster',  minLevel: 47, en: 'Grandmaster',  zh: '大宗师',  color: '#F43F5E', glow: 'rgba(244,63,94,0.75)',   emblem: '🏆', vfx: 0.80 },
+  { key: 'transcendent', minLevel: 60, en: 'Transcendent', zh: '超凡',    color: '#FDE68A', glow: 'rgba(253,230,138,0.9)',  emblem: '🌌', vfx: 0.92 },
+  { key: 'rookie2',      minLevel: 75, en: 'Rookie II',    zh: '新秀 II', color: '#6EE7B7', glow: 'rgba(110,231,183,1)',    emblem: '♾️', vfx: 1.0 },
 ]
 
 export interface RankInfo {
