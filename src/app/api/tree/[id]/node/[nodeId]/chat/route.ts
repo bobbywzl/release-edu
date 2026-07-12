@@ -105,7 +105,11 @@ Write the human-readable strings — suggestNode's "title" and "summary", "proje
   }
 }
 
-/** GET — the node's persisted conversation history (for the Workspace). */
+/** GET — the node's persisted conversation history (for the Workspace),
+ *  plus the LIVE pending checkpoint (sanitized — no answer key). The server
+ *  pending is the single source of truth for arming the interactive card:
+ *  arming from "is the quiz marker the last message?" broke the moment any
+ *  later turn landed, stranding unanswered cards invisibly. */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ nodeId: string }> }) {
   const { nodeId } = await params
   const userId = await getUserId()
@@ -116,8 +120,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ nod
     orderBy: { createdAt: 'asc' },
     include: { messages: { orderBy: { createdAt: 'asc' } } },
   })
+  let pending: { kind: string; question: string; options?: string[]; hint?: string } | null = null
+  try {
+    const row = await prisma.treeNode.findFirst({
+      where: { id: nodeId, tree: { userId } },
+      select: { quizState: true },
+    })
+    const p = parseQuizState(row?.quizState).pending
+    if (p) {
+      pending = {
+        kind: p.kind, question: p.question,
+        ...(p.kind === 'mcq' && Array.isArray(p.options) ? { options: p.options } : {}),
+        ...(typeof p.hint === 'string' && p.hint.trim() ? { hint: p.hint } : {}),
+      }
+    }
+  } catch { /* non-critical — card just won't re-arm this fetch */ }
   return NextResponse.json({
     conversationId: conv?.id ?? null,
+    pending,
     messages: (conv?.messages ?? []).map(m => ({
       id: m.id, role: m.role, content: m.content, createdAt: m.createdAt,
     })),
@@ -406,9 +426,11 @@ ${node.status === 'understood'
   : `- Mastery state: ${quizStateNow.correct}/${MASTERY_TARGET} checkpoint answers correct so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. At ${MASTERY_TARGET} correct (incl. ${MASTERY_MIN_SHORT} short answer) the node verifies automatically and the student is told in the feedback.`}
 - VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
-[[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails"}
+[[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows the student's thinking WITHOUT revealing or eliminating the answer"}
 or
-[[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)"}
+[[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer"}
+- The "hint" ships to the card's Hint button — write it so a stuck student gets un-stuck but still has to do the understanding themselves (point at the mechanism to consider, never at the answer).
+- NEVER paste a checkpoint's question or options as plain chat text — plain text cannot be answered, graded, or counted toward mastery. If the student says they can't see the card or its options, do NOT work around it in prose: tell them briefly that a fresh interactive card is attached right below your message (the system attaches it automatically on such turns).
 - Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
 - SCOPE — test ONLY what THIS node ("${node.title}") teaches, using its explainer and this conversation as the whole-node content. Use the FULL TREE above to see the BOUNDARIES: concepts owned by OTHER nodes (siblings, children, other branches) are out of scope, and a correct answer here must NEVER require the student to explain another node's mechanism. Example of the trap to avoid: if this node is about the genetic/variety ceiling, do NOT make passing depend on naming a soil/watering/sunlight mechanism — that is a different node's material; ask instead about THIS node's own claim (e.g. why care alone can't beat the variety's ceiling). Cover the WHOLE of this node's material, and stay strictly inside it.
 - "short" (own-words) carries the mastery weight — use it for the WHY/transfer probes${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' (the student still needs one)' : ''}; "mcq" for quick discrimination checks. Vary the formats.
@@ -572,6 +594,9 @@ Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
         const sanitized = JSON.stringify({
           kind: card.kind, question: card.question,
           ...(card.kind === 'mcq' && Array.isArray(card.options) ? { options: card.options } : {}),
+          // The hint is answer-safe by construction (a nudge, not the key) —
+          // it powers the card's Hint button client-side.
+          ...(typeof card.hint === 'string' && card.hint.trim() ? { hint: card.hint } : {}),
         })
         try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
         persistContent = `${proseOnly}\n\n${QUIZ_MARK}${sanitized}`
@@ -581,45 +606,53 @@ Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
 
       // The repair path: author a fresh Differentiator-grade checkpoint when
       // Bob's own card was malformed/recitable or he promised one without
-      // attaching it. Judge-model, JSON-only.
+      // attaching it. Judge-model, JSON-only, one retry — this path backs the
+      // checkpoint guarantee, so it logs loudly instead of failing silently.
       const authorCheckpoint = async (avoid?: string): Promise<PendingQuiz | null> => {
-        try {
-          const Anthropic = (await import('@anthropic-ai/sdk')).default
-          const { getJudgeModel } = await import('@/lib/model-resolver')
-          const authorModel = await getJudgeModel()
-          const authorClient = new Anthropic({ apiKey })
-          const needShort = node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT
-          const res = await authorClient.messages.create({
-            model: authorModel,
-            max_tokens: 700,
-            messages: [{
-              role: 'user',
-              content: `Author exactly ONE checkpoint question for a tutoring node, under the Differentiator Principle: it must separate a student who MEMORIZED the content from one who truly UNDERSTANDS it — transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks. It must NOT be answerable by copying sentences from the teaching text below.
+        const prompt = `Author exactly ONE checkpoint question for a tutoring node, under the Differentiator Principle: it must separate a student who MEMORIZED the content from one who truly UNDERSTANDS it — transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks. It must NOT be answerable by copying sentences from the teaching text below.
 
 NODE being tested: "${node.title}" — ${node.summary}
 ${node.explainer ? `NODE EXPLAINER (the student has read this):\n${node.explainer.slice(0, 1200)}\n` : ''}TUTOR'S LATEST TEACHING (the answer must NOT be quotable from it):
 "${proseOnly.slice(-1200)}"
 ${avoid ? `\nDO NOT reuse or lightly reword this question: "${avoid.slice(0, 300)}"` : ''}
 SCOPE: test ONLY this node's own material — never a sibling or child node's mechanism.
-${needShort ? 'FORMAT: kind "short" — the student still needs an own-words answer for mastery.' : 'FORMAT: "short" for why/transfer probes, "mcq" for quick discrimination — pick what fits.'}
+${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? 'FORMAT: kind "short" — the student still needs an own-words answer for mastery.' : 'FORMAT: "short" for why/transfer probes, "mcq" for quick discrimination — pick what fits.'}
 ${sessionDirectives(tree, lang)}
 Return ONLY the JSON object (no prose, no code fences):
-{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: why the right answer is right and why the tempting distractor fails"}
+{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows thinking WITHOUT revealing or eliminating the answer"}
 or
-{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)"}`,
-            }],
-          })
+{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer"}`
+        for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            const { recordAnthropicUsage } = await import('@/lib/usage')
-            recordAnthropicUsage(res.usage, { userId, model: authorModel, feature: 'tree-verify' })
-          } catch { /* non-critical */ }
-          const txt = res.content.filter(b => (b as { type?: string }).type === 'text').map(b => (b as { text?: string }).text ?? '').join('\n')
-          const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/)
-          const o1 = txt.indexOf('{'), o2 = txt.lastIndexOf('}')
-          const raw = fence?.[1] ?? (o1 !== -1 && o2 > o1 ? txt.slice(o1, o2 + 1) : '')
-          const card = JSON.parse(raw) as PendingQuiz
-          return cardShapeValid(card) ? card : null
-        } catch { return null }
+            const Anthropic = (await import('@anthropic-ai/sdk')).default
+            const { getJudgeModel } = await import('@/lib/model-resolver')
+            const authorModel = await getJudgeModel()
+            const authorClient = new Anthropic({ apiKey })
+            const res = await authorClient.messages.create({
+              model: authorModel,
+              max_tokens: 700,
+              messages: [{ role: 'user', content: prompt }],
+            })
+            try {
+              const { recordAnthropicUsage } = await import('@/lib/usage')
+              recordAnthropicUsage(res.usage, { userId, model: authorModel, feature: 'tree-verify' })
+            } catch { /* non-critical */ }
+            const txt = res.content.filter(b => (b as { type?: string }).type === 'text').map(b => (b as { text?: string }).text ?? '').join('\n')
+            const tryParse = (s: string): PendingQuiz | null => {
+              try { const c = JSON.parse(s.trim()) as PendingQuiz; return cardShapeValid(c) ? c : null } catch { return null }
+            }
+            const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/)
+            const o1 = txt.indexOf('{'), o2 = txt.lastIndexOf('}')
+            const card = (fence?.[1] ? tryParse(fence[1]) : null)
+              ?? tryParse(txt)
+              ?? (o1 !== -1 && o2 > o1 ? tryParse(txt.slice(o1, o2 + 1)) : null)
+            if (card) return card
+            console.warn('[tree] authorCheckpoint: unparseable card output', txt.slice(0, 200))
+          } catch (err) {
+            console.warn('[tree] authorCheckpoint attempt failed:', err)
+          }
+        }
+        return null
       }
 
       if (qIdx !== -1) {
@@ -702,6 +735,10 @@ Return ONLY JSON: {"recitable": true|false}`,
         const demanded = isCheckpoint || isReview
           || /^quiz me on this node[.!。]?$/i.test(msgNorm)
           || /^出一道检查题考考我[。.!！]?$/.test(msgNorm)
+          // "I can't see the card/options" — ship a fresh card instead of
+          // letting Bob narrate around a rendering gap.
+          || /(don'?t|can'?t|cannot|no longer|not)\s.{0,15}(see|find|show)\S*\s.{0,25}(quiz|card|checkpoint|options?)/i.test(msgNorm)
+          || /(看不到|没看到|没有看到|找不到).{0,12}(题|选项|卡片|检查)/.test(msgNorm)
           || (/[:：]\s*$/.test(proseOnly) && /(checkpoint|quick check|quiz|检查点|考考|测一测)/i.test(proseOnly.slice(-160)))
         if (demanded) {
           const regen = await authorCheckpoint()
