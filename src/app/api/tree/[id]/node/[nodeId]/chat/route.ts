@@ -425,6 +425,7 @@ ${node.status === 'understood'
   ? '- This node is already VERIFIED. Checkpoints are optional deepening now (exception: on a RETENTION REVIEW turn you MUST ask one) — focus on connections onward to the root problem.'
   : `- Mastery state: ${quizStateNow.correct}/${MASTERY_TARGET} checkpoint answers correct so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. At ${MASTERY_TARGET} correct (incl. ${MASTERY_MIN_SHORT} short answer) the node verifies automatically and the student is told in the feedback.`}
 - VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
+- THE MASTERY STATE ABOVE IS THE ONLY TRUTH about progress. If the conversation's visible ✅ count, the student's belief, or your own memory disagrees with it, the mastery state WINS: say plainly how many answers are recorded (e.g. "the system has 2 of 3 recorded — one more correct answer verifies it") and simply continue with the next checkpoint. NEVER speculate about display bugs, sync issues, or tell the student to "trust the header over me" / refresh the page — the header and this state are the same number, and inventing a discrepancy story erodes the exact trust verification exists to build.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
 [[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows the student's thinking WITHOUT revealing or eliminating the answer"}
 or
@@ -580,7 +581,11 @@ Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
           retestOf: card.retest && retestTarget ? retestTarget : undefined,
           askedAt: new Date().toISOString(),
         }
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // Four CAS attempts, then an unconditional merge write — a card that
+        // streamed to the client but never landed server-side 404s on submit,
+        // and a lost write here can also collide away a concurrent tally.
+        let stored = false
+        for (let attempt = 0; attempt < 4 && !stored; attempt++) {
           const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
           const base = freshRow ? freshRow.quizState : node.quizState
           const qs = parseQuizState(base)
@@ -589,7 +594,18 @@ Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
             where: { id: nodeId, quizState: base },
             data: { quizState: JSON.stringify(qs) },
           }).catch(() => null)
-          if (w && w.count > 0) break
+          if (w && w.count > 0) stored = true
+        }
+        if (!stored) {
+          console.warn('[tree] pending-card CAS exhausted — merge write', { nodeId })
+          try {
+            const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
+            const qs = parseQuizState(freshRow?.quizState ?? node.quizState)
+            qs.pending = pendingCard
+            await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } })
+          } catch (err) {
+            console.error('[tree] pending-card merge write failed:', err)
+          }
         }
         const sanitized = JSON.stringify({
           kind: card.kind, question: card.question,

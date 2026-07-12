@@ -219,8 +219,13 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     if (isReview) tally.reviewedAt = new Date().toISOString()
     return tally
   }
+  // NEVER-LOSE WRITE: a silently dropped tally desynchronizes the header
+  // pips from the answers the student visibly got right — the exact
+  // trust-breaking mismatch this route exists to prevent. Four CAS attempts
+  // (fresh read each), then a final merge write that cannot be skipped.
   let tally = applyOutcome(parseQuizState(node.quizState))
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let tallyLanded = false
+  for (let attempt = 0; attempt < 4 && !tallyLanded; attempt++) {
     const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
     const base = freshRow ? freshRow.quizState : node.quizState
     tally = applyOutcome(parseQuizState(base))
@@ -228,7 +233,20 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
       where: { id: nodeId, quizState: base },
       data: { quizState: JSON.stringify(tally) },
     }).catch(() => null)
-    if (w && w.count > 0) break
+    if (w && w.count > 0) tallyLanded = true
+  }
+  if (!tallyLanded) {
+    // Contended beyond all retries — merge onto the freshest state and write
+    // unconditionally. The window between read and write is microseconds;
+    // losing a whole correct answer is strictly worse.
+    console.warn('[tree] quiz tally CAS exhausted — merge write', { nodeId })
+    try {
+      const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
+      tally = applyOutcome(parseQuizState(freshRow?.quizState ?? node.quizState))
+      await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(tally) } })
+    } catch (err) {
+      console.error('[tree] quiz tally merge write failed:', err)
+    }
   }
 
   // ── XP: every meaningful answer pays; mastered material can't be farmed ──
