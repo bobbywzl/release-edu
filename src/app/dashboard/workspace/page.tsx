@@ -24,7 +24,7 @@ import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { emitXpAwards } from '@/components/xp-toast'
-import { MASTERY_TARGET, MASTERY_MIN_SHORT, parseQuizState } from '@/lib/mastery'
+import { MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
 interface NodeData {
@@ -573,20 +573,24 @@ function WorkspaceInner() {
             <ShieldCheck className="w-4 h-4" /> {t('tree.verified')}
           </span>
         ) : (
-          /* Mastery pips: correct checkpoint answers toward verification —
-             the checkpoints live in the chat itself, "Quiz me" just asks Bob.
-             The LAST pip is reserved for the own-words short answer: MCQs alone
-             can only fill the first MASTERY_TARGET-1, so a full meter never
-             lies about verification (recognition alone never verifies). */
+          /* Mastery pips: ONE PIP PER SYLLABUS FACET (the node's verification
+             contract — the count is dynamic, driven by what the syllabus
+             promised; static 3 only for contract-less nodes). The last pip
+             stays visually reserved while the own-words short answer is
+             missing, so a full meter never lies about verification. */
           (() => {
             const qs = parseQuizState(node?.quizState)
+            const target = masteryTarget(qs)
+            const rawFilled = masteryFilled(qs)
             const needShort = qs.shortCorrect < MASTERY_MIN_SHORT
-            const filled = needShort ? Math.min(qs.correct, MASTERY_TARGET - MASTERY_MIN_SHORT) : Math.min(qs.correct, MASTERY_TARGET)
+            const filled = needShort ? Math.min(rawFilled, target - MASTERY_MIN_SHORT) : Math.min(rawFilled, target)
             return (
-              <div className="flex items-center gap-2 flex-shrink-0" title={t('workspace.masteryHint').replace('{n}', String(MASTERY_TARGET))}>
+              <div className="flex items-center gap-2 flex-shrink-0" title={qs.facets?.length
+                ? `${t('workspace.masteryHint').replace('{n}', String(target))}\n${qs.facets.map(f => `${f.done ? '✅' : '⬜'} ${f.name}`).join('\n')}`
+                : t('workspace.masteryHint').replace('{n}', String(target))}>
                 <div className="flex items-center gap-1">
-                  {Array.from({ length: MASTERY_TARGET }).map((_, i) => {
-                    const isShortPip = i >= MASTERY_TARGET - MASTERY_MIN_SHORT
+                  {Array.from({ length: target }).map((_, i) => {
+                    const isShortPip = i >= target - MASTERY_MIN_SHORT
                     return (
                       <span
                         key={i}
@@ -598,7 +602,7 @@ function WorkspaceInner() {
                     )
                   })}
                 </div>
-                {qs.correct >= MASTERY_TARGET - MASTERY_MIN_SHORT && needShort && (
+                {rawFilled >= target - MASTERY_MIN_SHORT && needShort && (
                   <span className="text-[10px] text-amber-400/90 hidden sm:inline">{t('workspace.needShort')}</span>
                 )}
                 <button
@@ -678,7 +682,7 @@ function WorkspaceInner() {
             {streaming && streamText && (
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
-                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0]} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0]} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
                   <span className="inline-block w-0.5 h-4 bg-primary animate-pulse rounded-full align-middle ml-0.5" />
                 </div>
               </div>

@@ -60,12 +60,19 @@ annotate AI generated comprehensive explainers/ summaries.
   "grow this branch" questions, (b) AI discovery — repeated questions circling an
   uncovered field produce a suggestion card the learner must approve, (c) manual
   add. Vague growth requests get ONE clarifying question back, not guesses.
-- **Mastery is verified, never self-declared.** Verification lives IN the workspace
-  chat: Bob asks Differentiator-principle **checkpoint questions** (MCQ and own-words
-  short answers, AI-judged) as interactive cards while teaching. A node flips to
-  "understood" only after 3 correct checkpoint answers including at least one
-  own-words short answer — recognition alone never verifies. There is no separate
-  test screen. A fully verified tree = a mastered problem.
+- **Mastery is verified, never self-declared — and verification is SYLLABUS
+  COVERAGE, not a count.** Verification lives IN the workspace chat: Bob asks
+  Differentiator-principle **checkpoint questions** (MCQ and own-words short
+  answers, AI-judged) as interactive cards while teaching. Each node's opening
+  syllabus emits its sub-points as a **verification contract** (the facet map):
+  every promised facet must be proven by a correct checkpoint before the node
+  flips to "understood" — the syllabus may promise nothing it won't deliver, and
+  the node may verify nothing the syllabus promised but never probed. The number
+  of checkpoints is therefore dynamic — it tracks the syllabus (typically 3-5),
+  never a static quota (3 correct remains the fallback only for nodes without a
+  contract). At least one correct answer must be an own-words short answer —
+  recognition alone never verifies. There is no separate test screen. A fully
+  verified tree = a mastered problem.
 
 ## The Answer Standard — Relevant & Informative (law)
 

@@ -17,7 +17,7 @@ import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
 import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, type XpAwardLite } from '@/lib/tree-engine'
-import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type PendingQuiz } from '@/lib/mastery'
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 
 interface Reflection {
@@ -425,13 +425,15 @@ ${ANSWER_STANDARD}
 ## CHECKPOINT QUESTIONS (mastery is proven HERE in chat — there is no separate test)
 ${node.status === 'understood'
   ? '- This node is already VERIFIED. Checkpoints are optional deepening now (exception: on a RETENTION REVIEW turn you MUST ask one) — focus on connections onward to the root problem.'
-  : `- Mastery state: ${quizStateNow.correct}/${MASTERY_TARGET} checkpoint answers correct so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. At ${MASTERY_TARGET} correct (incl. ${MASTERY_MIN_SHORT} short answer) the node verifies automatically and the student is told in the feedback.`}
+  : `- Mastery state: ${masteryFilled(quizStateNow)}/${masteryTarget(quizStateNow)} ${quizStateNow.facets ? 'syllabus facets proven' : 'checkpoint answers correct'} so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. The node verifies automatically when ${quizStateNow.facets ? 'EVERY facet in the coverage map below is proven by a correct checkpoint' : `${MASTERY_TARGET} answers are correct`} (incl. ${MASTERY_MIN_SHORT} own-words short answer), and the student is told in the feedback.`}
+${node.status !== 'understood' && quizStateNow.facets ? `- SYLLABUS COVERAGE MAP (the node's VERIFICATION CONTRACT — the sub-points this node's syllabus promised): ${quizStateNow.facets.map(f => `${f.done ? '✅' : '⬜'} "${f.name}"`).join(' · ')}
+- EVERY checkpoint must include "facet":"<exact name from the map>" naming the ⬜ UNDONE facet it probes. Target undone facets — a correct answer proves that facet; questions on already-✅ facets never advance verification. Every promised facet must be probed and proven — none may be skipped, and verification is COVERAGE, not a count.` : ''}
 - VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
 - THE MASTERY STATE ABOVE IS THE ONLY TRUTH about progress. If the conversation's visible ✅ count, the student's belief, or your own memory disagrees with it, the mastery state WINS: say plainly how many answers are recorded (e.g. "the system has 2 of 3 recorded — one more correct answer verifies it") and simply continue with the next checkpoint. NEVER speculate about display bugs, sync issues, or tell the student to "trust the header over me" / refresh the page — the header and this state are the same number, and inventing a discrepancy story erodes the exact trust verification exists to build.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
-[[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows the student's thinking WITHOUT revealing or eliminating the answer"}
+[[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows the student's thinking WITHOUT revealing or eliminating the answer","facet":"the exact coverage-map facet this probes (when a map exists)"}
 or
-[[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer"}
+[[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer","facet":"the exact coverage-map facet this probes (when a map exists)"}
 - The "hint" ships to the card's Hint button — write it so a stuck student gets un-stuck but still has to do the understanding themselves (point at the mechanism to consider, never at the answer).
 - NEVER paste a checkpoint's question or options as plain chat text — plain text cannot be answered, graded, or counted toward mastery. If the student says they can't see the card or its options, do NOT work around it in prose: tell them briefly that a fresh interactive card is attached right below your message (the system attaches it automatically on such turns).
 - Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
@@ -471,15 +473,18 @@ A roadmap of the 3-5 specific sub-points this node contains — each a **bolded 
 The single most common misconception or failure mode on this concept, in 1-2 sentences — the mistake this node exists to prevent.
 
 Close with ONE line noting the full explainer is a click away (the "Generate the explainer" button) and that mastery is proven by answering the checkpoint questions right here in chat — then ONE engaging question that pulls them straight into the first sub-point (conversational prose; do NOT emit a [[QUIZ]] block in this opener).
-Dense and specific throughout — every line about THIS node, zero platform/welcome filler.` : ''}${isReview ? `
+Dense and specific throughout — every line about THIS node, zero platform/welcome filler.
+FINALLY — as the very LAST line of the message, emit this machine block (never mention or explain it):
+[[SYLLABUS]]{"facets":["<sub-point 1>","<sub-point 2>","..."]}
+— one entry per "What you'll cover" sub-point (3-5 entries), each the short bolded term you used, in the session's language. THIS LIST IS THE NODE'S VERIFICATION CONTRACT: every facet you promise here must later be proven by a correct checkpoint before the node verifies, so promise exactly what this node truly owns — no filler facets, no facets belonging to other nodes.` : ''}${isReview ? `
 ## THIS TURN: RETENTION REVIEW (the student clicked Review on this verified node — they have not spoken)
 Memory fades; this visit exists to interrupt that.
 1. In 2-4 sentences, reactivate the core idea as a recall cue — what it is and why it mattered to the ROOT problem ("${tree.title}"). No full re-lecture.
 2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${isCheckpoint ? `
 ## THIS TURN: NEXT CHECKPOINT (the student just answered CORRECTLY — keep asking)
-BOTTLENECK-TRIGGERED TEACHING (law): no bottleneck was found — a correct answer means nothing needs teaching right now, so don't. This node is NOT yet verified (${quizStateNow.correct}/${MASTERY_TARGET} correct${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? `, and still needs ${MASTERY_MIN_SHORT} own-words short answer` : ''}). Keep the momentum:
+BOTTLENECK-TRIGGERED TEACHING (law): no bottleneck was found — a correct answer means nothing needs teaching right now, so don't. This node is NOT yet verified (${masteryFilled(quizStateNow)}/${masteryTarget(quizStateNow)} ${quizStateNow.facets ? 'facets proven' : 'correct'}${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? `, and still needs ${MASTERY_MIN_SHORT} own-words short answer` : ''}). Keep the momentum:
 1. A 3-6 word "Good — next:" bridge is enough. No lecture.
-2. Then END with exactly ONE NEW [[QUIZ]] checkpoint — different from every question already asked, scoped strictly to THIS node${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ', and make it a "short" own-words probe (the node still needs one to verify)' : ' (vary MCQ / short)'}.
+2. Then END with exactly ONE NEW [[QUIZ]] checkpoint — different from every question already asked, scoped strictly to THIS node${quizStateNow.facets ? ` and probing the NEXT UNDONE facet from the coverage map${quizStateNow.facets.find(f => !f.done) ? ` ("${quizStateNow.facets.find(f => !f.done)!.name}")` : ''} with its "facet" field set` : ''}${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ', and make it a "short" own-words probe (the node still needs one to verify)' : ' (vary MCQ / short)'}.
 Output nothing after the checkpoint block.
 (If their last answer was actually wrong/shaky — this trigger is only meant to fire on correct, but just in case — do NOT ask a new checkpoint; instead teach into it exactly as [NODE_REMEDIATE] would below.)` : ''}${isRemediate ? `
 ## THIS TURN: BOTTLENECK TEACHING (the student just answered a checkpoint WRONG — this is the bottleneck the ask-first model exists to find)
@@ -500,20 +505,24 @@ Close with ONE short, conversational, inviting question checking they're followi
   const encoder = new TextEncoder()
   const convId = conv!.id
   const QUIZ_MARK = '[[QUIZ]]'
+  const SYL_MARK = '[[SYLLABUS]]'
   const stream = new ReadableStream({
     async start(controller) {
       let full = ''
       // Bob always speaks with the newest teaching model (resolver: latest
       // Opus release, pinned fallback) — upgrades land without a deploy.
       const model = await getTeachingModel()
-      // Answer-key protection: the [[QUIZ]] JSON must never stream to the
-      // client (it carries correctIndex/rubric). We forward text with a
-      // holdback the length of the marker, so no byte at or past a possible
-      // marker start ever leaves before we know whether it IS the marker.
+      // Machine-marker protection: the [[QUIZ]] JSON must never stream to
+      // the client (it carries correctIndex/rubric), and the [[SYLLABUS]]
+      // contract block is server-only bookkeeping. We forward text with a
+      // holdback the length of the longest marker, so no byte at or past a
+      // possible marker start ever leaves before we know what it is.
+      const MARK_HOLD = Math.max(QUIZ_MARK.length, SYL_MARK.length)
       let sentLen = 0
       const forwardSafe = () => {
-        const qIdx = full.indexOf(QUIZ_MARK)
-        const safeLen = qIdx !== -1 ? qIdx : Math.max(sentLen, full.length - QUIZ_MARK.length)
+        const idxs = [full.indexOf(QUIZ_MARK), full.indexOf(SYL_MARK)].filter(i => i !== -1)
+        const firstMark = idxs.length ? Math.min(...idxs) : -1
+        const safeLen = firstMark !== -1 ? firstMark : Math.max(sentLen, full.length - MARK_HOLD)
         if (safeLen > sentLen) {
           try { controller.enqueue(encoder.encode(full.slice(sentLen, safeLen))) } catch { /* closed */ }
           sentLen = safeLen
@@ -550,6 +559,42 @@ Close with ONE short, conversational, inviting question checking they're followi
           controller.enqueue(encoder.encode(zhSession
             ? '现在连接有些问题，请稍后再试。'
             : "I'm having trouble connecting right now. Please try again in a moment."))
+        }
+      }
+
+      // ── Syllabus contract capture ([NODE_INTRO] turns) ──
+      // The intro's [[SYLLABUS]] block names the facets the syllabus just
+      // promised — the node's VERIFICATION CONTRACT (FOUNDATION.md: the node
+      // verifies only when every facet is proven, so the checkpoint count
+      // follows the syllabus instead of a static 3). Stored once, never
+      // overwritten (facet progress must survive re-intros); stripped from
+      // the stream (holdback) and from the persisted message.
+      {
+        const sIdx = full.indexOf(SYL_MARK)
+        if (sIdx !== -1) {
+          const rawSyl = full.slice(sIdx + SYL_MARK.length).trim()
+          full = full.slice(0, sIdx)
+          try {
+            const payload = JSON.parse(rawSyl.match(/\{[\s\S]*\}/)?.[0] ?? rawSyl) as { facets?: unknown[] }
+            const names = (Array.isArray(payload.facets) ? payload.facets : [])
+              .map(f => String(f ?? '').trim().slice(0, 120))
+              .filter(Boolean)
+              .slice(0, 6)
+            if (names.length >= 2) {
+              for (let attempt = 0; attempt < 4; attempt++) {
+                const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
+                const base = freshRow ? freshRow.quizState : node.quizState
+                const qs = parseQuizState(base)
+                if (qs.facets && qs.facets.length >= 2) break // contract already set — keep its progress
+                qs.facets = names.map(n2 => ({ name: n2, done: false }))
+                const w = await prisma.treeNode.updateMany({
+                  where: { id: nodeId, quizState: base },
+                  data: { quizState: JSON.stringify(qs) },
+                }).catch(() => null)
+                if (w && w.count > 0) break
+              }
+            }
+          } catch { /* malformed contract — the static fallback governs */ }
         }
       }
 
@@ -637,6 +682,7 @@ Close with ONE short, conversational, inviting question checking they're followi
       // attaching it. Judge-model, JSON-only, one retry — this path backs the
       // checkpoint guarantee, so it logs loudly instead of failing silently.
       const authorCheckpoint = async (avoid?: string): Promise<PendingQuiz | null> => {
+        const nextFacet = node.status !== 'understood' ? quizStateNow.facets?.find(f => !f.done)?.name : undefined
         const prompt = `Author exactly ONE checkpoint question for a tutoring node, under the Differentiator Principle: it must separate a student who MEMORIZED the content from one who truly UNDERSTANDS it — transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks. It must NOT be answerable by copying sentences from the teaching text below.
 
 NODE being tested: "${node.title}" — ${node.summary}
@@ -644,12 +690,13 @@ ${node.explainer ? `NODE EXPLAINER (the student has read this):\n${node.explaine
 "${proseOnly.slice(-1200)}"
 ${avoid ? `\nDO NOT reuse or lightly reword this question: "${avoid.slice(0, 300)}"` : ''}
 SCOPE: test ONLY this node's own material — never a sibling or child node's mechanism.
+${nextFacet ? `TARGET FACET: this checkpoint probes the syllabus facet "${nextFacet}" (the node's next unproven promise) — include "facet":"${nextFacet}" verbatim in the JSON.` : ''}
 ${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? 'FORMAT: kind "short" — the student still needs an own-words answer for mastery.' : 'FORMAT: "short" for why/transfer probes, "mcq" for quick discrimination — pick what fits.'}
 ${sessionDirectives(tree, lang)}
 Return ONLY the JSON object (no prose, no code fences):
-{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows thinking WITHOUT revealing or eliminating the answer"}
+{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows thinking WITHOUT revealing or eliminating the answer"${nextFacet ? `,"facet":"${nextFacet}"` : ''}}
 or
-{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer"}`
+{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer"${nextFacet ? `,"facet":"${nextFacet}"` : ''}}`
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             const Anthropic = (await import('@anthropic-ai/sdk')).default

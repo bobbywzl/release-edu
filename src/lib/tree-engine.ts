@@ -624,8 +624,9 @@ ${sessionDirectives(tree, lang)}`,
 // There is no separate test screen: mastery is proven through the checkpoint
 // questions Bob asks IN the workspace chat ([[QUIZ]] blocks — MCQ or short
 // answer). MCQs are judged deterministically; short answers by Sonnet. The
-// node flips to "understood" once the student has MASTERY_TARGET correct
-// answers including at least MASTERY_MIN_SHORT own-words short answer.
+// node flips to "understood" once EVERY facet of its syllabus contract is
+// proven by a correct answer (static MASTERY_TARGET fallback for nodes
+// without a contract), including at least MASTERY_MIN_SHORT own-words answer.
 // Constants + quizState parsing live in src/lib/mastery.ts (client-safe,
 // shared with the workspace UI).
 

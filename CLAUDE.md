@@ -51,8 +51,12 @@ branches → component/leaf nodes (pain points). Growth is permission-based only
 learner questions → AI proposals (pending ghost nodes) → explicit approval; plus
 AI discovery cards in chat and manual add. Mastery is AI-verified — no self-marking —
 through **in-chat checkpoint questions**: Bob emits `[[QUIZ]]` blocks (MCQ /
-short-answer cards) in the workspace chat; 3 correct incl. ≥1 own-words short answer
-flips the node (`MASTERY_TARGET` in tree-engine). There is no separate verify screen.
+short-answer cards) in the workspace chat. Verification is SYLLABUS COVERAGE, not a
+count: the node intro emits a `[[SYLLABUS]]` facet contract (its "What you'll cover"
+sub-points, stored in `quizState.facets`); every checkpoint carries a `facet` tag and
+the node flips only when EVERY facet is proven correct incl. ≥1 own-words short
+answer (`masteryMet` in `src/lib/mastery.ts`; static `MASTERY_TARGET`=3 is the
+fallback for contract-less nodes). There is no separate verify screen.
 Each session carries its own language / difficulty / personal background / PURPOSE
 (why the learner wants mastery — it defines "relevant" for the session), set by a
 5-question stepper at tree creation (never more than 5).
@@ -65,8 +69,10 @@ Each session carries its own language / difficulty / personal background / PURPO
   (ancestor-workspace digest → node chat/explainer prompts: every node builds on
   the branch below, never re-teaches it — law in FOUNDATION.md). The heart of the
   product.
-- `src/lib/mastery.ts` — client-safe single source of truth: `MASTERY_TARGET`,
-  `parseQuizState`, the `PendingQuiz` shape. UI strings interpolate `{n}` from it.
+- `src/lib/mastery.ts` — client-safe single source of truth: `MASTERY_TARGET`
+  (fallback), `masteryTarget`/`masteryFilled`/`masteryMet` (syllabus-coverage
+  verification over `QuizState.facets`), `parseQuizState`, the `PendingQuiz`
+  shape. UI strings interpolate `{n}` from it.
 - `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat/review
   routes. The node chat route holds Bob's workspace prompt, the Haiku contextual
   pre-pass (gap/wrong-streak/directive + node-discovery + move-recommendation +
