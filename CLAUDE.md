@@ -164,7 +164,11 @@ question. Implementation: the CHECKPOINT QUESTIONS section of the node chat prom
 - TypeScript strict; no `any` shortcuts unless commented why.
 - Errors in non-critical paths: `try { … } catch { /* non-critical */ }`.
 - Streaming responses use `ReadableStream` + `TextEncoder` (see the node chat route).
-- Background AI work must never block the user's response.
+- Background AI work must never block the user's response — AND it must be
+  passed through `inBackground()` (`src/lib/background.ts`, Vercel `waitUntil`):
+  a bare un-awaited promise is silently killed when the serverless instance
+  freezes after the response/stream closes (this was starving insight
+  extraction and stranding portfolio generation).
 
 ## Shipping (deploy workflow)
 

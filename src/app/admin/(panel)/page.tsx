@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import {
   Shield, Users, MessageSquare, Lightbulb, Search,
-  ChevronUp, ChevronDown, Settings2, Zap, Flame,
+  ChevronUp, ChevronDown, Zap, Flame,
   CheckCircle2, XCircle, ArrowUpDown, Activity, DollarSign, Cpu,
   BarChart3, Trash2, Loader2,
 } from 'lucide-react'
@@ -12,7 +12,7 @@ import { AdminEmailsManager } from './admin-emails-manager'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type SortKey = 'name' | 'email' | 'role' | 'xp' | 'streak' | 'trees' | 'conversations' | 'insights' | 'onboarded' | 'createdAt'
+type SortKey = 'name' | 'email' | 'role' | 'xp' | 'rank' | 'streak' | 'trees' | 'conversations' | 'insights' | 'onboarded' | 'createdAt'
 type SortDir = 'asc' | 'desc'
 
 function timeAgo(dateStr: string | null | undefined): string {
@@ -88,6 +88,7 @@ const FEATURE_LABELS: Record<string, string> = {
   // Tree EDU
   'tree-seed': 'Tree seeding', 'tree-expand': 'Branch proposals',
   'tree-explainer': 'Node explainers', 'tree-verify': 'Mastery verification',
+  'tree-digest': 'Tree digests',
   'node-chat': 'Workspace chat (Bob)', reflection: 'Contextual thinking (Haiku)',
   onboarding: 'Onboarding', insight: 'Insight memory', title: 'Title generation',
   portfolio: 'Portfolio', image: 'Image/file analysis', other: 'Other',
@@ -208,6 +209,7 @@ export default function AdminDashboardPage() {
         case 'email': av = (a.email || '').toLowerCase(); bv = (b.email || '').toLowerCase(); break
         case 'role': av = a.role; bv = b.role; break
         case 'xp': av = a.studentProfile?.xp || 0; bv = b.studentProfile?.xp || 0; break
+        case 'rank': av = a.level || 0; bv = b.level || 0; break
         case 'streak': av = a.studentProfile?.streak || 0; bv = b.studentProfile?.streak || 0; break
         case 'trees': av = a._count?.problemTrees || 0; bv = b._count?.problemTrees || 0; break
         case 'conversations': av = a._count?.conversations || 0; bv = b._count?.conversations || 0; break
@@ -249,13 +251,6 @@ export default function AdminDashboardPage() {
           </div>
         </div>
         <div className="flex gap-3">
-          <Link
-            href="/admin/ai-config"
-            className="flex items-center gap-2 bg-card hover:bg-accent border border-border text-foreground rounded-lg px-4 py-2 text-sm font-medium transition-colors"
-          >
-            <Settings2 className="w-4 h-4" />
-            AI Config
-          </Link>
           <Link
             href="/admin/conversations"
             className="flex items-center gap-2 bg-card hover:bg-accent border border-border text-foreground rounded-lg px-4 py-2 text-sm font-medium transition-colors"
@@ -507,6 +502,7 @@ export default function AdminDashboardPage() {
                     ['email', 'Email'],
                     ['role', 'Role'],
                     ['xp', 'XP'],
+                    ['rank', 'Rank'],
                     ['streak', 'Streak'],
                     ['trees', 'Trees'],
                     ['conversations', 'Convos'],
@@ -557,6 +553,15 @@ export default function AdminDashboardPage() {
                         <Zap className="w-3 h-3 text-yellow-400" />
                         {(user.studentProfile?.xp || 0).toLocaleString()}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {user.rank ? (
+                        <span className="flex items-center gap-1.5 whitespace-nowrap" title={`Level ${user.level}`}>
+                          <span>{user.rank.emblem}</span>
+                          <span className="text-xs font-medium" style={{ color: user.rank.color }}>{user.rank.en}</span>
+                          <span className="text-[10px] text-muted-foreground">Lv {user.level}</span>
+                        </span>
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1">

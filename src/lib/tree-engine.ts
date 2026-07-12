@@ -305,73 +305,94 @@ export function nodePath(nodes: TreeNode[], nodeId: string): TreeNode[] {
 
 export interface ExpansionResult {
   proposals: TreeNode[]
-  /** OPTIONAL refinement question — the student may answer it to reconfigure
-   *  the proposals, or ignore it and approve the ghosts as-is. Never blocks. */
+  /** Bob's conversational reply for the grow-box thread: what he proposed and
+   *  why, and/or a follow-up question. NEVER empty — the grow box is a
+   *  conversation, and a dead-end "no new branches" is a failed turn. */
+  reply: string
+  /** Kept for older clients: the follow-up question when Bob asked one. */
   clarify?: string
 }
 
+export interface GrowTurn { role: 'user' | 'assistant'; content: string }
+
 /**
- * The student asked a question at a node. ALWAYS propose 1-4 child nodes that
- * answer it (persisted as pending=true ghosts the student approves) — Bob
- * never refuses. If the ask could sharpen, Bob ALSO returns an optional
- * `clarify` the student may answer to reconfigure the ghosts.
- *
- * replacePending clears the node's existing pending ghosts first — used when
- * the student answers the clarify to REFINE (replace) the current proposals.
+ * The grow-box CONVERSATION. Each student message in the grow thread lands
+ * here with the dialog so far; Bob replies conversationally AND (whenever the
+ * dialog is about material to learn) proposes 1-4 child nodes, persisted as
+ * pending=true ghosts. Follow-up turns re-propose the FULL updated set for
+ * this dialog — `replaceIds` (the dialog's still-pending ghosts from the
+ * previous turn) are deleted first so refinements reconfigure the ghosts
+ * instead of piling up. Ghosts approved mid-dialog are no longer pending and
+ * therefore survive. Never refuses, never dead-ends.
  */
 export async function proposeExpansion(
   userId: string, treeId: string, nodeId: string, question: string, lang?: string,
-  replacePending = false,
+  opts: { history?: GrowTurn[]; replaceIds?: string[] } = {},
 ): Promise<ExpansionResult> {
   const tree = await getTreeWithNodes(userId, treeId)
   if (!tree) throw new Error('Tree not found')
   const node = tree.nodes.find(n => n.id === nodeId)
   if (!node) throw new Error('Node not found')
 
-  // Refine flow: drop the node's current pending ghosts so the answer's
-  // sharper proposals replace them instead of piling up.
-  if (replacePending) {
-    await prisma.treeNode.deleteMany({ where: { treeId, parentId: nodeId, pending: true } }).catch(() => null)
-  }
+  // Refine flow: this dialog's previous still-pending ghosts are replaced by
+  // the new turn's proposals — but they are deleted only AFTER the model turn
+  // succeeds AND actually produced replacements (below). Deleting up front
+  // would destroy the student's pending proposals on an API failure or on a
+  // purely conversational turn, which is permission-based growth violated in
+  // the removal direction.
+  const replaceIds = (opts.replaceIds ?? []).filter(id => typeof id === 'string').slice(0, 8)
+
+  const history = (opts.history ?? []).slice(-8).map(h => ({
+    role: h.role === 'assistant' ? 'assistant' as const : 'user' as const,
+    content: String(h.content ?? '').slice(0, 600),
+  })).filter(h => h.content.trim())
 
   const client = await anthropic()
   const model = await getJudgeModel()
   const result = await client.messages.create({
     model,
     max_tokens: 1500,
-    messages: [{
-      role: 'user',
-      content: `You are Bob, growing a problem-mastery learning tree. The student asked a question at one node; propose the child nodes (sub-branches) that would answer it.
+    system: `You are Bob, growing a problem-mastery learning tree through a short CONVERSATION in the "Grow this branch" box. The student talks to you about what they don't understand at one node; you reply conversationally AND propose the sub-branches (child nodes) that would teach it.
 
 PROBLEM (root): "${tree.title}"
 CURRENT TREE:
 ${sketchTree(tree.nodes)}
 
-TARGET NODE: "${node.title}" — ${node.summary}
-STUDENT'S QUESTION: "${question.slice(0, 800)}"
+TARGET NODE they are growing from: "${node.title}" — ${node.summary}
 
-ALWAYS propose branches — never refuse. Propose the FEWEST nodes that genuinely answer the question: usually 1-2; 3-4 ONLY when it truly spans that many distinct concepts (a beginner asking one question does not want a mini-curriculum). Each is a distinct pain point / concept the question surfaces, not already in the tree. kind is "component" (conceptual part) or "leaf" (specific technical knowledge or concrete pain-point resolution). Even a broad or slightly vague question gets your best proposals under the most likely reading — make reasonable assumptions rather than refusing.
-
-CONTINGENT QUESTIONS: if the right next node depends on a fact the student does not know yet (which tool/platform/server/library their project uses), propose ONLY the diagnostic or conceptual node that resolves the unknown — never a fan of per-option how-to leaves where most are guaranteed dead ends.
-
-OPTIONAL refinement: if a specific detail from the student would let you propose sharper or more relevant nodes, ALSO return a one-sentence "clarify" question naming that detail — but you STILL propose your best nodes now. Omit "clarify" (or null) when the proposals already fit well.
-
+RULES:
+- ALWAYS lean toward proposing: whenever the student's message (in the context of the whole dialog) is about something to learn or understand, return your best 1-4 proposals under the most likely reading — make reasonable assumptions rather than refusing. Usually 1-2 nodes; 3-4 ONLY when the ask genuinely spans that many distinct concepts. Each proposal is a distinct pain point / concept not already in the tree. kind: "component" (conceptual part) or "leaf" (specific technical knowledge / concrete pain-point resolution).
+- On FOLLOW-UP turns, propose the FULL UPDATED SET for this dialog (the previous turn's unapproved proposals are replaced by what you return now; if you return an EMPTY proposals list, the previous set is KEPT untouched) — refine, rename, add or drop based on what the student just said.
+- CONTINGENT UNKNOWNS: if the right branch depends on a fact the student doesn't know yet (which tool/platform/variety/library), propose the diagnostic/conceptual node that resolves the unknown — never a fan of per-option how-tos.
+- "reply" is your conversational voice in the thread (1-3 sentences): say what you proposed and why it answers them, and — when one specific detail would sharpen the set — ask ONE short follow-up question. If their message is purely conversational (a thanks, a meta question, an answer that changes nothing), reply naturally; proposals may then be empty, but your reply must MOVE THE CONVERSATION FORWARD (offer a direction, ask what they're stuck on) — never a dead end, never "no new branches".
+- The reply NEVER lists the proposal titles verbatim as a menu — the UI shows the proposal cards; speak about them naturally.
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON:
-{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}], "clarify": "optional one-sentence refinement question, or null"}`,
-    }],
+{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}], "reply": "your conversational reply (session language)"}`,
+    messages: [...history, { role: 'user' as const, content: question.slice(0, 800) }],
   })
 
   void recordUsage(result, userId, model, 'tree-expand')
   const text = (result.content[0] as { text?: string })?.text ?? ''
-  const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; clarify?: string | null }>(text)
+  const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; reply?: string; clarify?: string | null }>(text)
     // Tolerate a bare array (older shape).
     ?? { proposals: extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text) ?? [] }
 
+  const list = parsed.proposals ?? []
+
+  // Replace the dialog's previous ghosts ONLY now that the turn succeeded and
+  // produced actual replacements. A conversational turn (proposals: []) keeps
+  // the previous set on the board. Scoped so ghosts from other dialogs/nodes
+  // and already-approved (pending=false) nodes are never touched.
+  if (replaceIds.length > 0 && list.length > 0) {
+    await prisma.treeNode.deleteMany({
+      where: { id: { in: replaceIds }, treeId, parentId: nodeId, pending: true },
+    }).catch(() => null)
+  }
+
   const existing = await prisma.treeNode.count({ where: { treeId, parentId: nodeId } })
   const created: TreeNode[] = []
-  const list = parsed.proposals ?? []
   for (let i = 0; i < Math.min(4, list.length); i++) {
     const p = list[i]
     if (!p?.title) continue
@@ -384,8 +405,18 @@ Return ONLY JSON:
       },
     }))
   }
+
+  // The reply must always carry the conversation. If the model omitted it,
+  // synthesize a serviceable one in the session language.
+  const zh = (tree.language ?? lang) === 'zh'
+  let reply = typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim().slice(0, 600) : ''
+  if (!reply) {
+    reply = created.length > 0
+      ? (zh ? `我提议了 ${created.length} 个分枝——在树上确认或继续告诉我你想深入哪里。` : `I've proposed ${created.length} ${created.length === 1 ? 'branch' : 'branches'} — approve them on the tree, or keep telling me where you want to go deeper.`)
+      : (zh ? '再多说一点你卡在哪里——是概念本身，还是怎么落地？' : "Tell me a bit more about where you're stuck — the concept itself, or how to apply it?")
+  }
   const clarify = typeof parsed.clarify === 'string' && parsed.clarify.trim() ? parsed.clarify.trim() : undefined
-  return { proposals: created, clarify }
+  return { proposals: created, reply, clarify }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────
@@ -562,10 +593,19 @@ export async function markNodeVerified(
         where: { treeId, parentId: null },
         data: { status: 'understood' },
       }).catch(() => null)
-      await prisma.problemTree.update({ where: { id: treeId }, data: { status: 'completed' } })
-      const { awardXp } = await import('@/lib/xp-engine')
-      const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
-      if (a) xp.push(a)
+      // Compare-and-set on the tree status: the completion bonus pays exactly
+      // once per tree. Growing a completed tree and mastering the new node
+      // must not re-pay it (repeatable XP inflation), and two nodes verifying
+      // concurrently must not both take this branch.
+      const flipped = await prisma.problemTree.updateMany({
+        where: { id: treeId, status: { not: 'completed' } },
+        data: { status: 'completed' },
+      })
+      if (flipped.count > 0) {
+        const { awardXp } = await import('@/lib/xp-engine')
+        const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
+        if (a) xp.push(a)
+      }
       treeCompleted = true
     }
   } catch { /* non-critical */ }

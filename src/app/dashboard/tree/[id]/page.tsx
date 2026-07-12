@@ -233,8 +233,37 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [records, setRecords] = useState<Record<string, NodeRecord>>({})
+  const [ghostBusy, setGhostBusy] = useState<string | null>(null)
 
   const ordered = useMemo(() => depthOrder(tree.nodes.filter(n => !n.pending)), [tree.nodes])
+  // Proposals must be visible and actionable HERE too — the list is the
+  // tree's only workable view on a phone, and invisible ghosts read as
+  // "growing did nothing".
+  const pendingByParent = useMemo(() => {
+    const m = new Map<string, TreeData['nodes']>()
+    for (const n of tree.nodes) {
+      if (n.pending && n.parentId) {
+        if (!m.has(n.parentId)) m.set(n.parentId, [])
+        m.get(n.parentId)!.push(n)
+      }
+    }
+    return m
+  }, [tree.nodes])
+
+  async function actGhost(nodeId: string, action: 'approve' | 'reject') {
+    if (ghostBusy) return
+    setGhostBusy(nodeId)
+    try {
+      await fetch(`/api/tree/${tree.id}/node/${nodeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      }).catch(() => null)
+      onChanged()
+    } finally {
+      setGhostBusy(null)
+    }
+  }
   const q = query.trim().toLowerCase()
   const filtered = q
     ? ordered.filter(({ node }) =>
@@ -400,6 +429,38 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
                   </div>
                 )}
               </div>
+
+              {/* Pending proposals under this node — approve/dismiss inline */}
+              {(pendingByParent.get(node.id) ?? []).map(ghost => (
+                <div key={ghost.id} className="mt-1.5 ml-6 border border-dashed border-primary/40 rounded-xl bg-primary/[0.04] px-3.5 py-2.5 flex items-center gap-2.5">
+                  <Sprout className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-foreground truncate">
+                      {ghost.title} <span className="text-[10px] font-normal text-primary">· {t('tree.awaitingApproval')}</span>
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">{ghost.summary}</p>
+                  </div>
+                  {ghostBusy === ghost.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground flex-shrink-0" />
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => actGhost(ghost.id, 'approve')}
+                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex-shrink-0"
+                      >
+                        <Check className="w-3 h-3" /> {t('tree.addToTree')}
+                      </button>
+                      <button
+                        onClick={() => actGhost(ghost.id, 'reject')}
+                        className="p-1 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors flex-shrink-0"
+                        title={t('common.dismiss')}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
           )
         })}
@@ -420,10 +481,11 @@ function TreeCanvasInner() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [growQuestion, setGrowQuestion] = useState('')
   const [growing, setGrowing] = useState(false)
-  const [growClarify, setGrowClarify] = useState<string | null>(null)
   const [growNote, setGrowNote] = useState<string | null>(null)
-  const [growRefine, setGrowRefine] = useState('')
-  const [growLastQuestion, setGrowLastQuestion] = useState('')
+  // The grow-box conversation thread + the ids of THIS dialog's still-pending
+  // ghosts (follow-up turns replace exactly these, nothing else).
+  const [growThread, setGrowThread] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
+  const [growGhostIds, setGrowGhostIds] = useState<string[]>([])
   const [addingChild, setAddingChild] = useState(false)
   const [childTitle, setChildTitle] = useState('')
   const [childSummary, setChildSummary] = useState('')
@@ -443,17 +505,38 @@ function TreeCanvasInner() {
     } catch { /* transient */ }
   }, [params.id, router])
   useEffect(() => { load() }, [load])
-  // Fresh node selection → clear the grow box + any stale clarify/status note.
-  useEffect(() => { setGrowClarify(null); setGrowNote(null); setGrowQuestion(''); setGrowRefine(''); setGrowLastQuestion('') }, [selectedId])
+  // Grow dialogs are KEYED PER NODE: clicking a freshly proposed ghost to
+  // inspect it (a natural gesture) must not destroy the dialog — the thread
+  // and its replace-set are stashed and restored when the node is re-selected.
+  const growStateRef = useRef<Map<string, { thread: Array<{ role: 'user' | 'assistant'; content: string }>; ghostIds: string[] }>>(new Map())
+  const prevSelectedRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevSelectedRef.current
+    if (prev && prev !== selectedId && (growThread.length > 0 || growGhostIds.length > 0)) {
+      growStateRef.current.set(prev, { thread: growThread, ghostIds: growGhostIds })
+    }
+    prevSelectedRef.current = selectedId
+    const saved = selectedId ? growStateRef.current.get(selectedId) : undefined
+    setGrowNote(null)
+    setGrowQuestion('')
+    setGrowThread(saved?.thread ?? [])
+    setGrowGhostIds(saved?.ghostIds ?? [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
 
   const act = useCallback(async (nodeId: string, action: 'approve' | 'reject') => {
-    await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
+    const res = await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),
-    }).catch(() => {})
+    }).catch(() => null)
+    // Surface failure instead of a ghost silently vanishing on reload — a
+    // 404 means the proposal was already replaced/handled elsewhere.
+    if (!res || !res.ok) setGrowNote(t('tree.actionFailed'))
+    // Either way this ghost has left the dialog's replace-set.
+    setGrowGhostIds(ids => ids.filter(i => i !== nodeId))
     load()
-  }, [params.id, load])
+  }, [params.id, load, t])
 
   useEffect(() => {
     if (!tree) return
@@ -636,52 +719,56 @@ function TreeCanvasInner() {
   const understood = tree?.nodes.filter(n => !n.pending && n.parentId !== null && n.status === 'understood').length ?? 0
   const total = tree?.nodes.filter(n => !n.pending && n.parentId !== null).length ?? 0
 
-  // Shared: create the ghost nodes from an expand response, reveal them, and
-  // surface the OPTIONAL refinement question (never blocks — proposals always
-  // land; the clarify is a chance to reconfigure them).
-  async function applyExpand(question: string, replacePending: boolean) {
-    const res = await fetch(`/api/tree/${params.id}/expand`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nodeId: selected!.id, question, lang: language, replacePending }),
-    })
-    const body = await res.json().catch(() => ({}))
-    if (!res.ok) { setGrowNote(t('tree.proposeFailed')); return }
-    const n = Array.isArray(body.proposals) ? body.proposals.length : 0
-    setGrowNote(n > 0 ? t('tree.proposedN').replace('{n}', String(n)) : t('tree.proposeNone'))
-    setGrowClarify(typeof body.clarify === 'string' && body.clarify.trim() ? body.clarify : null)
-    await load()
-    setTimeout(() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }, 150)
-  }
-
+  // ── Grow-this-branch as a CONVERSATION ──
+  // Each send is one dialog turn: Bob replies in the thread and (re)proposes
+  // this dialog's ghost set — follow-ups replace the dialog's still-pending
+  // ghosts (by id, never touching ghosts from other questions). Approving a
+  // ghost locks it in (no longer pending → survives refinement).
   async function grow() {
-    if (!selected || !growQuestion.trim() || growing) return
+    const msg = growQuestion.trim()
+    if (!selected || !msg || growing) return
     setGrowing(true)
-    setGrowClarify(null)
     setGrowNote(null)
-    setGrowRefine('')
+    const thread = [...growThread, { role: 'user' as const, content: msg }]
+    setGrowThread(thread)
+    setGrowQuestion('')
     try {
-      const q = growQuestion.trim()
-      setGrowLastQuestion(q)
-      await applyExpand(q, false)
-      setGrowQuestion('')
+      const res = await fetch(`/api/tree/${params.id}/expand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nodeId: selected.id,
+          question: msg,
+          lang: language,
+          history: thread.slice(0, -1).slice(-8),
+          replaceIds: growGhostIds,
+        }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setGrowThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
+        return
+      }
+      const proposals: Array<{ id: string }> = Array.isArray(body.proposals) ? body.proposals : []
+      // An empty reply on an OK response (proxy returned junk) must not render
+      // a silent bubble — that's the dead-end this box exists to eliminate.
+      const reply = typeof body.reply === 'string' && body.reply.trim() ? body.reply.trim()
+        : (typeof body.clarify === 'string' && body.clarify.trim() ? body.clarify.trim() : t('tree.proposeFailed'))
+      setGrowThread(t2 => [...t2, { role: 'assistant', content: reply }])
+      // A conversational turn (no proposals) KEEPS the previous ghost set —
+      // the server kept them too, so the replace-set must survive.
+      if (proposals.length > 0) {
+        setGrowGhostIds(proposals.map(p => p.id).filter(Boolean))
+        setGrowNote(t('tree.proposedN').replace('{n}', String(proposals.length)))
+      }
+      // Always resync: the server may have replaced ghosts even on turns the
+      // canvas didn't expect, and stale dashed nodes 404 on approve.
+      await load()
+      if (proposals.length > 0) {
+        setTimeout(() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }, 150)
+      }
     } catch {
-      setGrowNote(t('tree.proposeFailed'))
-    } finally {
-      setGrowing(false)
-    }
-  }
-
-  // Answer the optional refinement → REPLACE the current ghosts with sharper
-  // ones configured to the added detail.
-  async function refineBranches() {
-    if (!selected || !growRefine.trim() || growing || !growLastQuestion) return
-    setGrowing(true)
-    try {
-      await applyExpand(`${growLastQuestion}\n\nAdded specifics: ${growRefine.trim()}`, true)
-      setGrowRefine('')
-    } catch {
-      setGrowNote(t('tree.proposeFailed'))
+      setGrowThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
     } finally {
       setGrowing(false)
     }
@@ -691,11 +778,17 @@ function TreeCanvasInner() {
     if (!selected || !childTitle.trim() || addingChild) return
     setAddingChild(true)
     try {
-      await fetch(`/api/tree/${params.id}/node/${selected.id}`, {
+      const res = await fetch(`/api/tree/${params.id}/node/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'add_child', title: childTitle.trim(), summary: childSummary.trim() }),
-      })
+      }).catch(() => null)
+      if (!res || !res.ok) {
+        // Keep the typed title/summary for retry — clearing on failure
+        // silently loses the student's content.
+        setGrowNote(t('tree.actionFailed'))
+        return
+      }
       setChildTitle('')
       setChildSummary('')
       await load()
@@ -796,9 +889,18 @@ function TreeCanvasInner() {
             )}
           </div>
 
-          {/* Node side panel */}
+          {/* Node side panel — an overlay on phones (an inline 320px column
+              would squeeze the canvas to a sliver; same fix as the workspace
+              notes panel), a static column on desktop. */}
           {selected && (
-            <div className="w-80 flex-shrink-0 border-l border-border bg-card/60 backdrop-blur-sm p-4 overflow-y-auto space-y-4">
+            <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:shadow-none lg:static lg:z-auto lg:w-80 flex-shrink-0 border-l border-border bg-card/95 lg:bg-card/60 backdrop-blur-sm p-4 overflow-y-auto space-y-4">
+              <button
+                onClick={() => setSelectedId(null)}
+                className="lg:hidden absolute top-3 right-3 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                aria-label={t('common.dismiss')}
+              >
+                <X className="w-4 h-4" />
+              </button>
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <StatusDot status={selected.pending ? '' : selected.status} />
@@ -851,54 +953,60 @@ function TreeCanvasInner() {
                     </div>
                   )}
 
-                  {/* Grow: ask a question → AI proposes child nodes as ghosts */}
+                  {/* Grow: a CONVERSATION with Bob — each message proposes /
+                      reconfigures ghost nodes, and the thread never dead-ends */}
                   <div className="border border-border rounded-xl p-3 space-y-2">
                     <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
                       <GitBranch className="w-3.5 h-3.5 text-emerald-400" />
                       {t('tree.growBranch')}
                     </p>
-                    <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.growHint')}</p>
-                    <textarea
-                      value={growQuestion}
-                      onChange={e => setGrowQuestion(e.target.value)}
-                      placeholder={t('tree.growPlaceholder')}
-                      rows={2}
-                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
-                    />
-                    {growNote && (
-                      <p className="text-[11px] text-muted-foreground leading-snug">{growNote}</p>
+                    {growThread.length === 0 && (
+                      <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.growHint')}</p>
                     )}
-                    <button
-                      onClick={grow}
-                      disabled={!growQuestion.trim() || growing}
-                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-medium py-2 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
-                    >
-                      {growing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sprout className="w-3.5 h-3.5" />}
-                      {growing ? t('tree.proposing') : t('tree.propose')}
-                    </button>
-
-                    {/* Optional refinement — answer to reconfigure the ghosts,
-                        or ignore it and just approve them on the canvas. */}
-                    {growClarify && (
-                      <div className="mt-1 rounded-lg border border-amber-400/30 bg-amber-500/[0.06] p-2.5 space-y-1.5">
-                        <p className="text-[11px] text-amber-300 leading-snug"><span className="font-bold">{t('tree.refineLabel')}</span> {growClarify}</p>
-                        <textarea
-                          value={growRefine}
-                          onChange={e => setGrowRefine(e.target.value)}
-                          placeholder={t('tree.refinePlaceholder')}
-                          rows={2}
-                          className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-amber-400/40"
-                        />
-                        <button
-                          onClick={refineBranches}
-                          disabled={!growRefine.trim() || growing}
-                          className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-300 text-[11px] font-medium py-1.5 hover:bg-amber-500/25 transition-colors disabled:opacity-40"
-                        >
-                          {growing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sprout className="w-3 h-3" />}
-                          {t('tree.refine')}
-                        </button>
+                    {growThread.length > 0 && (
+                      <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
+                        {growThread.map((m2, i2) => (
+                          <div key={i2} className={cn('flex', m2.role === 'user' ? 'justify-end' : 'justify-start')}>
+                            <div className={cn(
+                              'rounded-lg px-2.5 py-1.5 text-[11px] leading-snug max-w-[90%]',
+                              m2.role === 'user'
+                                ? 'bg-primary/20 text-foreground rounded-br-sm'
+                                : 'bg-background border border-border text-foreground/90 rounded-bl-sm',
+                            )}>
+                              {m2.content}
+                            </div>
+                          </div>
+                        ))}
+                        {growing && (
+                          <div className="flex justify-start">
+                            <div className="rounded-lg rounded-bl-sm px-2.5 py-1.5 bg-background border border-border">
+                              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
+                    {growNote && (
+                      <p className="text-[11px] text-emerald-300 leading-snug">{growNote}</p>
+                    )}
+                    <div className="flex gap-1.5">
+                      <textarea
+                        value={growQuestion}
+                        onChange={e => setGrowQuestion(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); grow() } }}
+                        placeholder={growThread.length === 0 ? t('tree.growPlaceholder') : t('tree.growReplyPlaceholder')}
+                        rows={2}
+                        className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
+                      />
+                      <button
+                        onClick={grow}
+                        disabled={!growQuestion.trim() || growing}
+                        title={t('tree.propose')}
+                        className="self-end inline-flex items-center justify-center rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 p-2.5 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
+                      >
+                        {growing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sprout className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Manual add child */}

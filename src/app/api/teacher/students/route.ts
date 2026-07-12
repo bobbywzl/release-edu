@@ -1,46 +1,14 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { cookies } from 'next/headers'
-import { authOptions } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { dbStore } from '@/lib/db-store'
-import { getUserId } from '@/lib/get-user-id'
+import { adminApiGuard } from '@/lib/admin-auth'
 
-// GET /api/teacher/students — list all students with stats
+// GET /api/teacher/students — list all users with stats, for the admin
+// conversation browser sidebar. ADMIN-ONLY: crosses user boundaries (names,
+// emails, profiles). It previously ran unguarded for any signed-in user.
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  const cookieStore = await cookies()
-  const isDemo = cookieStore.get('demo-mode')?.value === 'true'
-  const authUserId = (session?.user as { id?: string })?.id ?? null
-
-  // For demo/unauthenticated users, show the current user as their own student
-  if (isDemo || !authUserId) {
-    const userId = await getUserId()
-    const store = dbStore.forUser(userId)
-    const profile = await store.getProfile()
-    const convs = await store.getConversations()
-
-    const activeToday = convs.filter(c => {
-      const convDate = new Date(c.updatedAt)
-      return convDate.toDateString() === new Date().toDateString()
-    }).length
-
-    return NextResponse.json([{
-      id: userId,
-      name: profile?.userId ?? userId,
-      email: userId === 'demo' ? 'demo@release.edu' : userId,
-      learningStage: profile?.learningStage ?? 1,
-      xp: profile?.xp ?? 0,
-      streak: profile?.streak ?? 0,
-      activeConversationsToday: activeToday,
-      lastActive: convs[0]?.updatedAt ?? null,
-      interests: profile?.interests ? JSON.parse(profile.interests) : [],
-      weaknesses: profile?.weaknesses ? JSON.parse(profile.weaknesses) : [],
-    }])
-  }
+  const denied = await adminApiGuard(); if (denied) return denied
 
   const students = await prisma.user.findMany({
-    where: { role: 'student' },
     include: {
       studentProfile: true,
       conversations: {

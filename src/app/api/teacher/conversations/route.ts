@@ -1,53 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { cookies } from 'next/headers'
-import { authOptions } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { dbStore } from '@/lib/db-store'
-import { getUserId } from '@/lib/get-user-id'
+import { adminApiGuard } from '@/lib/admin-auth'
 
-// GET /api/teacher/conversations — all conversations for teacher's students
+// GET /api/teacher/conversations — every user's conversations, for the admin
+// conversation browser. ADMIN-ONLY: this crosses user boundaries (titles,
+// previews, names, emails), so it carries the same guard as /api/admin/*.
+// (It previously ran unguarded for any signed-in user — a data leak.)
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  const cookieStore = await cookies()
-  const isDemo = cookieStore.get('demo-mode')?.value === 'true'
-  const authUserId = (session?.user as { id?: string })?.id ?? null
+  const denied = await adminApiGuard(); if (denied) return denied
 
   const { searchParams } = new URL(req.url)
   const search = searchParams.get('search')?.toLowerCase() ?? ''
   const studentId = searchParams.get('studentId')
 
-  if (isDemo || !authUserId) {
-    const userId = await getUserId()
-    const store = dbStore.forUser(userId)
-    let convs = await store.getConversations()
-
-    if (search) {
-      convs = convs.filter(c =>
-        c.title.toLowerCase().includes(search) ||
-        c.context?.toLowerCase().includes(search) ||
-        c.messages.some(m => m.content.toLowerCase().includes(search))
-      )
-    }
-
-    return NextResponse.json(
-      convs.map(c => ({
-        id: c.id,
-        title: c.title,
-        context: c.context,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        messageCount: c._count.messages,
-        studentId: userId,
-        studentName: userId,
-        studentEmail: userId === 'demo' ? 'demo@release.edu' : userId,
-        preview: c.messages[0]?.content?.slice(0, 100) ?? '',
-      }))
-    )
-  }
-
+  // No role filter: promoting a user to mentor/admin must not make their
+  // conversations vanish from the browser.
   const whereClause: Record<string, unknown> = {
-    user: { role: 'student' },
     ...(studentId && { userId: studentId }),
   }
 

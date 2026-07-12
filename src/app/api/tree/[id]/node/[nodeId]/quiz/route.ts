@@ -158,7 +158,10 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
       const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, answer, body.confidence, body.lang)
       correct = j.correct
       feedback = j.feedback
-      if (!correct) void recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined)
+      if (!correct) {
+        const { inBackground } = await import('@/lib/background')
+        inBackground(recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined))
+      }
     }
   } catch (err) {
     console.error('[tree] quiz judge failed:', err)
@@ -177,43 +180,56 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   }
 
   // ── Tally the node's checkpoint state (pending consumed, review stamped) ──
-  // Judging took seconds — re-read fresh state before the write so we never
-  // clobber anything stored in the meantime (e.g. a new pending card).
-  const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
-  const tally = parseQuizState(freshRow?.quizState ?? node.quizState)
-  tally.attempts += 1
-  if (correct) {
-    tally.correct += 1
-    tally.combo += 1
-    if (quiz.kind === 'short') tally.shortCorrect += 1
-  } else {
-    tally.combo = 0
+  // Judging took seconds — the write is a compare-and-set on the fresh-read
+  // quizState string (one retry recomputes on the newer state), so this tally
+  // and a concurrent pending-card store from the chat stream on another
+  // device can never erase each other.
+  const applyOutcome = (tally: ReturnType<typeof parseQuizState>) => {
+    tally.attempts += 1
+    if (correct) {
+      tally.correct += 1
+      tally.combo += 1
+      if (quiz.kind === 'short') tally.shortCorrect += 1
+    } else {
+      tally.combo = 0
+    }
+    // Confidence calibration: sure-but-wrong is the node's blind spot (future
+    // checkpoints target it); sure-and-right is healthy calibration.
+    if (body.confidence === 'sure') {
+      if (correct) tally.sureRight += 1
+      else tally.sureWrong += 1
+    }
+    // Delayed-retest bookkeeping: a correct retest clears the missed entry, a
+    // wrong retest re-arms it for the next return visit, and a fresh miss
+    // queues for retest hours later (cap 5, newest kept).
+    const retestOf = quiz.retestOf
+    if (retestOf) {
+      tally.missed = correct
+        ? tally.missed.filter(m => m.question !== retestOf)
+        : tally.missed.map(m => (m.question === retestOf ? { ...m, missedAt: new Date().toISOString() } : m))
+    } else if (!correct) {
+      tally.missed = [
+        ...tally.missed.filter(m => m.question !== quiz.question),
+        { question: quiz.question.slice(0, 300), missedAt: new Date().toISOString() },
+      ].slice(-5)
+    }
+    // Consume the pending only if it's still the card we judged — never wipe
+    // a newer card Bob stored while we were judging.
+    if (tally.pending?.question === quiz.question) tally.pending = null
+    if (isReview) tally.reviewedAt = new Date().toISOString()
+    return tally
   }
-  // Confidence calibration: sure-but-wrong is the node's blind spot (future
-  // checkpoints target it); sure-and-right is healthy calibration.
-  if (body.confidence === 'sure') {
-    if (correct) tally.sureRight += 1
-    else tally.sureWrong += 1
+  let tally = applyOutcome(parseQuizState(node.quizState))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
+    const base = freshRow ? freshRow.quizState : node.quizState
+    tally = applyOutcome(parseQuizState(base))
+    const w = await prisma.treeNode.updateMany({
+      where: { id: nodeId, quizState: base },
+      data: { quizState: JSON.stringify(tally) },
+    }).catch(() => null)
+    if (w && w.count > 0) break
   }
-  // Delayed-retest bookkeeping: a correct retest clears the missed entry, a
-  // wrong retest re-arms it for the next return visit, and a fresh miss
-  // queues for retest hours later (cap 5, newest kept).
-  const retestOf = quiz.retestOf
-  if (retestOf) {
-    tally.missed = correct
-      ? tally.missed.filter(m => m.question !== retestOf)
-      : tally.missed.map(m => (m.question === retestOf ? { ...m, missedAt: new Date().toISOString() } : m))
-  } else if (!correct) {
-    tally.missed = [
-      ...tally.missed.filter(m => m.question !== quiz.question),
-      { question: quiz.question.slice(0, 300), missedAt: new Date().toISOString() },
-    ].slice(-5)
-  }
-  // Consume the pending only if it's still the card we judged — never wipe
-  // a newer card Bob stored while we were judging.
-  if (tally.pending?.question === quiz.question) tally.pending = null
-  if (isReview) tally.reviewedAt = new Date().toISOString()
-  await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(tally) } }).catch(() => null)
 
   // ── XP: every meaningful answer pays; mastered material can't be farmed ──
   const isVerifiedNode = node.status === 'understood'
@@ -251,7 +267,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   try {
     const store = dbStore.forUser(userId)
     const contextTag = `tree-node:${nodeId}`
-    let conv = await prisma.conversation.findFirst({ where: { userId, context: contextTag } })
+    let conv = await prisma.conversation.findFirst({ where: { userId, context: contextTag }, orderBy: { createdAt: 'asc' } })
     if (!conv) conv = await store.createConversation(node.title.slice(0, 60), contextTag)
     await store.addMessage(conv.id, 'user', answerText)
     const banner = correct ? (zh ? '✅ **答对了**' : '✅ **Correct**') : (zh ? '❌ **还不对**' : '❌ **Not quite**')

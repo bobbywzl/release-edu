@@ -89,10 +89,22 @@ export async function PATCH(
     case 'annotate': {
       const text = (body.text ?? '').trim()
       if (!text) return NextResponse.json({ error: 'Annotation text required' }, { status: 400 })
+      // Compare-and-set append (fresh read each try): two concurrent
+      // annotates from separate tabs must not last-writer-win each other.
       let annotations: Array<{ text: string; createdAt: string }> = []
-      try { annotations = JSON.parse(node.annotations ?? '[]') } catch { /* fresh */ }
-      annotations.push({ text: text.slice(0, 1000), createdAt: new Date().toISOString() })
-      await prisma.treeNode.update({ where: { id: nodeId }, data: { annotations: JSON.stringify(annotations) } })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const row = attempt === 0 ? node : await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { annotations: true } })
+        const base = row?.annotations ?? null
+        annotations = []
+        try { annotations = JSON.parse(base ?? '[]') } catch { /* fresh */ }
+        if (!Array.isArray(annotations)) annotations = []
+        annotations.push({ text: text.slice(0, 1000), createdAt: new Date().toISOString() })
+        const w = await prisma.treeNode.updateMany({
+          where: { id: nodeId, annotations: base },
+          data: { annotations: JSON.stringify(annotations) },
+        }).catch(() => null)
+        if (w && w.count > 0) break
+      }
       return NextResponse.json({ ok: true, annotations })
     }
     default:
