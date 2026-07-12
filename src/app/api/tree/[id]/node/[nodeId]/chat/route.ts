@@ -176,16 +176,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Client triggers, not student messages — nothing is persisted for the
   // trigger itself; only Bob's reply is saved.
-  //   [NODE_INTRO]  — first open: condensed syllabus-style hook.
-  //   [NODE_REVIEW] — retention review of a verified node: reactivate the
-  //                   idea, then one fresh checkpoint (full XP).
+  //   [NODE_INTRO]     — first open: condensed syllabus-style hook.
+  //   [NODE_REVIEW]    — retention review of a verified node: reactivate the
+  //                      idea, then one fresh checkpoint (full XP).
+  //   [NODE_CHECKPOINT] / [NODE_REMEDIATE] — Bottleneck-Triggered Teaching
+  //   (FOUNDATION.md): the client fires CHECKPOINT after a CORRECT answer
+  //   (no bottleneck found — keep asking) and REMEDIATE after a WRONG one
+  //   (a bottleneck WAS just found — teach into it before asking again).
   const isIntro = message.trim() === '[NODE_INTRO]'
   const isReview = message.trim() === '[NODE_REVIEW]'
-  // [NODE_CHECKPOINT] — the client fires this after each answered checkpoint
-  // while the node is still unverified, so questions keep coming (with a brief
-  // clarify if they just missed) until the node is complete.
   const isCheckpoint = message.trim() === '[NODE_CHECKPOINT]'
-  const isTrigger = isIntro || isReview || isCheckpoint
+  const isRemediate = message.trim() === '[NODE_REMEDIATE]'
+  const isTrigger = isIntro || isReview || isCheckpoint || isRemediate
   if (!isTrigger) await store.addMessage(conv!.id, 'user', message.trim())
 
   // Contextual thinking (Haiku) before Bob speaks — persisted on the
@@ -474,11 +476,21 @@ Dense and specific throughout — every line about THIS node, zero platform/welc
 Memory fades; this visit exists to interrupt that.
 1. In 2-4 sentences, reactivate the core idea as a recall cue — what it is and why it mattered to the ROOT problem ("${tree.title}"). No full re-lecture.
 2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${isCheckpoint ? `
-## THIS TURN: NEXT CHECKPOINT (keep going until the node verifies)
-The student just answered a checkpoint and this node is NOT yet verified (${quizStateNow.correct}/${MASTERY_TARGET} correct${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? `, and still needs ${MASTERY_MIN_SHORT} own-words short answer` : ''}). Keep the momentum:
-1. Glance at their last answer in the conversation. If it was wrong or shaky, give ONE tight sentence of clarification (no lecture); if it was correct, a 3-6 word "Good — next:" bridge is enough.
+## THIS TURN: NEXT CHECKPOINT (the student just answered CORRECTLY — keep asking)
+BOTTLENECK-TRIGGERED TEACHING (law): no bottleneck was found — a correct answer means nothing needs teaching right now, so don't. This node is NOT yet verified (${quizStateNow.correct}/${MASTERY_TARGET} correct${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? `, and still needs ${MASTERY_MIN_SHORT} own-words short answer` : ''}). Keep the momentum:
+1. A 3-6 word "Good — next:" bridge is enough. No lecture.
 2. Then END with exactly ONE NEW [[QUIZ]] checkpoint — different from every question already asked, scoped strictly to THIS node${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ', and make it a "short" own-words probe (the node still needs one to verify)' : ' (vary MCQ / short)'}.
-Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
+Output nothing after the checkpoint block.
+(If their last answer was actually wrong/shaky — this trigger is only meant to fire on correct, but just in case — do NOT ask a new checkpoint; instead teach into it exactly as [NODE_REMEDIATE] would below.)` : ''}${isRemediate ? `
+## THIS TURN: BOTTLENECK TEACHING (the student just answered a checkpoint WRONG — this is the bottleneck the ask-first model exists to find)
+BOTTLENECK-TRIGGERED TEACHING (law, FOUNDATION.md): Tree EDU asks before it teaches — content is deployed reactively, exactly where a question just proved a gap exists. That gap is right here. Look at the checkpoint question, the student's answer, and the judge's feedback in the conversation above — together they pinpoint PRECISELY what this student does not yet understand. That gap, and ONLY that gap, is what you teach this turn.
+Write a full, TEXTBOOK-STYLE explainer of that specific piece of understanding — NOT a one-line correction, NOT a re-explanation of the whole node. Real depth, structured like a textbook passage (\`##\`/\`###\` headers where content earns them):
+1. Name the misconception PRECISELY — what the student's answer reveals they believe, and why it's a reasonable but wrong model.
+2. Teach the correct mechanism in full — the actual WHY, worked through end to end, with ONE concrete example. This is the core of the response — give it real depth, not a summary.
+3. Draw the line explicitly between the misconception and the correct model — the exact point where their reasoning diverges from what's true.
+4. Optionally, one contrasting case that would trip the same misconception again, so the difference is felt, not just stated.
+Everything here obeys the Answer Standard above (Relevant to exactly this gap, never a field survey) and Per-Node Redundancy Avoidance — if the ALREADY COVERED section shows an ancestor already taught something this touches, reference it in one clause, never re-teach it.
+Close with ONE short, conversational, inviting question checking they're following ("does that land?" / "want me to walk the [specific piece] again a different way?") — plain prose only. Do NOT ask a new checkpoint this turn, do NOT offer to quiz them, and do NOT emit a [[QUIZ]] block — they need room to actually absorb this before being tested on it again. Asking resumes once they re-engage.` : ''}${reflectionBlock}`
 
   const history = (conv!.messages ?? [])
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -745,8 +757,11 @@ Return ONLY JSON: {"recitable": true|false}`,
       // Turns that DEMAND a card ship one even if Bob emitted none at all:
       // the [NODE_CHECKPOINT] auto-continue, retention reviews, the "Quiz me"
       // button (EN/中文), and prose that ends by announcing a checkpoint
-      // ("…here's the checkpoint:"). Never on the intro (no quiz in openers).
-      if (!quizShipped && !isIntro) {
+      // ("…here's the checkpoint:"). Never on the intro (no quiz in openers),
+      // and never on a remediation turn — Bottleneck-Triggered Teaching
+      // (FOUNDATION.md) forbids a checkpoint riding the same turn as the
+      // explainer; enforced in code here, not just by prompt instruction.
+      if (!quizShipped && !isIntro && !isRemediate) {
         const msgNorm = message.trim()
         const demanded = isCheckpoint || isReview
           || /^quiz me on this node[.!。]?$/i.test(msgNorm)
