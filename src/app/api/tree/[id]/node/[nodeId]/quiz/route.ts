@@ -32,7 +32,7 @@ import {
   recordCheckpointStruggle, type XpAwardLite,
 } from '@/lib/tree-engine'
 import { clampText } from '@/lib/clamp'
-import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type PendingQuiz } from '@/lib/mastery'
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, type PendingQuiz } from '@/lib/mastery'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
   const { id, nodeId } = await params
@@ -190,6 +190,18 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
       tally.correct += 1
       tally.combo += 1
       if (quiz.kind === 'short') tally.shortCorrect += 1
+      // Syllabus coverage: a correct answer PROVES the facet this card
+      // probes. Exact match first, fuzzy second; an untagged/unmatched card
+      // credits the next unproven facet so a model that forgot the tag can
+      // never stall verification forever (the prompt steers questions
+      // per-facet — this is the monotonic-progress backstop).
+      if (Array.isArray(tally.facets) && tally.facets.length > 0) {
+        const want = (quiz.facet ?? '').trim().toLowerCase()
+        const hit = (want && tally.facets.find(f => !f.done && f.name.trim().toLowerCase() === want))
+          || (want && tally.facets.find(f => !f.done && (f.name.toLowerCase().includes(want) || want.includes(f.name.toLowerCase()))))
+          || tally.facets.find(f => !f.done)
+        if (hit) hit.done = true
+      }
     } else {
       tally.combo = 0
     }
@@ -272,7 +284,9 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // ── Mastery: the in-chat tally IS the verification ──
   let verified = false
   let treeCompleted = false
-  if (!isVerifiedNode && tally.correct >= MASTERY_TARGET && tally.shortCorrect >= MASTERY_MIN_SHORT) {
+  // Coverage-based: EVERY syllabus facet proven (or the static fallback for
+  // contract-less nodes) + the own-words requirement — see masteryMet().
+  if (!isVerifiedNode && masteryMet(tally)) {
     try {
       const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
       verified = true
@@ -300,7 +314,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     correctIndex,
     feedback,
     xp,
-    mastery: { correct: tally.correct, target: MASTERY_TARGET, shortCorrect: tally.shortCorrect, needShort: tally.shortCorrect < MASTERY_MIN_SHORT },
+    mastery: { correct: masteryFilled(tally), target: masteryTarget(tally), shortCorrect: tally.shortCorrect, needShort: tally.shortCorrect < MASTERY_MIN_SHORT },
     verified,
     treeCompleted,
     review: isReview,
