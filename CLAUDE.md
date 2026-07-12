@@ -61,7 +61,10 @@ Each session carries its own language / difficulty / personal background / PURPO
 
 - `src/lib/tree-engine.ts` — seeding, expansion proposals (with clarify), explainers,
   checkpoint verification (`judgeCheckpointAnswer`, `markNodeVerified`),
-  `sessionDirectives()`, `ANSWER_STANDARD`. The heart of the product.
+  `sessionDirectives()`, `ANSWER_STANDARD`, `NO_REDUNDANCY` + `branchCoverage()`
+  (ancestor-workspace digest → node chat/explainer prompts: every node builds on
+  the branch below, never re-teaches it — law in FOUNDATION.md). The heart of the
+  product.
 - `src/lib/mastery.ts` — client-safe single source of truth: `MASTERY_TARGET`,
   `parseQuizState`, the `PendingQuiz` shape. UI strings interpolate `{n}` from it.
 - `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat/review
@@ -136,6 +139,11 @@ depth THIS problem needs — no generic field lectures, no uncalled-for depth) a
 mechanism that makes it transferable understanding). Canonical wording lives in
 FOUNDATION.md; prompts consume it via `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 Apply it to any new answer-producing feature.
+
+Companion law — **Per-Node Redundancy Avoidance** (FOUNDATION.md): every node's
+syllabus/explainer/chat sees the whole tree AND what ancestor workspaces already
+taught (`branchCoverage()`), builds on that in one-clause callbacks, and teaches
+only this node's NEW ground. Wire both laws into any new teaching prompt.
 
 ## The Differentiator Principle (assessment ideology — still law)
 

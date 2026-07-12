@@ -87,6 +87,29 @@ that resolves the moment but teaches nothing). Every prompt that produces
 learner-facing answers (node chat, explainers) embeds this standard — see
 `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 
+## Per-Node Redundancy Avoidance (law — the Answer Standard's companion)
+
+Every node teaches ONLY its own new ground. A node's workspace — the opening
+syllabus, the explainer, every chat answer — is aware of the WHOLE tree and of what
+the workspaces of the nodes below it on the branch (its ancestors, root → parent)
+already covered, and it **builds on** that material instead of repeating it:
+
+- Material the branch below already established is referenced in one clause ("you
+  already verified how water pressure swells the fruit at 'Soil, Water & Nutrients'
+  — building on that…") and the teaching goes straight to what is NEW at this node.
+- Re-explaining an ancestor's material is a failed syllabus and a failed answer —
+  it wastes the learner's time, buries this node's actual content, and makes the
+  tree read as a pile of disconnected lessons instead of ONE curriculum growing
+  upward.
+- The boundary holds upward too: material owned by a child or sibling node is
+  pointed to, never absorbed (checkpoint SCOPE already enforces this for
+  verification).
+
+Implementation: `branchCoverage()` — a digest of what each ancestor's workspace
+actually taught (its syllabus, latest teaching, the learner's notes, verification
+state) injected into the node chat and explainer prompts — and the `NO_REDUNDANCY`
+rule text, both in `src/lib/tree-engine.ts`.
+
 ## Sessions
 
 Every tree is a self-contained **session**, onboarded at creation by a stepper of
