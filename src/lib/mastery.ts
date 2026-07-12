@@ -25,6 +25,9 @@ export interface PendingQuiz {
   correctIndex?: number
   explanation?: string
   rubric?: string
+  /** A nudge that narrows thinking WITHOUT revealing the answer — safe to
+   *  ship to the client; shown only when the student taps Hint. */
+  hint?: string
   /** Issued during a retention-review turn — pays full XP on a verified node. */
   review?: boolean
   /** Set by Bob inside the [[QUIZ]] JSON when this checkpoint IS the directed

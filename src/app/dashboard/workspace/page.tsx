@@ -42,6 +42,8 @@ interface QuizPayload {
   correctIndex?: number
   explanation?: string
   rubric?: string
+  /** Answer-safe nudge behind the card's Hint button. */
+  hint?: string
 }
 
 /**
@@ -95,6 +97,8 @@ function WorkspaceInner() {
   const [files, setFiles] = useState<NodeFileRow[]>([])
   // The in-chat checkpoint currently awaiting an answer (Bob's [[QUIZ]] card).
   const [activeQuiz, setActiveQuiz] = useState<QuizPayload | null>(null)
+  // Hint reveal — per card; auto-resets whenever a different card arms.
+  const [hintShown, setHintShown] = useState(false)
   const [quizSel, setQuizSel] = useState<number | null>(null)
   const [quizText, setQuizText] = useState('')
   // Confidence is an ACTIVE self-assessment — null until the student taps.
@@ -177,13 +181,12 @@ function WorkspaceInner() {
         if (cancelled || !d?.messages) return
         setMessages(d.messages)
         setConversationId(d.conversationId ?? null)
-        // An unanswered checkpoint survives a reload: if the conversation
-        // ends on a Bob message carrying a quiz, re-arm the card.
-        const last = d.messages[d.messages.length - 1] as Msg | undefined
-        if (last?.role === 'assistant') {
-          const { quiz } = splitQuiz(last.content)
-          if (quiz) setActiveQuiz(quiz)
-        }
+        // The SERVER's pending card is the single truth for arming the
+        // interactive checkpoint: an unanswered card survives reloads AND
+        // later turns — its position in the conversation no longer matters
+        // (arming off "is the marker the last message?" stranded cards
+        // invisibly the moment any newer turn landed).
+        if (d.pending) setActiveQuiz(d.pending as QuizPayload)
         if (reviewEntry) {
           // Retention review: Bob reactivates the idea + asks one fresh
           // checkpoint. Strip the flag so a reload doesn't re-trigger it.
@@ -206,6 +209,7 @@ function WorkspaceInner() {
   }, [treeId, nodeId])
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
+  useEffect(() => { setHintShown(false) }, [activeQuiz?.question])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
   // An unsaved notes draft is FLUSH-SAVED to its node before clearing —
@@ -286,6 +290,9 @@ function WorkspaceInner() {
           .then(d => {
             if (nodeIdRef.current !== turnNode) return
             if (d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) }
+            // Keep the card in lock-step with the server pending — same
+            // question keeps in-progress selection state untouched.
+            if (d?.pending) setActiveQuiz(prev => (prev && prev.question === d.pending.question ? prev : d.pending as QuizPayload))
           })
           .catch(() => {})
       }, 600)
@@ -488,6 +495,12 @@ function WorkspaceInner() {
           const r = await fetch(`/api/tree/${treeId}/node/${answeredNode}/chat`, { cache: 'no-store' })
           const d = r.ok ? await r.json() : null
           if (nodeIdRef.current === answeredNode && d?.messages?.length) { setMessages(d.messages); setConversationId(d.conversationId ?? null) }
+          // A pending that reappears here is a NEWER card (this one was just
+          // consumed by the answer) — arm it so it can't strand invisibly.
+          if (nodeIdRef.current === answeredNode && d?.pending && d.pending.question !== activeQuiz?.question) {
+            setActiveQuiz(d.pending as QuizPayload)
+            setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+          }
         } catch { /* transient */ }
       }
       if (res.status === 400 || res.status === 404 || res.status === 409) {
@@ -617,9 +630,11 @@ function WorkspaceInner() {
             )}
             {messages.map((m, mi) => {
               const parts = m.role === 'assistant' ? splitQuiz(m.content) : null
-              // A quiz chip in an OLD message is inert — answered if any
-              // student message follows it; the live card renders separately.
-              const isActiveQuizMsg = !!(activeQuiz && parts?.quiz && mi === messages.length - 1)
+              // The message whose checkpoint is the LIVE card (matched by
+              // question, not by position — the card can belong to an older
+              // message) hides its inert chip; the interactive card renders
+              // below the conversation. Other quiz chips stay inert.
+              const isActiveQuizMsg = !!(activeQuiz && parts?.quiz && parts.quiz.question === activeQuiz.question)
               const wasAnswered = !!parts?.quiz && messages.slice(mi + 1).some(x => x.role === 'user')
               return (
                 <motion.div
@@ -709,6 +724,23 @@ function WorkspaceInner() {
                     placeholder={t('workspace.quizShortPlaceholder')}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
                   />
+                )}
+                {/* Hint — an answer-safe nudge, revealed only on tap */}
+                {activeQuiz.hint && !quizResult && (
+                  hintShown ? (
+                    <p className="text-xs text-amber-200/95 bg-amber-400/10 border border-amber-400/30 rounded-lg px-3 py-2 leading-relaxed">
+                      💡 {activeQuiz.hint}
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setHintShown(true)}
+                      disabled={quizBusy}
+                      className="inline-flex items-center gap-1 text-[11px] text-amber-300/90 hover:text-amber-200 transition-colors"
+                    >
+                      💡 {t('workspace.hint')}
+                    </button>
+                  )
                 )}
                 {/* Metacognitive calibration — confident-wrong answers get the
                     hypercorrection treatment from the judge. */}
