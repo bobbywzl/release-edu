@@ -126,10 +126,16 @@ model StudentProfile {
   // it from the admin panel to grant extra regenerations where needed.
   manualRegenerationLimit Int @default(2)
   // ── XP retention loop ──
-  // dailyXp/dailyXpDate: XP earned today, powering the daily-goal ring.
-  // Reset implicitly when dailyXpDate rolls to a new day.
+  // dailyXp/dailyXpDay: XP earned today, powering the daily-goal ring.
+  // dailyXpDay is YYYY-MM-DD in the USER's timezone (same boundary as the
+  // streak) and its compare-and-set guards the midnight rollover; dailyXpDate
+  // is the legacy server-clock stamp, still written for rollout compatibility.
   dailyXp        Int       @default(0)
   dailyXpDate    DateTime?
+  dailyXpDay     String?
+  // Last IANA timezone the client reported at check-in — lets server-side
+  // award paths (which never see the browser) compute the user's "today".
+  timeZone       String?
   // Best streak ever — badge criteria use this so a lost streak never
   // takes earned badges away.
   longestStreak  Int       @default(0)

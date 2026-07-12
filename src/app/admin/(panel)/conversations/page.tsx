@@ -62,12 +62,16 @@ function ConversationBrowserInner() {
   const loadDetail = useCallback(async (id: string) => {
     setLoadingDetail(true)
     try {
-      const res = await fetch(`/api/conversations/${id}`)
+      // Admin-guarded detail route: the owner-scoped /api/conversations/[id]
+      // 404s for every conversation the admin doesn't personally own.
+      const res = await fetch(`/api/admin/conversations/${id}`)
       if (res.ok) {
         setSelected(await res.json() as ConversationDetail)
+      } else {
+        setError(`Could not load conversation (${res.status})`)
       }
     } catch {
-      // Ignore
+      setError('Could not load conversation')
     } finally {
       setLoadingDetail(false)
     }

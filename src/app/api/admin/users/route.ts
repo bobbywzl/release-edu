@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { adminApiGuard } from '@/lib/admin-auth'
+import { getLevelForXp, getRank } from '@/lib/xp-engine'
 
 export async function GET() {
   const denied = await adminApiGuard(); if (denied) return denied
@@ -31,18 +32,23 @@ export async function GET() {
     })
 
     return NextResponse.json({
-      users: users.map(u => ({
-        ...u,
-        problemTrees: u.problemTrees.map(t => {
-          const real = t.nodes.filter(n => !n.pending)
-          return {
-            id: t.id, title: t.title, status: t.status, difficulty: t.difficulty, language: t.language,
-            nodeCount: real.length,
-            understoodCount: real.filter(n => n.status === 'understood').length,
-            nodes: undefined,
-          }
-        }),
-      })),
+      users: users.map(u => {
+        const level = getLevelForXp(u.studentProfile?.xp ?? 0)
+        return {
+          ...u,
+          level,
+          rank: getRank(level),
+          problemTrees: u.problemTrees.map(t => {
+            const real = t.nodes.filter(n => !n.pending)
+            return {
+              id: t.id, title: t.title, status: t.status, difficulty: t.difficulty, language: t.language,
+              nodeCount: real.length,
+              understoodCount: real.filter(n => n.status === 'understood').length,
+              nodes: undefined,
+            }
+          }),
+        }
+      }),
     })
   } catch (error) {
     console.error('Admin users API error:', error)

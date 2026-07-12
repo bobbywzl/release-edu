@@ -109,8 +109,11 @@ Write the human-readable strings — suggestNode's "title" and "summary", "proje
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ nodeId: string }> }) {
   const { nodeId } = await params
   const userId = await getUserId()
+  // orderBy pins every reader/writer to the OLDEST row if a concurrent
+  // first-open ever created duplicates for this context tag.
   const conv = await prisma.conversation.findFirst({
     where: { userId, context: `tree-node:${nodeId}` },
+    orderBy: { createdAt: 'asc' },
     include: { messages: { orderBy: { createdAt: 'asc' } } },
   })
   return NextResponse.json({
@@ -142,6 +145,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const contextTag = `tree-node:${nodeId}`
   let conv = await prisma.conversation.findFirst({
     where: { userId, context: contextTag },
+    orderBy: { createdAt: 'asc' },
     include: { messages: { orderBy: { createdAt: 'desc' }, take: 40 } },
   })
   if (conv) conv.messages.reverse()
@@ -567,22 +571,31 @@ Return ONLY JSON: {"recitable": true|false}`,
             } catch { /* lint unavailable — fail open, keep the checkpoint */ }
 
             if (!recitable) {
-              // Re-read quizState fresh: the request-start copy is seconds
-              // stale by stream end, and writing it back would clobber a
-              // tally the student just earned by answering the previous card.
-              const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
-              const qs = parseQuizState(freshRow?.quizState ?? node.quizState)
               // retestOf links this card to the missed checkpoint ONLY when
               // Bob marked it as the retest — an unrelated checkpoint on a
               // retest turn must not clear the queue (if he forgets the
               // flag, the entry just stays queued: the safe direction).
-              qs.pending = {
+              const pendingCard = {
                 ...parsed,
                 review: isReview || undefined,
                 retestOf: parsed.retest && retestTarget ? retestTarget : undefined,
                 askedAt: new Date().toISOString(),
               }
-              await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } }).catch(() => null)
+              // Compare-and-set on the quizState string (fresh read each try):
+              // the request-start copy is seconds stale by stream end, and a
+              // blind write could erase a tally the student just earned from
+              // another device — or be erased by it.
+              for (let attempt = 0; attempt < 2; attempt++) {
+                const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
+                const base = freshRow ? freshRow.quizState : node.quizState
+                const qs = parseQuizState(base)
+                qs.pending = pendingCard
+                const w = await prisma.treeNode.updateMany({
+                  where: { id: nodeId, quizState: base },
+                  data: { quizState: JSON.stringify(qs) },
+                }).catch(() => null)
+                if (w && w.count > 0) break
+              }
               const sanitized = JSON.stringify({ kind: parsed.kind, question: parsed.question, ...(validMcq ? { options: parsed.options } : {}) })
               try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
               persistContent = `${prose}\n\n${QUIZ_MARK}${sanitized}`
@@ -625,7 +638,10 @@ Return ONLY JSON: {"recitable": true|false}`,
           const count = await prisma.message.count({ where: { conversationId: convId } })
           if (!isTrigger && count % 5 === 0) {
             const { extractInsightsBackground } = await import('@/lib/insight-extraction')
-            void extractInsightsBackground(apiKey, message.trim(), persistContent, userId)
+            const { inBackground } = await import('@/lib/background')
+            // waitUntil-wrapped: the stream closes right after this, and a
+            // frozen lambda would silently starve the insight moat.
+            inBackground(extractInsightsBackground(apiKey, message.trim(), persistContent, userId))
           }
         } catch { /* non-critical */ }
       }

@@ -34,13 +34,17 @@ export async function POST(_req: NextRequest) {
     update: { status: 'generating', startedAt: new Date(), errorMessage: null },
   })
 
-  void generatePortfolioInBackground(userId, apiKey).catch(err => {
+  // waitUntil-wrapped: the response returns immediately, and a frozen lambda
+  // would otherwise strand the cache on status='generating' until the stale
+  // check lets the user retry from scratch.
+  const { inBackground } = await import('@/lib/background')
+  inBackground(generatePortfolioInBackground(userId, apiKey).catch(err => {
     console.error('[Portfolio] Background generation failed:', err)
     return prisma.portfolioCache.update({
       where: { userId },
       data: { status: 'error', errorMessage: err instanceof Error ? err.message : String(err) },
     }).catch(() => {})
-  })
+  }))
 
   return NextResponse.json({ status: 'generating', startedAt: new Date() })
 }

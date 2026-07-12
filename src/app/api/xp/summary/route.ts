@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
-import { DAILY_GOAL_XP, getRank, getLevelForXp } from '@/lib/xp-engine'
+import { DAILY_GOAL_XP, getRank, getLevelForXp, userDayKey } from '@/lib/xp-engine'
 import { BADGES, evaluateAndAwardBadges, getBadgeStats } from '@/lib/badges'
 
 export async function GET() {
@@ -30,12 +30,21 @@ export async function GET() {
   const levelProgress = Math.min(1, (xp - levelFloor) / Math.max(1, levelCeil - levelFloor))
 
   // Daily goal ring (schema-lag safe: fields may not exist yet → 0).
-  const today = new Date().toDateString()
-  const p = profile as { dailyXp?: number; dailyXpDate?: Date | null; longestStreak?: number } | null
-  const xpToday = p?.dailyXpDate && new Date(p.dailyXpDate).toDateString() === today ? (p.dailyXp ?? 0) : 0
+  // "Today" is the USER's calendar day (their stored timezone) — the same
+  // boundary the streak and bumpDailyXp use — so the ring never resets at
+  // the server's midnight while the flame still says "checked in".
+  const p = profile as {
+    dailyXp?: number; dailyXpDate?: Date | null; dailyXpDay?: string | null
+    longestStreak?: number; lastCheckinDay?: string | null; timeZone?: string | null
+  } | null
+  const today = userDayKey(new Date(), p?.timeZone ?? undefined)
+  const xpToday = p?.dailyXpDay
+    ? (p.dailyXpDay === today ? (p.dailyXp ?? 0) : 0)
+    // Rollout fallback: rows bumped before dailyXpDay existed.
+    : (p?.dailyXpDate && userDayKey(new Date(p.dailyXpDate), p?.timeZone ?? undefined) === today ? (p?.dailyXp ?? 0) : 0)
   // "Active today" drives streak-at-risk messaging (loss aversion à la Duolingo).
-  const activeToday = xpToday > 0
-    || (profile?.updatedAt && new Date(profile.updatedAt).toDateString() === today) === true
+  const activeToday = xpToday > 0 || p?.lastCheckinDay === today
+    || (profile?.updatedAt && userDayKey(new Date(profile.updatedAt), p?.timeZone ?? undefined) === today) === true
 
   // Badges: award anything newly crossed, then return the full board.
   const newBadges = await evaluateAndAwardBadges(userId)

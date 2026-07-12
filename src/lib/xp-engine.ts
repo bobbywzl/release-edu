@@ -317,25 +317,37 @@ async function ensureProfile(userId: string): Promise<{ xp: number; streak: numb
 }
 
 // ── Daily XP accounting ──
-// Powers the daily-goal ring. Rolls over automatically when the stored date
-// is not today. Same-day bumps use an atomic increment so concurrent awards
-// can't overwrite each other. Best-effort: never breaks an award.
+// Powers the daily-goal ring. The day boundary is the USER's midnight (same
+// dayKey as the streak, via the profile's stored timeZone) so the ring and
+// the flame always agree on "today". Same-day bumps are atomic increments;
+// the midnight rollover is a compare-and-set on the day stamp so two awards
+// straddling midnight can't both take the reset branch and clobber each
+// other. Best-effort: never breaks an award.
 async function bumpDailyXp(userId: string, amount: number): Promise<void> {
   if (amount <= 0) return
   try {
     const row = await prisma.studentProfile.findUnique({
       where: { userId },
-      select: { dailyXpDate: true },
+      select: { timeZone: true },
     })
     if (!row) return
-    const today = new Date().toDateString()
-    const sameDay = row.dailyXpDate && new Date(row.dailyXpDate).toDateString() === today
-    await prisma.studentProfile.update({
-      where: { userId },
-      data: sameDay
-        ? { dailyXp: { increment: amount }, dailyXpDate: new Date() }
-        : { dailyXp: amount, dailyXpDate: new Date() },
+    const today = dayKey(new Date(), row.timeZone ?? undefined)
+    const bumped = await prisma.studentProfile.updateMany({
+      where: { userId, dailyXpDay: today },
+      data: { dailyXp: { increment: amount }, dailyXpDate: new Date() },
     })
+    if (bumped.count > 0) return
+    const rolled = await prisma.studentProfile.updateMany({
+      where: { userId, OR: [{ dailyXpDay: null }, { dailyXpDay: { not: today } }] },
+      data: { dailyXp: amount, dailyXpDay: today, dailyXpDate: new Date() },
+    })
+    if (rolled.count === 0) {
+      // Lost the rollover race — the winner already stamped today; add on top.
+      await prisma.studentProfile.updateMany({
+        where: { userId, dailyXpDay: today },
+        data: { dailyXp: { increment: amount }, dailyXpDate: new Date() },
+      })
+    }
   } catch { /* schema lag — non-critical */ }
 }
 
@@ -442,6 +454,19 @@ function dayKey(d: Date, timeZone?: string): string {
   }
 }
 
+// The single source of day-boundary truth, for routes that must agree with
+// the streak/ring day (e.g. /api/xp/summary).
+export { dayKey as userDayKey }
+
+// The calendar day before a YYYY-MM-DD key. Computed by calendar arithmetic,
+// NOT by subtracting 24h of wall-clock time — on the day after a DST spring-
+// forward, now−24h lands two calendar days back and would break live streaks.
+function prevDay(day: string): string {
+  const [y, m, d] = day.split('-').map(Number)
+  if (!y || !m || !d) return day
+  return new Date(Date.UTC(y, m - 1, d) - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+}
+
 export async function updateStreak(userId: string, timeZone?: string): Promise<{ streak: number; awards: XpAwardResult[] }> {
   await ensureProfile(userId)
   let profile: { streak: number; updatedAt: Date; longestStreak: number | null; lastCheckinDay: string | null } | null = null
@@ -462,7 +487,7 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
 
   const now = new Date()
   const today = dayKey(now, timeZone)
-  const yesterday = dayKey(new Date(now.getTime() - 24 * 60 * 60 * 1000), timeZone)
+  const yesterday = prevDay(today)
   // Migration fallback: before the first stamped check-in, approximate the
   // last active day from updatedAt so existing streaks survive the rollout.
   const lastDay = profile.lastCheckinDay ?? dayKey(profile.updatedAt, timeZone)
@@ -485,7 +510,14 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
   try {
     const won = await prisma.studentProfile.updateMany({
       where: { userId, OR: [{ lastCheckinDay: null }, { lastCheckinDay: { not: today } }] },
-      data: { lastCheckinDay: today, streak: newStreak, longestStreak: Math.max(newStreak, profile.longestStreak ?? 0) },
+      data: {
+        lastCheckinDay: today,
+        streak: newStreak,
+        longestStreak: Math.max(newStreak, profile.longestStreak ?? 0),
+        // Remember the client's zone so server-only award paths (bumpDailyXp)
+        // can compute the user's "today" without a browser in the loop.
+        ...(timeZone ? { timeZone } : {}),
+      },
     })
     if (won.count === 0) return { streak: newStreak, awards: [] }
   } catch {
@@ -497,10 +529,17 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
   // Award streak XP + the first-session-of-the-day bonus (a new day reaching
   // this point IS the first session — the cheap dopamine hit for showing up).
   // Both are returned so the client can celebrate the day's arrival rewards.
+  // The day stamp is already set, so a transient failure here would silently
+  // forfeit the day's show-up XP — retry each award once before giving up.
+  const tryAward = async (source: XpSource, opts: Parameters<typeof awardXp>[2]) => {
+    try { return await awardXp(userId, source, opts) } catch {
+      try { return await awardXp(userId, source, opts) } catch { return null }
+    }
+  }
   const awards: XpAwardResult[] = []
-  const streakAward = await awardXp(userId, 'daily_streak', { streakDays: newStreak, streak: newStreak })
+  const streakAward = await tryAward('daily_streak', { streakDays: newStreak, streak: newStreak })
   if (streakAward) awards.push(streakAward)
-  const firstSession = await awardXp(userId, 'first_session', { streak: newStreak }).catch(() => null)
+  const firstSession = await tryAward('first_session', { streak: newStreak })
   if (firstSession) awards.push(firstSession)
 
   return { streak: newStreak, awards }
