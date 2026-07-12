@@ -18,12 +18,21 @@ function ProjectChatIcon({ className }: { className?: string }) {
   )
 }
 
+// Vercel preview context, inlined at build (see next.config.mjs). On a
+// preview, Google sign-in only works after this branch's callback URL is
+// added to the Google OAuth client — surface the exact string to copy.
+const IS_PREVIEW = process.env.NEXT_PUBLIC_VERCEL_ENV === 'preview'
+const PREVIEW_CALLBACK = process.env.NEXT_PUBLIC_VERCEL_BRANCH_URL
+  ? `https://${process.env.NEXT_PUBLIC_VERCEL_BRANCH_URL}/api/auth/callback/google`
+  : ''
+
 export default function LoginPage() {
   const router = useRouter()
   const [signUpLoading, setSignUpLoading] = useState(false)
   const [signInLoading, setSignInLoading] = useState(false)
   const [demoLoading, setDemoLoading] = useState(false)
   const [checkingSession, setCheckingSession] = useState(true)
+  const [copiedCallback, setCopiedCallback] = useState(false)
 
   // If the user already has a valid session, never strand them on /login —
   // forward them into the app. Without this, anything that lands an
@@ -123,6 +132,38 @@ export default function LoginPage() {
               </div>
             </div>
           </motion.div>
+
+          {/* Preview-deployment notice: Google OAuth needs this branch's
+              callback authorized once; demo mode needs nothing. */}
+          {IS_PREVIEW && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.4, delay: 0.1 }}
+              className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 space-y-2"
+            >
+              <p className="text-xs font-semibold text-amber-300">Preview deployment</p>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                Google sign-in works here only after this branch&apos;s callback URL is added once to the
+                Google OAuth client (Google Cloud Console → Credentials → Authorized redirect URIs).
+                Or skip setup entirely with the demo below.
+              </p>
+              {PREVIEW_CALLBACK && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(PREVIEW_CALLBACK).catch(() => {})
+                    setCopiedCallback(true)
+                    setTimeout(() => setCopiedCallback(false), 2000)
+                  }}
+                  className="w-full text-left text-[10px] font-mono text-amber-100/90 bg-black/30 border border-amber-400/30 rounded-lg px-2.5 py-2 hover:bg-black/40 transition-colors break-all"
+                  title="Copy callback URL"
+                >
+                  {PREVIEW_CALLBACK}
+                  <span className="block mt-1 font-sans text-amber-300/80">{copiedCallback ? 'Copied ✓' : 'Tap to copy'}</span>
+                </button>
+              )}
+            </motion.div>
+          )}
 
           {/* Sign Up — Primary CTA */}
           <motion.div

@@ -1,6 +1,25 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
+// ── Vercel PREVIEW deployments: pin OAuth to the STABLE branch URL ──
+// Without NEXTAUTH_URL, NextAuth v4 falls back to VERCEL_URL — the
+// per-deployment hash URL (release-edu-<hash>-….vercel.app) that changes on
+// every build, so the Google callback it sends can never be pre-authorized
+// → "Error 400: redirect_uri_mismatch" on every preview. VERCEL_BRANCH_URL
+// is one constant alias per branch, so it CAN be added to the Google OAuth
+// client's Authorized redirect URIs once (…/api/auth/callback/google — the
+// preview login page shows the exact string to copy). Production is
+// untouched: there NEXTAUTH_URL is set / VERCEL_ENV !== "preview".
+// src/middleware.ts redirects preview traffic onto this same host so the
+// OAuth state cookie and the callback always share a domain.
+if (
+  !process.env.NEXTAUTH_URL &&
+  process.env.VERCEL_ENV === "preview" &&
+  process.env.VERCEL_BRANCH_URL
+) {
+  process.env.NEXTAUTH_URL = `https://${process.env.VERCEL_BRANCH_URL}`;
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({

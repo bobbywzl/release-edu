@@ -3,7 +3,32 @@ import { getToken } from 'next-auth/jwt'
 import type { NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const { pathname, hostname } = request.nextUrl
+
+  // ── Preview host canonicalization ──
+  // Every preview build also answers on a per-deployment hash URL; OAuth is
+  // pinned to the STABLE branch alias (see src/lib/auth.ts), and the state
+  // cookie Google's callback must find lives on whichever host started the
+  // sign-in. Converge ALL preview traffic onto the branch alias so cookies
+  // and the callback always share one domain. No-op outside previews.
+  const branchHost = process.env.VERCEL_BRANCH_URL
+  if (
+    process.env.VERCEL_ENV === 'preview' &&
+    branchHost &&
+    hostname !== branchHost &&
+    hostname.endsWith('.vercel.app')
+  ) {
+    const url = request.nextUrl.clone()
+    url.hostname = branchHost
+    url.protocol = 'https:'
+    url.port = ''
+    return NextResponse.redirect(url, 308)
+  }
+
+  // Everything below only guards the app's own gated areas.
+  const isDashboard = pathname.startsWith('/dashboard')
+  const isAdminArea = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
+  if (!isDashboard && !isAdminArea) return NextResponse.next()
 
   // Admin login page AND the password-auth endpoint are always reachable with
   // no auth — they ARE the gate (password-based, independent of Google login).
@@ -51,4 +76,9 @@ export async function middleware(request: NextRequest) {
   return NextResponse.next()
 }
 
-export const config = { matcher: ['/dashboard/:path*', '/admin/:path*', '/api/admin/:path*'] }
+// Matcher covers everything except Next internals/static assets so the
+// preview-host redirect applies to /login and /api/auth/* too; the auth
+// guards above still gate only /dashboard, /admin and /api/admin.
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon\\.ico).*)'],
+}

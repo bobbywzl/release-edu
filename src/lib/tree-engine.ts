@@ -348,11 +348,33 @@ export async function proposeExpansion(
   })).filter(h => h.content.trim())
 
   const client = await anthropic()
-  const model = await getJudgeModel()
-  const result = await client.messages.create({
-    model,
-    max_tokens: 1500,
-    system: `You are Bob, growing a problem-mastery learning tree through a short CONVERSATION in the "Grow this branch" box. The student talks to you about what they don't understand at one node; you reply conversationally AND propose the sub-branches (child nodes) that would teach it.
+  // The TEACHING model — the same tier Bob uses in the workspace chat. The
+  // grow box is a teaching conversation (what should you learn next, and
+  // why); the judge tier was producing turns the parser couldn't use, which
+  // surfaced as the canned "tell me more" dead-end on every send.
+  const model = await getTeachingModel()
+
+  // Join ALL text blocks — content[0] is not guaranteed to be the text block,
+  // and losing the text here silently degrades every turn to the fallback.
+  const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
+    r.content.filter(b => b.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
+
+  type GrowParsed = { proposals?: Array<{ title: string; summary: string; kind?: string }>; reply?: string; clarify?: string | null }
+  const parseGrow = (text: string): GrowParsed | null => {
+    const obj = extractJSON<GrowParsed>(text)
+    if (obj && (Array.isArray(obj.proposals) || typeof obj.reply === 'string')) return obj
+    // Tolerate a bare array (older shape).
+    const arr = extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text)
+    if (Array.isArray(arr)) return { proposals: arr }
+    return null
+  }
+
+  // PRODUCTIVITY GUARANTEE: if the dialog already had an assistant turn but
+  // there are still no ghosts on the board (replaceIds empty), this turn is
+  // not allowed to stall again — it must produce proposals.
+  const mustPropose = history.some(h => h.role === 'assistant') && replaceIds.length === 0
+
+  const system = `You are Bob, growing a problem-mastery learning tree through a short CONVERSATION in the "Grow this branch" box. The student talks to you about what they don't understand at one node; you reply conversationally AND propose the sub-branches (child nodes) that would teach it.
 
 PROBLEM (root): "${tree.title}"
 CURRENT TREE:
@@ -361,25 +383,72 @@ ${sketchTree(tree.nodes)}
 TARGET NODE they are growing from: "${node.title}" — ${node.summary}
 
 RULES:
-- ALWAYS lean toward proposing: whenever the student's message (in the context of the whole dialog) is about something to learn or understand, return your best 1-4 proposals under the most likely reading — make reasonable assumptions rather than refusing. Usually 1-2 nodes; 3-4 ONLY when the ask genuinely spans that many distinct concepts. Each proposal is a distinct pain point / concept not already in the tree. kind: "component" (conceptual part) or "leaf" (specific technical knowledge / concrete pain-point resolution).
+- BE PRODUCTIVE: DEFAULT TO PROPOSING. Whenever the student's message (in the context of the whole dialog) is about something to learn, understand, or do, return your best 1-4 proposals under the MOST LIKELY reading — make reasonable assumptions rather than asking first. If one detail would sharpen the set, propose anyway AND ask that ONE question in the reply — a question accompanies proposals, it never replaces them. Usually 1-2 nodes; 3-4 ONLY when the ask genuinely spans that many distinct concepts. Each proposal is a distinct pain point / concept not already in the tree, RELEVANT to the root problem at the depth this session needs, with an INFORMATIVE summary (what it is + why it unlocks the ask). kind: "component" (conceptual part) or "leaf" (specific technical knowledge / concrete pain-point resolution).
+- NEVER ask a bare clarifying question two turns in a row. If your previous reply asked a question, THIS turn proposes — whatever the student answered.
 - On FOLLOW-UP turns, propose the FULL UPDATED SET for this dialog (the previous turn's unapproved proposals are replaced by what you return now; if you return an EMPTY proposals list, the previous set is KEPT untouched) — refine, rename, add or drop based on what the student just said.
 - CONTINGENT UNKNOWNS: if the right branch depends on a fact the student doesn't know yet (which tool/platform/variety/library), propose the diagnostic/conceptual node that resolves the unknown — never a fan of per-option how-tos.
-- "reply" is your conversational voice in the thread (1-3 sentences): say what you proposed and why it answers them, and — when one specific detail would sharpen the set — ask ONE short follow-up question. If their message is purely conversational (a thanks, a meta question, an answer that changes nothing), reply naturally; proposals may then be empty, but your reply must MOVE THE CONVERSATION FORWARD (offer a direction, ask what they're stuck on) — never a dead end, never "no new branches".
-- The reply NEVER lists the proposal titles verbatim as a menu — the UI shows the proposal cards; speak about them naturally.
+- "reply" is your conversational voice in the thread (1-3 sentences): say what you proposed and why it answers them. Empty proposals are allowed ONLY for pure small-talk (a thanks, a meta question about the app) — and even then the reply must move the conversation forward, never a dead end, never "no new branches".
+- The reply NEVER lists the proposal titles verbatim as a menu — the UI shows the proposal cards; speak about them naturally.${mustPropose ? `
+- THIS TURN MUST PROPOSE: the dialog has already gone a turn without leaving proposals on the board. Return your best 1-4 proposals NOW under the most likely reading of everything said so far.` : ''}
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON:
-{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}], "reply": "your conversational reply (session language)"}`,
-    messages: [...history, { role: 'user' as const, content: question.slice(0, 800) }],
-  })
+{"proposals": [{"title": "2-6 words", "summary": "1-2 sentences plain-language", "kind": "component|leaf"}], "reply": "your conversational reply (session language)"}`
 
-  void recordUsage(result, userId, model, 'tree-expand')
-  const text = (result.content[0] as { text?: string })?.text ?? ''
-  const parsed = extractJSON<{ proposals?: Array<{ title: string; summary: string; kind?: string }>; reply?: string; clarify?: string | null }>(text)
-    // Tolerate a bare array (older shape).
-    ?? { proposals: extractJSON<Array<{ title: string; summary: string; kind?: string }>>(text) ?? [] }
+  const turnMessages = [...history, { role: 'user' as const, content: question.slice(0, 800) }]
 
-  const list = parsed.proposals ?? []
+  // Pass 1: the conversational turn.
+  let parsed: GrowParsed | null = null
+  {
+    const result = await client.messages.create({ model, max_tokens: 3000, system, messages: turnMessages })
+    void recordUsage(result, userId, model, 'tree-expand')
+    parsed = parseGrow(textOf(result))
+  }
+  // Pass 2 (parse failed): same turn, demanding bare JSON. Non-fatal — a
+  // failure here still falls through to the forced-generation pass.
+  if (!parsed) {
+    try {
+      const result = await client.messages.create({
+        model, max_tokens: 3000,
+        system: `${system}
+
+CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.`,
+        messages: turnMessages,
+      })
+      void recordUsage(result, userId, model, 'tree-expand')
+      parsed = parseGrow(textOf(result))
+    } catch { /* fall through to the forced pass */ }
+  }
+  // Pass 3 (all else failed, or the dialog is stalling): go STRAIGHT to
+  // generation — a single-purpose call that must return proposals.
+  if (!parsed || ((parsed.proposals ?? []).length === 0 && mustPropose)) {
+    try {
+      const forced = await client.messages.create({
+        model, max_tokens: 2500,
+        system: `You grow a problem-mastery learning tree. Based on the dialog, you MUST return 1-4 child-node proposals for the target node — your single best reading of what the student needs; no questions, no refusals.
+
+PROBLEM (root): "${tree.title}"
+TARGET NODE: "${node.title}" — ${node.summary}
+EXISTING TREE (do not duplicate):
+${sketchTree(tree.nodes)}
+${sessionDirectives(tree, lang)}
+
+Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "reply": "1-2 sentences on what you proposed and why (session language)"}`,
+        messages: turnMessages,
+      })
+      void recordUsage(forced, userId, model, 'tree-expand')
+      const p2 = parseGrow(textOf(forced))
+      if (p2 && ((p2.proposals ?? []).length > 0 || p2.reply)) {
+        parsed = {
+          proposals: (p2.proposals ?? []).length > 0 ? p2.proposals : parsed?.proposals,
+          reply: p2.reply ?? parsed?.reply,
+          clarify: parsed?.clarify,
+        }
+      }
+    } catch { /* forced pass is best-effort — the turn still returns */ }
+  }
+
+  const list = parsed?.proposals ?? []
 
   // Replace the dialog's previous ghosts ONLY now that the turn succeeded and
   // produced actual replacements. A conversational turn (proposals: []) keeps
@@ -407,15 +476,17 @@ Return ONLY JSON:
   }
 
   // The reply must always carry the conversation. If the model omitted it,
-  // synthesize a serviceable one in the session language.
+  // synthesize a serviceable one in the session language. (With the retry +
+  // forced-generation passes above, the no-proposal branch here is a
+  // last-resort that should essentially never fire.)
   const zh = (tree.language ?? lang) === 'zh'
-  let reply = typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim().slice(0, 600) : ''
+  let reply = typeof parsed?.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim().slice(0, 600) : ''
   if (!reply) {
     reply = created.length > 0
       ? (zh ? `我提议了 ${created.length} 个分枝——在树上确认或继续告诉我你想深入哪里。` : `I've proposed ${created.length} ${created.length === 1 ? 'branch' : 'branches'} — approve them on the tree, or keep telling me where you want to go deeper.`)
-      : (zh ? '再多说一点你卡在哪里——是概念本身，还是怎么落地？' : "Tell me a bit more about where you're stuck — the concept itself, or how to apply it?")
+      : (zh ? '这次没能生成分枝——再发一次，我会直接按最可能的理解提出分枝。' : "I couldn't generate branches on that one — send it again and I'll propose directly under the most likely reading.")
   }
-  const clarify = typeof parsed.clarify === 'string' && parsed.clarify.trim() ? parsed.clarify.trim() : undefined
+  const clarify = typeof parsed?.clarify === 'string' && parsed.clarify.trim() ? parsed.clarify.trim() : undefined
   return { proposals: created, reply, clarify }
 }
 

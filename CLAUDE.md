@@ -31,7 +31,7 @@ Read this before making changes.
 - **Database**: PostgreSQL (Supabase) via Prisma 6
 - **Auth**: NextAuth 4 with Google OAuth + a `demo-mode` cookie fallback
 - **AI**: Anthropic SDK — the teaching tier (tree seeding, node explainers, workspace
-  chat) and judging tier (proposals, checkpoint judging) resolve through
+  chat, grow-box proposals) and judging tier (checkpoint judging) resolve through
   `src/lib/model-resolver.ts`, which auto-adopts the NEWEST Opus/Sonnet release from
   the /v1/models catalog (6h cache; pinned `CHAT_MODELS` fallback — never hardcode
   a model id in a new Bob feature, use `getTeachingModel()`/`getJudgeModel()`).
