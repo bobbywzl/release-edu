@@ -522,102 +522,199 @@ Output nothing after the checkpoint block.` : ''}${reflectionBlock}`
       // The full quiz (with answer key) is stored server-side on the node;
       // the client — stream AND persisted message — gets only a sanitized
       // {kind, question, options} marker to render the card from.
+      //
+      // TRUST INVARIANT — NO SILENT DROPS: once Bob's prose promises a
+      // checkpoint (or the turn demands one: [NODE_CHECKPOINT], a review,
+      // the "Quiz me" button), a card MUST land. A malformed or
+      // lint-rejected card is REPLACED by a freshly authored one, never
+      // silently discarded — silent drops produced dangling "here's the
+      // checkpoint:" promises the student could only answer with confusion.
       let persistContent = full
       let quizShipped = false
       const qIdx = full.indexOf(QUIZ_MARK)
+      const proseOnly = (qIdx !== -1 ? full.slice(0, qIdx) : full).trimEnd()
+
+      const cardShapeValid = (card: PendingQuiz): boolean => {
+        const validMcq = card.kind === 'mcq'
+          && Array.isArray(card.options) && card.options.length >= 2
+          && Number.isInteger(card.correctIndex)
+          && (card.correctIndex as number) >= 0 && (card.correctIndex as number) < card.options.length
+        return typeof card.question === 'string' && !!card.question.trim() && (validMcq || card.kind === 'short')
+      }
+
+      // Store the full card (answer key) on the node via compare-and-set —
+      // the request-start quizState is seconds stale by stream end, and a
+      // blind write could erase a tally earned from another device — then
+      // stream + persist only the sanitized marker.
+      const shipCard = async (card: PendingQuiz): Promise<boolean> => {
+        if (!cardShapeValid(card)) return false
+        // retestOf links this card to the missed checkpoint ONLY when Bob
+        // marked it as the retest — an unrelated checkpoint on a retest turn
+        // must not clear the queue (if he forgets the flag, the entry just
+        // stays queued: the safe direction).
+        const pendingCard = {
+          ...card,
+          review: isReview || undefined,
+          retestOf: card.retest && retestTarget ? retestTarget : undefined,
+          askedAt: new Date().toISOString(),
+        }
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
+          const base = freshRow ? freshRow.quizState : node.quizState
+          const qs = parseQuizState(base)
+          qs.pending = pendingCard
+          const w = await prisma.treeNode.updateMany({
+            where: { id: nodeId, quizState: base },
+            data: { quizState: JSON.stringify(qs) },
+          }).catch(() => null)
+          if (w && w.count > 0) break
+        }
+        const sanitized = JSON.stringify({
+          kind: card.kind, question: card.question,
+          ...(card.kind === 'mcq' && Array.isArray(card.options) ? { options: card.options } : {}),
+        })
+        try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
+        persistContent = `${proseOnly}\n\n${QUIZ_MARK}${sanitized}`
+        quizShipped = true
+        return true
+      }
+
+      // The repair path: author a fresh Differentiator-grade checkpoint when
+      // Bob's own card was malformed/recitable or he promised one without
+      // attaching it. Judge-model, JSON-only.
+      const authorCheckpoint = async (avoid?: string): Promise<PendingQuiz | null> => {
+        try {
+          const Anthropic = (await import('@anthropic-ai/sdk')).default
+          const { getJudgeModel } = await import('@/lib/model-resolver')
+          const authorModel = await getJudgeModel()
+          const authorClient = new Anthropic({ apiKey })
+          const needShort = node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT
+          const res = await authorClient.messages.create({
+            model: authorModel,
+            max_tokens: 700,
+            messages: [{
+              role: 'user',
+              content: `Author exactly ONE checkpoint question for a tutoring node, under the Differentiator Principle: it must separate a student who MEMORIZED the content from one who truly UNDERSTANDS it — transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks. It must NOT be answerable by copying sentences from the teaching text below.
+
+NODE being tested: "${node.title}" — ${node.summary}
+${node.explainer ? `NODE EXPLAINER (the student has read this):\n${node.explainer.slice(0, 1200)}\n` : ''}TUTOR'S LATEST TEACHING (the answer must NOT be quotable from it):
+"${proseOnly.slice(-1200)}"
+${avoid ? `\nDO NOT reuse or lightly reword this question: "${avoid.slice(0, 300)}"` : ''}
+SCOPE: test ONLY this node's own material — never a sibling or child node's mechanism.
+${needShort ? 'FORMAT: kind "short" — the student still needs an own-words answer for mastery.' : 'FORMAT: "short" for why/transfer probes, "mcq" for quick discrimination — pick what fits.'}
+${sessionDirectives(tree, lang)}
+Return ONLY the JSON object (no prose, no code fences):
+{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: why the right answer is right and why the tempting distractor fails"}
+or
+{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)"}`,
+            }],
+          })
+          try {
+            const { recordAnthropicUsage } = await import('@/lib/usage')
+            recordAnthropicUsage(res.usage, { userId, model: authorModel, feature: 'tree-verify' })
+          } catch { /* non-critical */ }
+          const txt = res.content.filter(b => (b as { type?: string }).type === 'text').map(b => (b as { text?: string }).text ?? '').join('\n')
+          const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/)
+          const o1 = txt.indexOf('{'), o2 = txt.lastIndexOf('}')
+          const raw = fence?.[1] ?? (o1 !== -1 && o2 > o1 ? txt.slice(o1, o2 + 1) : '')
+          const card = JSON.parse(raw) as PendingQuiz
+          return cardShapeValid(card) ? card : null
+        } catch { return null }
+      }
+
       if (qIdx !== -1) {
-        const prose = full.slice(0, qIdx).trimEnd()
         if (qIdx > sentLen) {
           try { controller.enqueue(encoder.encode(full.slice(sentLen, qIdx))) } catch { /* closed */ }
           sentLen = qIdx
         }
-        persistContent = prose
-        try {
-          const parsed = JSON.parse(full.slice(qIdx + QUIZ_MARK.length).trim()) as PendingQuiz
-          const validMcq = parsed.kind === 'mcq'
-            && Array.isArray(parsed.options) && parsed.options.length >= 2
-            && Number.isInteger(parsed.correctIndex)
-            && (parsed.correctIndex as number) >= 0 && (parsed.correctIndex as number) < parsed.options.length
-          const validShort = parsed.kind === 'short'
-          if (typeof parsed.question === 'string' && parsed.question.trim() && (validMcq || validShort)) {
-            // ── DIFFERENTIATOR LINT ──
-            // A checkpoint answerable by copying from Bob's own text tests
-            // recall, not understanding — auto-reject it (the Differentiator
-            // Principle enforced mechanically). Strict-only and fail-open:
-            // lint errors never block a checkpoint.
-            let recitable = false
-            try {
-              const Anthropic = (await import('@anthropic-ai/sdk')).default
-              const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-              const lintClient = new Anthropic({ apiKey })
-              const prevBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
-              const lint = await lintClient.messages.create({
-                model: pickBackgroundModel(),
-                max_tokens: 60,
-                messages: [{
-                  role: 'user',
-                  content: `Quality lint for a tutoring checkpoint (the Differentiator Principle: it must separate understanding from recall).
+        persistContent = proseOnly
+        let parsedCard: PendingQuiz | null = null
+        try { parsedCard = JSON.parse(full.slice(qIdx + QUIZ_MARK.length).trim()) as PendingQuiz } catch { parsedCard = null }
+        if (parsedCard && cardShapeValid(parsedCard)) {
+          // ── DIFFERENTIATOR LINT ──
+          // A checkpoint answerable by copying from Bob's own text tests
+          // recall, not understanding. Strict-only and fail-open: lint
+          // errors never block a checkpoint.
+          let recitable = false
+          try {
+            const Anthropic = (await import('@anthropic-ai/sdk')).default
+            const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+            const lintClient = new Anthropic({ apiKey })
+            const prevBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
+            const lint = await lintClient.messages.create({
+              model: pickBackgroundModel(),
+              max_tokens: 60,
+              messages: [{
+                role: 'user',
+                content: `Quality lint for a tutoring checkpoint (the Differentiator Principle: it must separate understanding from recall).
 
 TUTOR'S CURRENT MESSAGE (the checkpoint follows it):
-"${prose.slice(-1200)}"
+"${proseOnly.slice(-1200)}"
 TUTOR'S PREVIOUS MESSAGE:
 "${prevBob.slice(0, 800)}"
 
-CHECKPOINT QUESTION: "${parsed.question.slice(0, 400)}"
-${validMcq ? `OPTIONS: ${(parsed.options as string[]).map(o => String(o)).join(' | ').slice(0, 400)}` : ''}
+CHECKPOINT QUESTION: "${parsedCard.question.slice(0, 400)}"
+${parsedCard.kind === 'mcq' && Array.isArray(parsedCard.options) ? `OPTIONS: ${parsedCard.options.map(o => String(o)).join(' | ').slice(0, 400)}` : ''}
 
 Could a student answer this correctly PURELY by copying or recalling sentences from the two tutor messages above, without understanding (the answer is stated or strongly implied verbatim in the text)? Be strict only when it is clearly recitable — transfer questions that merely share vocabulary are fine.
 Return ONLY JSON: {"recitable": true|false}`,
-                }],
-              })
-              try {
-                const { recordAnthropicUsage } = await import('@/lib/usage')
-                recordAnthropicUsage(lint.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
-              } catch { /* non-critical */ }
-              recitable = /"recitable"\s*:\s*true/.test((lint.content[0] as { text?: string })?.text ?? '')
-            } catch { /* lint unavailable — fail open, keep the checkpoint */ }
+              }],
+            })
+            try {
+              const { recordAnthropicUsage } = await import('@/lib/usage')
+              recordAnthropicUsage(lint.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
+            } catch { /* non-critical */ }
+            recitable = /"recitable"\s*:\s*true/.test((lint.content[0] as { text?: string })?.text ?? '')
+          } catch { /* lint unavailable — fail open, keep the checkpoint */ }
 
-            if (!recitable) {
-              // retestOf links this card to the missed checkpoint ONLY when
-              // Bob marked it as the retest — an unrelated checkpoint on a
-              // retest turn must not clear the queue (if he forgets the
-              // flag, the entry just stays queued: the safe direction).
-              const pendingCard = {
-                ...parsed,
-                review: isReview || undefined,
-                retestOf: parsed.retest && retestTarget ? retestTarget : undefined,
-                askedAt: new Date().toISOString(),
-              }
-              // Compare-and-set on the quizState string (fresh read each try):
-              // the request-start copy is seconds stale by stream end, and a
-              // blind write could erase a tally the student just earned from
-              // another device — or be erased by it.
-              for (let attempt = 0; attempt < 2; attempt++) {
-                const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
-                const base = freshRow ? freshRow.quizState : node.quizState
-                const qs = parseQuizState(base)
-                qs.pending = pendingCard
-                const w = await prisma.treeNode.updateMany({
-                  where: { id: nodeId, quizState: base },
-                  data: { quizState: JSON.stringify(qs) },
-                }).catch(() => null)
-                if (w && w.count > 0) break
-              }
-              const sanitized = JSON.stringify({ kind: parsed.kind, question: parsed.question, ...(validMcq ? { options: parsed.options } : {}) })
-              try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
-              persistContent = `${prose}\n\n${QUIZ_MARK}${sanitized}`
-              quizShipped = true
-            }
-            // Linted-out checkpoints are silently dropped (prose stays; a
-            // dangling "Quick check:" lead-in is rare and self-corrects).
+          if (!recitable) {
+            await shipCard(parsedCard)
+          } else {
+            // Lint rejected it — REPLACE, never drop: author a transfer-level
+            // card; if authoring fails, ship Bob's original anyway. A slightly
+            // recitable checkpoint beats a broken promise (the lint also has
+            // false positives right after a detailed answer discussion).
+            const regen = await authorCheckpoint(parsedCard.question)
+            if (!(regen && await shipCard(regen))) await shipCard(parsedCard)
           }
-        } catch { /* malformed quiz JSON — drop the marker, keep the prose */ }
+        } else {
+          // Malformed card JSON, but the prose already promised a checkpoint
+          // — author a replacement instead of dangling.
+          const regen = await authorCheckpoint()
+          if (regen) await shipCard(regen)
+        }
       } else {
         forwardSafe()
         if (full.length > sentLen) {
           // Flush the final holdback window.
           try { controller.enqueue(encoder.encode(full.slice(sentLen))) } catch { /* closed */ }
           sentLen = full.length
+        }
+      }
+
+      // ── CHECKPOINT GUARANTEE ──
+      // Turns that DEMAND a card ship one even if Bob emitted none at all:
+      // the [NODE_CHECKPOINT] auto-continue, retention reviews, the "Quiz me"
+      // button (EN/中文), and prose that ends by announcing a checkpoint
+      // ("…here's the checkpoint:"). Never on the intro (no quiz in openers).
+      if (!quizShipped && !isIntro) {
+        const msgNorm = message.trim()
+        const demanded = isCheckpoint || isReview
+          || /^quiz me on this node[.!。]?$/i.test(msgNorm)
+          || /^出一道检查题考考我[。.!！]?$/.test(msgNorm)
+          || (/[:：]\s*$/.test(proseOnly) && /(checkpoint|quick check|quiz|检查点|考考|测一测)/i.test(proseOnly.slice(-160)))
+        if (demanded) {
+          const regen = await authorCheckpoint()
+          if (regen) await shipCard(regen)
+          if (!quizShipped) {
+            // Absolute last resort — say so instead of dangling silently.
+            const zhSession = (tree.language ?? lang) === 'zh'
+            const note = zhSession
+              ? '\n\n（这道检查题没能生成——点「出一道检查题考考我」再试一次。）'
+              : '\n\n(That checkpoint didn’t generate — hit “Quiz me” to try again.)'
+            try { controller.enqueue(encoder.encode(note)) } catch { /* closed */ }
+            persistContent = `${persistContent}${note}`
+          }
         }
       }
 
