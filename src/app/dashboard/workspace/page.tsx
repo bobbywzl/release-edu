@@ -514,7 +514,8 @@ function WorkspaceInner() {
       if (!res.ok || !body) throw new Error('quiz error')
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
       const verified = !!body.verified
-      setQuizResult({ correct: !!body.correct, verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
+      const wasCorrect = !!body.correct
+      setQuizResult({ correct: wasCorrect, verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
       setQuizError(false)
       if (quizTimerRef.current) clearTimeout(quizTimerRef.current)
       quizTimerRef.current = setTimeout(async () => {
@@ -524,10 +525,12 @@ function WorkspaceInner() {
         loadTree()                  // flip header pips / Verified chip
         if (nodeIdRef.current !== answeredNode) return
         setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
-        // Keep checkpoints coming until the node is verified: ask Bob for the
-        // next one (he clarifies briefly if the last answer missed). When
-        // verified, stop — the Verified chip + celebration already fired.
-        if (!verified) void streamFromBob('[NODE_CHECKPOINT]', false)
+        // Bottleneck-Triggered Teaching (FOUNDATION.md): a correct answer
+        // found no bottleneck — keep asking (NEXT CHECKPOINT). A wrong answer
+        // just found one — teach into it before asking again (REMEDIATE),
+        // never a checkpoint in that same turn. Verified nodes stop entirely
+        // — the Verified chip + celebration already fired.
+        if (!verified) void streamFromBob(wasCorrect ? '[NODE_CHECKPOINT]' : '[NODE_REMEDIATE]', false)
       }, verified ? 2200 : 1500)
     } catch {
       // Transient (judge unavailable / network) — surface it so the button

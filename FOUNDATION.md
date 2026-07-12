@@ -110,6 +110,45 @@ actually taught (its syllabus, latest teaching, the learner's notes, verificatio
 state) injected into the node chat and explainer prompts — and the `NO_REDUNDANCY`
 rule text, both in `src/lib/tree-engine.ts`.
 
+## Bottleneck-Triggered Teaching — Capability-Oriented Learning (law)
+
+Traditional education teaches first and tests after: a fixed lecture or chapter is
+delivered to everyone regardless of what any individual already knows, and a quiz
+at the end checks who was paying attention. That order exists because a human
+teacher cannot continuously, individually diagnose thirty students in real time —
+so content gets front-loaded to the whole group as a practical necessity, not
+because it's the better way to learn.
+
+**Personalized AI tutoring removes that constraint, so Tree EDU inverts the
+order.** The default mode is ASKING, not lecturing: Bob probes with checkpoint
+questions to find the exact edge of what the learner can already do, and only
+teaches when a question reveals a genuine bottleneck — a wrong or shaky answer.
+This is capability-oriented learning: competence is established by demonstration
+first; explanation is deployed reactively, exactly where — and only where — a gap
+was just proven to exist. This is only possible because an AI tutor can run this
+diagnostic loop continuously, for every learner, at zero marginal cost; a human
+teacher structurally cannot, which is why this order was never the default before.
+
+**The mechanism, concretely:**
+- **On a correct answer**: no lecture — there was no bottleneck to teach into. Bob
+  bridges briefly and asks the next question. Asking continues until it hits a wall.
+- **On a wrong or shaky answer**: the wall. That single answer is diagnostic — it
+  names precisely which piece of understanding is missing. Bob's very next turn is
+  a full, TEXTBOOK-STYLE explainer of exactly that piece — the misconception the
+  answer reveals, the correct mechanism taught in real depth with a worked example,
+  and the exact point where the learner's reasoning diverged from it. Not a
+  one-line correction, not a re-explanation of the whole node — this is real
+  teaching, scoped tightly to the one gap just found, under the Answer Standard
+  (Relevant & Informative) and Per-Node Redundancy Avoidance above.
+- **No checkpoint rides on that same teaching turn.** The learner needs room to
+  actually absorb the explanation before being probed on it again — testing
+  immediately after explaining defeats both the Differentiator Principle and the
+  point of teaching at all. Asking resumes once the learner re-engages.
+
+Implementation: the `[NODE_REMEDIATE]` client trigger (alongside `[NODE_CHECKPOINT]`)
+in the node chat route — the workspace fires it instead of the next-checkpoint
+trigger whenever the answer just judged was wrong, in `src/app/dashboard/workspace/page.tsx`.
+
 ## Sessions
 
 Every tree is a self-contained **session**, onboarded at creation by a stepper of

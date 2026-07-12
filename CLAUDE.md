@@ -145,6 +145,14 @@ syllabus/explainer/chat sees the whole tree AND what ancestor workspaces already
 taught (`branchCoverage()`), builds on that in one-clause callbacks, and teaches
 only this node's NEW ground. Wire both laws into any new teaching prompt.
 
+Companion law — **Bottleneck-Triggered Teaching / Capability-Oriented Learning**
+(FOUNDATION.md): the default mode is ASKING (checkpoint questions), not lecturing;
+full textbook-depth teaching deploys reactively, only once a wrong/shaky answer
+proves exactly where the gap is. On correct → brief bridge + next question (no
+bottleneck, keep asking). On wrong → the very next turn is a full explainer of
+precisely that gap (`[NODE_REMEDIATE]` trigger) — never a one-line correction, and
+never a checkpoint riding the same turn (let it land before re-probing).
+
 ## The Differentiator Principle (assessment ideology — still law)
 
 Every verification question must separate a student who MEMORIZED content from one who
