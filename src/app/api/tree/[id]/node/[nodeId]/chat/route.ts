@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, type XpAwardLite } from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, type XpAwardLite } from '@/lib/tree-engine'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 
@@ -340,6 +340,10 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
   // these instead of inventing plausible examples.
   const lockerBlock = await evidenceLocker(userId, tree.nodes, nodeId)
 
+  // What the branch BELOW this node already taught (ancestor workspaces) —
+  // the per-node redundancy-avoidance law: build on it, never re-teach it.
+  const coverageBlock = await branchCoverage(userId, tree.nodes, nodeId)
+
   const path = nodePath(tree.nodes, nodeId)
   const quizStateNow = parseQuizState(node.quizState)
 
@@ -375,9 +379,11 @@ Path from root: ${path.map(n => `"${n.title}"`).join(' → ')}
 ${node.explainer ? `\nThe node's explainer (already shown to the student):\n${node.explainer.slice(0, 2500)}` : ''}
 ${filesBlock}
 ${lockerBlock}
+${coverageBlock}
 
 ## HOW TO TEACH HERE
 - Everything you say serves ONE goal: this student genuinely understanding THIS node in service of the root problem.
+- NO REDUNDANCY: when the ALREADY COVERED section above shows the branch below taught something this node touches, build FROM it by reference ("as you saw at '<node>'…") — never re-explain it. Teach only what is NEW at this node.
 - Dense, precise, zero praise-padding. Concrete examples over abstractions.
 - **Be Socratic where it earns its place**: when the student is tracking well, probe ("why would that break if…?") instead of explaining more. When they're lost, teach directly — Socratic questioning of a confused student is theatre, not teaching.
 - Connect answers back to the root problem and this node's branch whenever natural.
@@ -427,10 +433,11 @@ Open the workspace yourself with a proper SYLLABUS that frames this whole node �
 
 ## <name the concept as a title>
 **The big idea** — 2-3 sentences: what this node is really about and the single most important thing it establishes.
-**Why it matters here** — 1-2 sentences connecting it along the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and stating how mastering it moves the student toward the ROOT problem ("${tree.title}") and their stated purpose.
+**Why it matters here** — 1-2 sentences placing this node in the WHOLE tree: its position along the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and how mastering it moves the student toward the ROOT problem ("${tree.title}") and their stated purpose.
+${coverageBlock ? `**Building on what you've covered** — 1-2 sentences that NAME the specific points the branch below already established (from the ALREADY COVERED section — quote its actual content, e.g. "you've already verified how X works and taken notes on Y") and state what NEW ground this node adds on top. This is a callback, not a recap — one clause per point, zero re-explanation.` : ''}
 
 ### What you'll cover
-A roadmap of the 3-5 specific sub-points this node contains — each a **bolded term** + one concrete sentence. If this node already has child nodes in the tree above, use those as the sub-points; otherwise lay out the facets an expert would break this into. This is the node's table of contents — make it genuinely cover the node's scope.
+A roadmap of the 3-5 specific sub-points this node contains — each a **bolded term** + one concrete sentence. If this node already has child nodes in the tree above, use those as the sub-points; otherwise lay out the facets an expert would break this into. This is the node's table of contents — make it genuinely cover the node's scope. Every sub-point must be NEW ground owned by THIS node: anything the ALREADY COVERED section shows an ancestor's workspace already taught may appear only as a one-clause callback inside a sub-point ("builds on the water-uptake mechanism from 'Soil, Water & Nutrients'"), never as a sub-point of its own and never re-explained.
 
 ### You'll be able to
 3-4 concrete, checkable objectives ("<action verb> <specific skill>") — what the student will be able to DO, phrased for THIS problem, not vague ("understand X").

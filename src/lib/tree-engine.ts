@@ -52,6 +52,11 @@ export const ANSWER_STANDARD = `## THE ANSWER STANDARD (every answer must pass B
 - INFORMATIVE: never a bare answer, verdict, or recipe. Every answer teaches the scientific background behind it — the mechanism or principle that explains WHY — so the student walks away with transferable understanding, not an isolated fact.
 - The two failure modes, equally fatal: TOO GENERAL (a textbook lecture dumped on a specific question) and TOO THIN (a correct answer with no science underneath).`
 
+// The Answer Standard's companion law (canonical wording in FOUNDATION.md):
+// a node teaches ONLY its own new ground — the branch below it is a launchpad,
+// never a rerun. Injected wherever ancestor coverage is shown to the model.
+export const NO_REDUNDANCY = `RULE — PER-NODE REDUNDANCY AVOIDANCE (law): this node teaches ONLY its own NEW ground. Material the branch below already covered is BUILT ON, never re-taught — acknowledge it in one clause ("you already verified how X works at '<node>' — building on that…") and go straight to what is new here. Re-explaining an ancestor's material is a failed syllabus and a failed answer. The boundary holds upward too: material owned by a child or sibling node is pointed to, not absorbed.`
+
 /**
  * Every tree is a self-contained SESSION with its own language, target
  * difficulty, and the student's stated background for this problem —
@@ -301,6 +306,65 @@ export function nodePath(nodes: TreeNode[], nodeId: string): TreeNode[] {
   return path
 }
 
+/**
+ * ALREADY-COVERED digest of the branch BELOW a node — what each ancestor's
+ * workspace (root → parent) actually taught: its syllabus opener, the latest
+ * teaching excerpt, the student's own notes, and its verification state.
+ * Injected into the node chat + explainer prompts so every node BUILDS ON the
+ * branch instead of re-teaching it (per-node redundancy avoidance — law,
+ * FOUNDATION.md). Returns '' at the root (nothing below). Best-effort.
+ */
+export async function branchCoverage(userId: string, nodes: TreeNode[], nodeId: string): Promise<string> {
+  try {
+    // Nearest 4 ancestors, kept in root-first order so the digest reads as
+    // the student's actual climb.
+    const ancestors = nodePath(nodes, nodeId).slice(0, -1).slice(-4)
+    if (ancestors.length === 0) return ''
+    const { parseQuizState } = await import('@/lib/mastery')
+    // Strip machine blocks — a checkpoint's JSON or an image directive is
+    // noise inside a coverage digest.
+    const clean = (s: string) =>
+      s.replace(/\[\[QUIZ\]\][\s\S]*$/, '').replace(/```image[\s\S]*?```/g, '(diagram)').trim()
+
+    const sections: string[] = []
+    for (const a of ancestors) {
+      const qs = parseQuizState(a.quizState)
+      const state = a.status === 'understood'
+        ? 'VERIFIED — the student PROVED mastery here'
+        : qs.attempts > 0
+          ? `in progress (${qs.correct} checkpoint${qs.correct === 1 ? '' : 's'} correct so far)`
+          : 'opened but not yet verified'
+      let covered = ''
+      const conv = await prisma.conversation.findFirst({
+        where: { userId, context: `tree-node:${a.id}` },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      }).catch(() => null)
+      if (conv) {
+        const [firstBob, lastBob] = await Promise.all([
+          prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
+          prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, select: { id: true, content: true } }).catch(() => null),
+        ])
+        const syllabus = firstBob ? clean(firstBob.content).slice(0, 600) : ''
+        const latest = lastBob && lastBob.id !== firstBob?.id ? clean(lastBob.content).slice(0, 350) : ''
+        covered = [
+          syllabus ? `Its workspace laid out: ${syllabus}` : '',
+          latest ? `Latest teaching there: ${latest}` : '',
+        ].filter(Boolean).join('\n')
+      }
+      sections.push([
+        `### "${a.title}" — ${state}`,
+        a.summary ? `Scope: ${a.summary.slice(0, 200)}` : '',
+        a.notes?.trim() ? `The student's own notes there: ${a.notes.trim().slice(0, 200)}` : '',
+        covered,
+      ].filter(Boolean).join('\n'))
+    }
+    return `\n## ALREADY COVERED BELOW ON THIS BRANCH (root → parent — the ground the student climbed to get here)\n${sections.join('\n')}\n${NO_REDUNDANCY}`
+  } catch {
+    return ''
+  }
+}
+
 // ── Expansion (grows only with permission) ───────────────────────────────
 
 export interface ExpansionResult {
@@ -503,6 +567,7 @@ export async function generateExplainer(userId: string, treeId: string, nodeId: 
   const client = await anthropic()
   const grounding = await studentGrounding(userId)
   const locker = await evidenceLocker(userId, tree.nodes)
+  const coverage = await branchCoverage(userId, tree.nodes, nodeId)
 
   const model = await getTeachingModel()
   const result = await client.messages.create({
@@ -520,10 +585,11 @@ SIBLING/TREE CONTEXT:
 ${sketchTree(tree.nodes)}
 ${grounding}
 ${locker}
+${coverage}
 
 Write in markdown (400-700 words):
 1. **What this is** — precise but plain-language definition
-2. **Why the problem needs it** — connect it explicitly BACK to the root problem and its parent branch
+2. **Why the problem needs it** — connect it explicitly BACK to the root problem and its parent branch; where the ALREADY COVERED section shows the branch below established something this builds on, reference it in one clause instead of re-explaining it
 3. **How it works** — the core mechanism with ONE concrete worked example
 4. **Where beginners go wrong** — the main misconception or failure mode
 5. **How you'll know you understand it** — 1-2 sentences describing the transfer test
