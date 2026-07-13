@@ -1,5 +1,5 @@
 /**
- * Database-backed store — replaces both demoStore and workStore.
+ * Database-backed store — the single per-user data access layer.
  * Uses Prisma to query Postgres (Supabase).
  * Provides the same scoped-by-user pattern: dbStore.forUser(userId)
  */
@@ -141,18 +141,6 @@ export interface DbScopedStore {
 function createDbScopedStore(userId: string): DbScopedStore {
   // Helper: ensure the user row exists.
   async function ensureUser(): Promise<User> {
-    // Demo visitors get a real (ephemeral) User row: every active table FKs
-    // onto User, so without one the demo path 502s on its very first write
-    // (tree seeding billed Opus, then failed the insert). The cleanup-demo
-    // cron already deletes `demo-*` users after 24h — rows are the designed
-    // shape, the old throw here was the bug.
-    if (userId.startsWith('demo-')) {
-      return prisma.user.upsert({
-        where: { id: userId },
-        update: {},
-        create: { id: userId, email: `${userId}@release.edu`, name: 'Demo Student' },
-      })
-    }
     let user = await prisma.user.findUnique({ where: { id: userId } })
     if (!user) {
       let email = `placeholder-${userId.slice(0, 8)}@pending.edu`
@@ -184,7 +172,6 @@ function createDbScopedStore(userId: string): DbScopedStore {
     },
 
     async getProfile(): Promise<StudentProfile | null> {
-      if (userId.startsWith('demo-')) return null
       await ensureUser()
       return prisma.studentProfile.findUnique({ where: { userId } })
     },

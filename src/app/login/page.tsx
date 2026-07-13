@@ -30,7 +30,6 @@ export default function LoginPage() {
   const router = useRouter()
   const [signUpLoading, setSignUpLoading] = useState(false)
   const [signInLoading, setSignInLoading] = useState(false)
-  const [demoLoading, setDemoLoading] = useState(false)
   const [checkingSession, setCheckingSession] = useState(true)
   const [copiedCallback, setCopiedCallback] = useState(false)
 
@@ -61,16 +60,6 @@ export default function LoginPage() {
   const handleSignIn = async () => {
     setSignInLoading(true)
     await signIn('google', { callbackUrl: '/dashboard' })
-  }
-
-  const handleDemo = async () => {
-    setDemoLoading(true)
-    try {
-      await fetch('/api/demo', { method: 'POST' })
-      window.location.href = '/dashboard'
-    } catch {
-      setDemoLoading(false)
-    }
   }
 
   // Brief gate while we check for an existing session, so authenticated users
@@ -134,7 +123,7 @@ export default function LoginPage() {
           </motion.div>
 
           {/* Preview-deployment notice: Google OAuth needs this branch's
-              callback authorized once; demo mode needs nothing. */}
+              callback authorized once. */}
           {IS_PREVIEW && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -146,7 +135,6 @@ export default function LoginPage() {
               <p className="text-[11px] text-amber-200/90 leading-relaxed">
                 Google sign-in works here only after this branch&apos;s callback URL is added once to the
                 Google OAuth client (Google Cloud Console → Credentials → Authorized redirect URIs).
-                Or skip setup entirely with the demo below.
               </p>
               {PREVIEW_CALLBACK && (
                 <button
@@ -228,7 +216,7 @@ export default function LoginPage() {
             <Button
               variant="outline"
               onClick={handleSignIn}
-              disabled={signUpLoading || signInLoading || demoLoading}
+              disabled={signUpLoading || signInLoading}
               className="w-full h-10 text-sm font-medium"
             >
               {signInLoading ? (
@@ -240,22 +228,6 @@ export default function LoginPage() {
                 'Sign in with Google'
               )}
             </Button>
-          </motion.div>
-
-          {/* Demo mode — the natural first step for a visitor who isn't
-              ready to connect a Google account; give it real weight. */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.35 }}
-          >
-            <button
-              onClick={handleDemo}
-              disabled={signUpLoading || signInLoading || demoLoading}
-              className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-            >
-              {demoLoading ? 'Loading demo…' : 'Try the demo — no account needed →'}
-            </button>
           </motion.div>
 
           {/* Features grid */}

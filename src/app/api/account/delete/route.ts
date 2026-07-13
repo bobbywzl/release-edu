@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'
 
@@ -16,10 +15,6 @@ export async function DELETE(request: Request) {
 
     // Delete all user data from DB
     await store.deleteAllData()
-
-    // Clear demo cookie
-    const cookieStore = await cookies()
-    cookieStore.delete('demo-mode')
 
     return NextResponse.json({ success: true, message: 'Account deleted' })
   } catch {

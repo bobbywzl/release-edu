@@ -251,10 +251,9 @@ async function buildContextFromDB(userId: string): Promise<StudentContext> {
  */
 export async function getStudentContext(
   userId: string | null,
-  _isDemo: boolean,
   storeUserId?: string
 ): Promise<StudentContext> {
-  const effectiveUserId = storeUserId || userId || 'demo'
+  const effectiveUserId = storeUserId || userId || 'anonymous'
   try {
     return await buildContextFromDB(effectiveUserId)
   } catch (err) {

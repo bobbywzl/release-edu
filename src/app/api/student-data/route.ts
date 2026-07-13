@@ -1,7 +1,6 @@
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { dbStore } from '@/lib/db-store'
@@ -22,60 +21,26 @@ function safeParseJSON<T>(val: string | null | undefined, fallback: T): T {
 }
 
 export async function GET() {
-  const cookieStore = await cookies()
-  const isDemo = cookieStore.get('demo-mode')?.value === 'true'
+  // Login is required product-wide (demo mode is gone). Middleware already
+  // 401s unauthenticated callers; this is the in-route backstop.
   const session = await getServerSession(authOptions)
+  if (!session?.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
-  const googleUser = session?.user ? {
+  const googleUser = {
     name: session.user.name || 'Student',
     email: session.user.email || '',
     image: (session.user as { image?: string }).image || undefined,
-  } : null
+  }
 
   // Prefer StudentProfile.displayName (user-set) over Google OAuth User.name
-  const userId_ = session?.user ? ((session.user as { id?: string }).id || session.user.email || 'unknown') : null
-  let resolvedName = googleUser?.name || 'Student'
-  if (userId_ && !isDemo) {
-    const [sp_, u_] = await Promise.all([
-      prisma.studentProfile.findUnique({ where: { userId: userId_ }, select: { displayName: true } }).catch(() => null),
-      prisma.user.findUnique({ where: { id: userId_ }, select: { name: true } }).catch(() => null),
-    ])
-    resolvedName = sp_?.displayName || u_?.name || googleUser?.name || 'Student'
-  }
-  if (isDemo || (!isDemo && !googleUser)) {
-    // Honest numbers for cookie-auth users: demo visitors now own real rows
-    // (real XP, real streak) — never greet them as a fake persona with fake
-    // progress ("Good afternoon, Jordan" to a brand-new stranger).
-    const cookieUserId = await getUserId()
-    const realProfile = await prisma.studentProfile.findUnique({
-      where: { userId: cookieUserId },
-      select: { xp: true, streak: true, displayName: true },
-    }).catch(() => null)
-    const { getLevelForXp } = await import('@/lib/xp-engine')
-    return NextResponse.json({
-      student: {
-        ...mockStudent,
-        name: realProfile?.displayName || (isDemo ? 'Demo Student' : 'Student'),
-        xp: realProfile?.xp ?? 0,
-        level: getLevelForXp(realProfile?.xp ?? 0),
-        streak: realProfile?.streak ?? 0,
-        stage: 'motivation',
-      },
-      knowledgeNodes: mockKnowledgeNodes,
-      projects: mockProjects,
-      assignments: mockAssignments,
-      curriculumPlan: mockCurriculumPlan,
-      projectModules: mockProjectModules,
-      coreModules: mockCoreModules,
-      tracks: mockCurriculumTracks,
-      insights: mockInsights,
-      isOnboarded: true,
-      hasSetupProfile: true,
-      hasCurriculum: true,
-      manualRegenerationCount: 0,
-      manualRegenerationLimit: 2,
-    })
-  }
+  const userId_ = (session.user as { id?: string }).id || session.user.email || 'unknown'
+  const [sp_, u_] = await Promise.all([
+    prisma.studentProfile.findUnique({ where: { userId: userId_ }, select: { displayName: true } }).catch(() => null),
+    prisma.user.findUnique({ where: { id: userId_ }, select: { name: true } }).catch(() => null),
+  ])
+  const resolvedName = sp_?.displayName || u_?.name || googleUser.name || 'Student'
 
   const userId = await getUserId()
   const store = dbStore.forUser(userId)

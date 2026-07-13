@@ -29,7 +29,9 @@ Read this before making changes.
 
 - **Framework**: Next.js 14.2 (App Router), TypeScript strict mode
 - **Database**: PostgreSQL (Supabase) via Prisma 6
-- **Auth**: NextAuth 4 with Google OAuth + a `demo-mode` cookie fallback
+- **Auth**: NextAuth 4 with Google OAuth — login is REQUIRED product-wide
+  (demo mode was removed July 2026; middleware 401s every unauthenticated
+  user-data API call and redirects /dashboard to /login)
 - **AI**: Anthropic SDK — the teaching tier (tree seeding, node explainers, workspace
   chat, grow-box proposals) and judging tier (checkpoint judging) resolve through
   `src/lib/model-resolver.ts`, which auto-adopts the NEWEST Opus/Sonnet release from
@@ -215,7 +217,8 @@ designated `claude/...` branch; production ships by merging that branch into `ma
 ## Quick Sanity Checks Before Shipping
 
 - Does this work for a brand-new user (no profile, no trees, no insights)?
-- Does this still work with `demo-mode=true` (no auth session)?
+- Is every new user-facing API under the middleware login gate (no
+  unauthenticated path — demo mode no longer exists)?
 - Does it respect the session's language/difficulty (never leak English into a 中文 session)?
 - Does tree growth stay permission-based (nothing joins the tree without a click)?
 - Does every new AI call record usage with the right feature tag?
