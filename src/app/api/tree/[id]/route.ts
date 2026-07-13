@@ -9,13 +9,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { getTreeWithNodes } from '@/lib/tree-engine'
+import { sanitizeQuizStateForClient } from '@/lib/mastery'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const userId = await getUserId()
   const tree = await getTreeWithNodes(userId, id)
   if (!tree) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({ tree })
+  // Answer-key protection (mastery.ts invariant): the live checkpoint's
+  // correctIndex/explanation/rubric live in node.quizState and must NEVER
+  // reach the browser — sanitize every node's quizState before it ships.
+  // The workspace pips read only tally/facet fields + a sanitized pending.
+  const safeTree = {
+    ...tree,
+    nodes: tree.nodes.map(n => ({ ...n, quizState: sanitizeQuizStateForClient(n.quizState) })),
+  }
+  return NextResponse.json({ tree: safeTree })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

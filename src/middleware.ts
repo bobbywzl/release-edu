@@ -25,10 +25,32 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 308)
   }
 
+  // User-data / AI API routes that must NEVER run for an unidentified caller
+  // — otherwise getUserId() falls back to the shared "anonymous" bucket
+  // (data leaks between strangers + unmetered Opus/Sonnet spend). These carry
+  // the SAME gate as /dashboard (a NextAuth token OR the demo cookie pair);
+  // excluded: /api/auth/* (NextAuth itself), /api/demo* (sets the demo
+  // cookie), /api/admin/* (its own stronger gate below), /api/cron/* (secret-
+  // gated jobs), /api/image/* (public generated-visual cache).
+  const isUserApi = /^\/api\/(tree|xp|insights|files|conversations|portfolio|chat|student-profile|student-data|highlights|feedback|teacher)(\/|$)/.test(pathname)
+
   // Everything below only guards the app's own gated areas.
   const isDashboard = pathname.startsWith('/dashboard')
   const isAdminArea = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
-  if (!isDashboard && !isAdminArea) return NextResponse.next()
+  if (!isDashboard && !isAdminArea && !isUserApi) return NextResponse.next()
+
+  // Identified-caller gate for the user-data APIs (a 401, never a redirect —
+  // these are fetch() targets). /api/teacher/* additionally enforces admin in
+  // its handlers; here we only require an identified caller.
+  if (isUserApi) {
+    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
+    const demo = request.cookies.get('demo-mode')?.value === 'true'
+      && !!request.cookies.get('demo-session-id')?.value
+    if (!token && !demo) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    return NextResponse.next()
+  }
 
   // Admin login page AND the password-auth endpoint are always reachable with
   // no auth — they ARE the gate (password-based, independent of Google login).
