@@ -8,6 +8,8 @@ export const dynamic = 'force-dynamic'
  *   { action: 'annotate', text }     — append a user annotation to the explainer
  *   { action: 'notes', text }        — save the student's editable per-node notes
  *   { action: 'add_child', title, summary? } — student manually adds a child node
+ *   { action: 'edit', title?, summary? }     — rewrite title/summary (an approved copilot chip)
+ *   { action: 'move', newParentId }  — re-parent the node, subtree follows (root immovable, cycle-guarded)
  *   { action: 'delete' }             — delete this node AND its descendants (root protected)
  *
  * NOTE: there is deliberately NO action to set status to 'understood' —
@@ -23,7 +25,7 @@ export async function PATCH(
 ) {
   const { id, nodeId } = await params
   const userId = await getUserId()
-  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string; title?: string; summary?: string }
+  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string; title?: string; summary?: string; newParentId?: string }
 
   // Ownership check through the tree.
   const node = await prisma.treeNode.findFirst({
@@ -59,6 +61,47 @@ export async function PATCH(
         },
       })
       return NextResponse.json({ ok: true, node: created })
+    }
+    case 'edit': {
+      // Approved reshape chip (or a manual rename): rewrite title/summary
+      // only — status, mastery tally, notes and children are untouched.
+      const title = typeof body.title === 'string' ? body.title.trim() : ''
+      const summary = typeof body.summary === 'string' ? body.summary.trim() : ''
+      if (!title && !summary) return NextResponse.json({ error: 'Nothing to edit' }, { status: 400 })
+      await prisma.treeNode.update({
+        where: { id: nodeId },
+        data: {
+          ...(title ? { title: title.slice(0, 120) } : {}),
+          ...(summary ? { summary: summary.slice(0, 500) } : {}),
+        },
+      })
+      return NextResponse.json({ ok: true })
+    }
+    case 'move': {
+      const newParentId = typeof body.newParentId === 'string' ? body.newParentId : ''
+      if (!newParentId) return NextResponse.json({ error: 'newParentId required' }, { status: 400 })
+      if (!node.parentId) return NextResponse.json({ error: 'The root problem cannot be moved' }, { status: 400 })
+      if (newParentId === nodeId) return NextResponse.json({ error: 'A node cannot be its own parent' }, { status: 400 })
+      const parent = await prisma.treeNode.findFirst({ where: { id: newParentId, treeId: id } })
+      if (!parent || parent.pending) return NextResponse.json({ error: 'Target parent not found' }, { status: 400 })
+      // Cycle guard on live data: the new parent must not live inside the
+      // moving node's own subtree (walk ALL nodes, pending included).
+      const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
+      const subtree = new Set<string>([nodeId])
+      let grew = true
+      while (grew) {
+        grew = false
+        for (const n of all) {
+          if (n.parentId && subtree.has(n.parentId) && !subtree.has(n.id)) {
+            subtree.add(n.id)
+            grew = true
+          }
+        }
+      }
+      if (subtree.has(newParentId)) return NextResponse.json({ error: 'Cannot move a node into its own branch' }, { status: 400 })
+      const siblings = await prisma.treeNode.count({ where: { parentId: newParentId } })
+      await prisma.treeNode.update({ where: { id: nodeId }, data: { parentId: newParentId, order: siblings } })
+      return NextResponse.json({ ok: true })
     }
     case 'delete': {
       if (!node.parentId) return NextResponse.json({ error: 'The root problem cannot be deleted' }, { status: 400 })
