@@ -191,11 +191,13 @@ ends with the bolded question — **"What is the specific problem you want to ma
   struggle); showing up pays (daily check-in streak XP that scales with streak
   length + first-session bonus); daily goal ring, streak with loss-aversion at-risk
   state, tiered badges (incl. verified-node and mastered-tree ladders), an
-  learning-journey **rank ladder** (Rookie → Seeker → Scholar → Prodigy →
-  Virtuoso → Luminary → Guru → Grandmaster → Transcendent → and finally the
-  full-circle **A Real Beginner** — 10 titles × 3 divisions) whose
-  promotions fire escalating synthesized fanfares and a
-  rank-colored celebration overlay that grows grander with the tier, reward
+  learning-journey **rank ladder** with a UNIQUE TITLE AT EVERY LEVEL (74
+  per-level names flowing through 10 tier families — Rookie → Seeker → Scholar →
+  Prodigy → Virtuoso → Luminary → Guru → Grandmaster → Transcendent — and at
+  level 75 the full-circle pinnacle **A Real Beginner**): every level-up hands
+  the learner a fresh name and fires the rank-up celebration; tier promotions
+  (new color/emblem family) fire the escalating synthesized fanfares and the
+  rank-colored overlay that grows grander with the tier, reward
   sounds — small steps ding (node verified = the core unit of progress).
 - **Insight memory** (the moat): Bob's curated long-term memory of the learner —
   extracted from workspace conversations with anti-hallucination rules, consolidated,
