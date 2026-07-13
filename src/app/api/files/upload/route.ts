@@ -67,6 +67,27 @@ export async function POST(req: NextRequest) {
       },
     })
 
+    // Visual/auditory evidence: understand it with Gemini so Bob can reference
+    // its CONTENT later, not just its filename. A data-URI image/audio/video/
+    // PDF is analyzed AFTER the response (waitUntil), and the analysis lands on
+    // the row a few seconds later — before the student asks Bob about it. Text
+    // files need no analysis (their content is already readable).
+    const isMedia = /^(image|audio|video)\//.test(mimeType) || mimeType === 'application/pdf'
+    if (content.startsWith('data:') && isMedia) {
+      const b64 = content.split(',', 2)[1] ?? ''
+      if (b64) {
+        const { inBackground } = await import('@/lib/background')
+        inBackground((async () => {
+          const { analyzeImage } = await import('@/lib/gemini')
+          const analysis = await analyzeImage(b64, `the student's uploaded evidence "${name}"`, mimeType)
+          await prisma.linkedFile.update({
+            where: { id: record.id },
+            data: { analysis: analysis.slice(0, 8000) },
+          }).catch(() => null)
+        })())
+      }
+    }
+
     return NextResponse.json({
       id: record.id,
       name: record.name,

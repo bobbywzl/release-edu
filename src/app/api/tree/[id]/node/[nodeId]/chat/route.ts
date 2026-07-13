@@ -404,7 +404,7 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
       }),
       prisma.linkedFile.findMany({
         where: { ...baseWhere, content: { startsWith: 'data:' } },
-        select: { name: true },
+        select: { name: true, mimeType: true, analysis: true },
         orderBy: { addedAt: 'desc' },
         take: 5,
       }),
@@ -412,7 +412,13 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
     if (textFiles.length > 0 || mediaFiles.length > 0) {
       filesBlock = `\n## THE STUDENT'S FILES ON THIS NODE (their real work — read and reference it)\n` + [
         ...textFiles.map(f => `### ${f.name}\n${(f.content ?? '').slice(0, 2000)}${(f.content ?? '').length > 2000 ? '\n…(truncated)' : ''}`),
-        ...mediaFiles.map(f => `### ${f.name} (binary/image — content not inlined)`),
+        // Media evidence: Gemini's understanding of the image/audio/video/PDF
+        // (a voice note's TRANSCRIPT is the student speaking) so Bob can ground
+        // in the CONTENT. A row with no analysis yet (just uploaded, or an old
+        // pre-analysis file) falls back to the filename note.
+        ...mediaFiles.map(f => f.analysis?.trim()
+          ? `### ${f.name} (${f.mimeType ?? 'media'} — Gemini analysis)\n${f.analysis.slice(0, 2500)}`
+          : `### ${f.name} (${f.mimeType ?? 'binary'} — analysis pending; ask the student about it if relevant)`),
       ].join('\n\n')
     }
   } catch { /* non-critical */ }
