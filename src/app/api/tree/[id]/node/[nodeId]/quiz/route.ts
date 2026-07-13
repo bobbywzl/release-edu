@@ -249,7 +249,12 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     // Consume the pending only if it's still the card we judged — never wipe
     // a newer card Bob stored while we were judging.
     if (tally.pending?.question === quiz.question) tally.pending = null
-    if (isReview) tally.reviewedAt = new Date().toISOString()
+    // Stamp reviewedAt only on a CORRECT review — the picker sorts by
+    // reviewedAt ascending (stalest first), so stamping a FAILED review would
+    // send the just-forgotten node to the BACK of the queue (spaced
+    // repetition inverted). Leaving it unstamped keeps the forgotten node
+    // among the stalest, so it resurfaces soon — as retention requires.
+    if (isReview && correct) tally.reviewedAt = new Date().toISOString()
     return tally
   }
   // NEVER-LOSE WRITE: a silently dropped tally desynchronizes the header

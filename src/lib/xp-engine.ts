@@ -370,6 +370,13 @@ async function bumpDailyXp(userId: string, amount: number): Promise<void> {
   } catch { /* schema lag — non-critical */ }
 }
 
+// Show-up XP (check-in streak + first-session bonus) still counts toward
+// total XP / level / rank, but is EXCLUDED from the daily-goal ring — the
+// ring is documented as "reachable in one honest lesson session", so it must
+// close on LEARNING, not on merely opening the app (otherwise a loyal user's
+// streak XP alone fills it by ~day 12 and the loop stops asking them to learn).
+const SHOWUP_SOURCES = new Set<XpSource>(['daily_streak', 'first_session'])
+
 // ── Award XP (writes to DB) ──
 
 export async function awardXp(
@@ -399,7 +406,7 @@ export async function awardXp(
     data: { xp: { increment: awarded } },
     select: { xp: true },
   })
-  await bumpDailyXp(userId, awarded)
+  if (!SHOWUP_SOURCES.has(source)) await bumpDailyXp(userId, awarded)
 
   const newTotal = updated.xp
   const oldLevel = getLevel(newTotal - awarded)
@@ -438,7 +445,9 @@ export async function awardXpBatch(
     data: { xp: { increment: total } },
     select: { xp: true },
   })
-  await bumpDailyXp(userId, total)
+  // Only LEARNING XP feeds the daily ring (show-up sources excluded).
+  const ringXp = amounts.filter(a => !SHOWUP_SOURCES.has(a.source)).reduce((s, a) => s + a.awarded, 0)
+  if (ringXp > 0) await bumpDailyXp(userId, ringXp)
 
   let running = updated.xp - total
   return amounts.map(({ source, awarded }) => {
@@ -516,8 +525,12 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
   // updatedAt fallback would read as "already here today", muting the most
   // retention-critical moment of the product). A stamped lastCheckinDay
   // always wins over that heuristic.
-  if (lastDay === today && (profile.lastCheckinDay !== null || profile.streak > 0)) {
-    // Already checked in today — no streak update.
+  // Already checked in for today OR a day AFTER today (a westward timezone
+  // shift — travel, a mis-set second device — makes a stamp from an eastward
+  // zone lexically > today). A YYYY-MM-DD string compare treats both as
+  // "already here", so a live streak is never reset to 1 and show-up XP is
+  // never double-paid for the same absolute day.
+  if (lastDay >= today && (profile.lastCheckinDay !== null || profile.streak > 0)) {
     return { streak: profile.streak, awards: [] }
   }
 
