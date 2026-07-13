@@ -9,7 +9,7 @@ import prisma from '@/lib/prisma'
 export type UsageFeature =
   // ── Tree EDU features ──
   | 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest' | 'node-chat'
-  | 'tree-copilot'
+  | 'tree-copilot' | 'tree-summary'
   | 'onboarding' | 'reflection' | 'insight' | 'title' | 'portfolio' | 'image' | 'other'
   // ── Legacy (pre-pivot data still in the telemetry table) ──
   | 'tutoring' | 'research' | 'curriculum' | 'chapter' | 'quiz' | 'capstone' | 'compaction' | 'project'

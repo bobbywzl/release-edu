@@ -79,7 +79,7 @@ export function sessionDirectives(tree: SessionFields, fallbackLang?: string): s
 }
 
 
-async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest' | 'tree-copilot') {
+async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest' | 'tree-copilot' | 'tree-summary') {
   try {
     const { recordAnthropicUsage } = await import('@/lib/usage')
     recordAnthropicUsage(result.usage as Parameters<typeof recordAnthropicUsage>[0], { userId, model, feature })
@@ -331,24 +331,91 @@ export function collectSubtreeIds(nodes: Array<{ id: string; parentId: string | 
 }
 
 /**
+ * Deterministic POSITION block — where a node sits on the way to solving the
+ * root problem. Cheap (no queries, no tokens): the branch path, which top-level
+ * solution it serves, how much of the foundation below it is already verified,
+ * and overall tree progress. Injected alongside the ancestor coverage so every
+ * node's workspace knows its role in the whole, not just its local content.
+ * Returns '' at the root (the problem statement has no "position" to frame).
+ */
+export function nodePositionBlock(nodes: TreeNode[], nodeId: string): string {
+  const path = nodePath(nodes, nodeId)
+  if (path.length <= 1) return ''
+  // Masterable nodes = everything except the root (the root is the problem
+  // statement, not a node the learner verifies) and pending ghosts.
+  const masterable = nodes.filter(n => !n.pending && n.parentId !== null)
+  const root = path[0]
+  const solution = path[1] // the top-level solution branch this node hangs under
+  const ancestors = path.slice(1, -1) // solution … parent — the climb below this node
+  const ancestorsDone = ancestors.filter(n => n.status === 'understood').length
+  const treeDone = masterable.filter(n => n.status === 'understood').length
+  const isTopLevel = path.length === 2
+  const lines = [
+    `## WHERE THIS NODE SITS ON THE WAY TO SOLVING THE ROOT`,
+    `Root problem: "${clampText(root.title, 140)}".`,
+    isTopLevel
+      ? `This node is a top-level solution branch hanging directly off the root.`
+      : `This node serves the solution branch "${clampText(solution.title, 80)}"; ${ancestorsDone}/${ancestors.length} of the ancestor node${ancestors.length === 1 ? '' : 's'} below it on this branch ${ancestorsDone === ancestors.length ? 'are already verified' : 'are verified so far'} — build on them, never re-teach them.`,
+    `Overall progress: ${treeDone}/${masterable.length} of the tree's nodes are verified; mastering this node moves the root problem one node closer to solved.`,
+  ]
+  return `\n${lines.join('\n')}`
+}
+
+/**
+ * Live-derived teaching digest for ONE ancestor — the FALLBACK for
+ * branchCoverage() when a node has never been summarized yet (brand-new work).
+ * Reads that node's workspace conversation: its syllabus opener + newest real
+ * (non-verdict) teaching turn. The persisted contextSummary replaces this the
+ * moment the background pass runs, so this raw-message path fades out per node.
+ */
+async function liveAncestorDigest(userId: string, ancestorId: string): Promise<string> {
+  // Strip machine blocks — a checkpoint's JSON or an image directive is noise
+  // inside a coverage digest.
+  const clean = (s: string) =>
+    s.replace(/\[\[QUIZ\]\][\s\S]*$/, '').replace(/```image[\s\S]*?```/g, '(diagram)').trim()
+  const conv = await prisma.conversation.findFirst({
+    where: { userId, context: `tree-node:${ancestorId}` },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  }).catch(() => null)
+  if (!conv) return ''
+  const [firstBob, recentBobs] = await Promise.all([
+    prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
+    prisma.message.findMany({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 8, select: { id: true, content: true } }).catch(() => []),
+  ])
+  const syllabus = firstBob ? clean(firstBob.content).slice(0, 600) : ''
+  // The NEWEST assistant message on a verified/in-progress ancestor is usually
+  // a quiz-route VERDICT BANNER (starts ✅/❌/🎉/🌱) — bookkeeping, not teaching.
+  // Sample the newest NON-verdict turn so the digest reflects real teaching
+  // (emoji prefix is language-independent).
+  const isVerdict = (s: string) => /^\s*(✅|❌|🎉|🌱)/.test(s)
+  const teaching = recentBobs.find(m => m.id !== firstBob?.id && clean(m.content).length > 0 && !isVerdict(clean(m.content)))
+  const latest = teaching ? clean(teaching.content).slice(0, 350) : ''
+  return [
+    syllabus ? `Its workspace laid out: ${syllabus}` : '',
+    latest ? `Latest teaching there: ${latest}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+/**
  * ALREADY-COVERED digest of the branch BELOW a node — what each ancestor's
- * workspace (root → parent) actually taught: its syllabus opener, the latest
- * teaching excerpt, the student's own notes, and its verification state.
- * Injected into the node chat + explainer prompts so every node BUILDS ON the
- * branch instead of re-teaching it (per-node redundancy avoidance — law,
- * FOUNDATION.md). Returns '' at the root (nothing below). Best-effort.
+ * workspace (root → parent) actually established, plus WHERE this node sits on
+ * the way to the root. Each ancestor contributes its persisted CONTEXT SUMMARY
+ * (a distilled, continuously-updated digest — see refreshNodeContextSummary),
+ * which is read for free instead of re-slicing raw conversation messages every
+ * turn; a node not yet summarized falls back to a live derivation. Injected
+ * into the node chat + explainer prompts so every node BUILDS ON the branch
+ * instead of re-teaching it (per-node redundancy avoidance — law, FOUNDATION.md).
+ * Returns just the position block (usually '') at the root. Best-effort.
  */
 export async function branchCoverage(userId: string, nodes: TreeNode[], nodeId: string): Promise<string> {
   try {
+    const position = nodePositionBlock(nodes, nodeId)
     // Nearest 4 ancestors, kept in root-first order so the digest reads as
     // the student's actual climb.
     const ancestors = nodePath(nodes, nodeId).slice(0, -1).slice(-4)
-    if (ancestors.length === 0) return ''
+    if (ancestors.length === 0) return position
     const { parseQuizState } = await import('@/lib/mastery')
-    // Strip machine blocks — a checkpoint's JSON or an image directive is
-    // noise inside a coverage digest.
-    const clean = (s: string) =>
-      s.replace(/\[\[QUIZ\]\][\s\S]*$/, '').replace(/```image[\s\S]*?```/g, '(diagram)').trim()
 
     const sections: string[] = []
     for (const a of ancestors) {
@@ -358,31 +425,15 @@ export async function branchCoverage(userId: string, nodes: TreeNode[], nodeId: 
         : qs.attempts > 0
           ? `in progress (${qs.correct} checkpoint${qs.correct === 1 ? '' : 's'} correct so far)`
           : 'opened but not yet verified'
-      let covered = ''
-      const conv = await prisma.conversation.findFirst({
-        where: { userId, context: `tree-node:${a.id}` },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      }).catch(() => null)
-      if (conv) {
-        const [firstBob, recentBobs] = await Promise.all([
-          prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
-          prisma.message.findMany({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 8, select: { id: true, content: true } }).catch(() => []),
-        ])
-        const syllabus = firstBob ? clean(firstBob.content).slice(0, 600) : ''
-        // The NEWEST assistant message on a verified/in-progress ancestor is
-        // usually a quiz-route VERDICT BANNER (starts ✅/❌/🎉) — bookkeeping,
-        // not teaching. Sample the newest NON-verdict turn so the digest
-        // reflects the real remediation/analogy teaching a descendant must
-        // build on (emoji prefix is language-independent).
-        const isVerdict = (s: string) => /^\s*(✅|❌|🎉|🌱)/.test(s)
-        const teaching = recentBobs.find(m => m.id !== firstBob?.id && clean(m.content).length > 0 && !isVerdict(clean(m.content)))
-        const latest = teaching ? clean(teaching.content).slice(0, 350) : ''
-        covered = [
-          syllabus ? `Its workspace laid out: ${syllabus}` : '',
-          latest ? `Latest teaching there: ${latest}` : '',
-        ].filter(Boolean).join('\n')
-      }
+      // Prefer the ancestor's persisted CONTEXT SUMMARY — a purpose-built,
+      // distilled digest kept fresh in the background. Reading it costs nothing
+      // and is why this whole path no longer re-derives every ancestor from raw
+      // messages on each turn. Fall back to a live derivation only for a node
+      // that has never been summarized; the background pass replaces that
+      // within a turn or two of real work.
+      const covered = a.contextSummary?.trim()
+        ? a.contextSummary.trim()
+        : await liveAncestorDigest(userId, a.id)
       sections.push([
         `### "${a.title}" — ${state}`,
         a.summary ? `Scope: ${a.summary.slice(0, 200)}` : '',
@@ -390,10 +441,122 @@ export async function branchCoverage(userId: string, nodes: TreeNode[], nodeId: 
         covered,
       ].filter(Boolean).join('\n'))
     }
-    return `\n## ALREADY COVERED BELOW ON THIS BRANCH (root → parent — the ground the student climbed to get here)\n${sections.join('\n')}\n${NO_REDUNDANCY}`
+    return `${position}\n## ALREADY COVERED BELOW ON THIS BRANCH (root → parent — the ground the student climbed to get here)\n${sections.join('\n')}\n${NO_REDUNDANCY}`
   } catch {
     return ''
   }
+}
+
+/**
+ * Regenerate a node's CONTEXT SUMMARY — the continuously-updated, distilled
+ * digest of what THIS node's workspace proved and taught, plus its role toward
+ * the root problem. A cheap background pass (Haiku): every ancestor's workspace
+ * is read by its descendants through branchCoverage() via this summary INSTEAD
+ * of re-deriving it from raw conversation messages on every turn — the per-node
+ * redundancy law (FOUNDATION.md) without the token/context bloat. Triggered
+ * after substantive node chat and on verification. Best-effort — never blocks a
+ * user response and never throws into its caller.
+ */
+export async function refreshNodeContextSummary(userId: string, treeId: string, nodeId: string, lang?: string): Promise<void> {
+  try {
+    const tree = await getTreeWithNodes(userId, treeId)
+    if (!tree) return
+    const node = tree.nodes.find(n => n.id === nodeId)
+    if (!node || node.pending) return
+    const sessionLang = lang ?? tree.language ?? undefined
+    const zh = sessionLang === 'zh'
+
+    const { parseQuizState } = await import('@/lib/mastery')
+    const qs = parseQuizState(node.quizState)
+
+    // This node's OWN workspace conversation — its teaching record.
+    const clean = (s: string) =>
+      s.replace(/\[\[QUIZ\]\][\s\S]*$/, '').replace(/```image[\s\S]*?```/g, '(diagram)').trim()
+    const isVerdict = (s: string) => /^\s*(✅|❌|🎉|🌱)/.test(s)
+    let syllabus = ''
+    let teachingExcerpts: string[] = []
+    // The newest source-message time this summary is built FROM — used below as
+    // a monotonic write guard so an older-state refresh that finishes late can
+    // never clobber a newer one (both call sites are backgrounded and can race,
+    // e.g. a chat refresh still in flight when verification schedules another).
+    let basisAt: Date | null = null
+    const conv = await prisma.conversation.findFirst({
+      where: { userId, context: `tree-node:${nodeId}` },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    }).catch(() => null)
+    if (conv) {
+      const [firstBob, recentBobs] = await Promise.all([
+        prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
+        prisma.message.findMany({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, content: true, createdAt: true } }).catch(() => []),
+      ])
+      syllabus = firstBob ? clean(firstBob.content).slice(0, 1200) : ''
+      teachingExcerpts = recentBobs
+        .filter(m => m.id !== firstBob?.id && clean(m.content).length > 0 && !isVerdict(clean(m.content)))
+        .slice(0, 3)
+        .map(m => clean(m.content).slice(0, 700))
+      // recentBobs is ordered newest-first, so [0] is the latest activity here
+      // (a verification refresh runs after the quiz route persists its banner,
+      // so its basis is strictly newer than any pre-verification chat refresh).
+      basisAt = recentBobs[0]?.createdAt ?? null
+    }
+
+    // Nothing to summarize yet — don't burn a call or clobber a good summary
+    // with an empty one.
+    if (!syllabus && teachingExcerpts.length === 0 && !node.notes?.trim() && !node.explainer?.trim()) return
+
+    const path = nodePath(tree.nodes, nodeId)
+    const facetsDone = qs.facets?.filter(f => f.done).map(f => f.name) ?? []
+    const facetsOpen = qs.facets?.filter(f => !f.done).map(f => f.name) ?? []
+    const missed = (qs.missed ?? []).map(m => m.question.slice(0, 120))
+    const state = node.status === 'understood'
+      ? 'VERIFIED — the learner proved mastery here'
+      : qs.attempts > 0 ? `in progress (${qs.correct} correct / ${qs.attempts} attempts)` : 'opened, not yet verified'
+
+    const client = await anthropic()
+    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+    const model = pickBackgroundModel()
+    const result = await client.messages.create({
+      model,
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: `You are writing the CONTEXT SUMMARY for one node of a learner's problem-mastery tree. This summary is read by the workspaces of the nodes ABOVE this one so they build on what was established here WITHOUT re-teaching it, and so the learner always knows how this node fits into solving the root problem. Be dense, factual, and specific — no praise, no filler, no invented content.
+
+ROOT PROBLEM: "${tree.title}"
+THIS NODE: "${node.title}" — ${node.summary}
+Branch (root → here): ${path.map(n => `"${n.title}"`).join(' → ')}
+Verification state: ${state}
+${facetsDone.length ? `Facets PROVEN here: ${facetsDone.join('; ')}` : ''}
+${facetsOpen.length ? `Facets still OPEN: ${facetsOpen.join('; ')}` : ''}
+${missed.length ? `Checkpoints missed (sticking points): ${missed.join(' | ')}` : ''}
+${node.notes?.trim() ? `Learner's own notes: ${node.notes.trim().slice(0, 500)}` : ''}
+${syllabus ? `Workspace opening / syllabus: ${syllabus}` : ''}
+${teachingExcerpts.length ? `Teaching that happened here:\n${teachingExcerpts.map((t, i) => `(${i + 1}) ${t}`).join('\n')}` : ''}
+${node.explainer?.trim() && !syllabus ? `Node explainer: ${node.explainer.slice(0, 1000)}` : ''}
+
+Write compact markdown with EXACTLY these four short sections (one to three tight bullets each; omit a bullet only if genuinely empty — never pad):
+**Established here** — the specific concepts/mechanisms this node actually TAUGHT (what an upper node may reference in one clause and must not re-explain).
+**Proven** — what the learner has verifiably demonstrated (from proven facets / correct own-words answers); write "nothing verified yet" if so.
+**Still open** — unproven facets, missed checkpoints, or sticking points a later node should know about; write "none" if so.
+**Role toward the root** — one sentence: how mastering this node contributes to solving the root problem.
+
+Keep the WHOLE summary under 180 words. Write every word in ${zh ? 'Simplified Chinese (简体中文)' : 'English'}.`,
+      }],
+    })
+    void recordUsage(result, userId, model, 'tree-summary')
+    const summary = (result.content[0] as { text?: string })?.text?.trim() ?? ''
+    if (!summary) return
+    // Monotonic compare-and-set: write only if no fresher summary already
+    // landed (contextSummaryAt is the basis-message time, so "fresher" = built
+    // from newer messages). A summary with no conversation basis (notes/
+    // explainer only) stamps write-time — it races nothing message-based.
+    const writeAt = basisAt ?? new Date()
+    await prisma.treeNode.updateMany({
+      where: { id: nodeId, OR: [{ contextSummaryAt: null }, { contextSummaryAt: { lt: writeAt } }] },
+      data: { contextSummary: clampText(summary, 1600), contextSummaryAt: writeAt },
+    }).catch(() => null)
+  } catch { /* non-critical */ }
 }
 
 // ── Expansion (grows only with permission) ───────────────────────────────
@@ -980,6 +1143,15 @@ export async function markNodeVerified(
       }
       treeCompleted = true
     }
+  } catch { /* non-critical */ }
+
+  // The node's CONTEXT SUMMARY should now reflect its freshly-VERIFIED state so
+  // every ancestor-reading descendant knows this ground is proven. Refresh it
+  // in the background — never blocks the verification response (Vercel
+  // waitUntil keeps the lambda alive past the response so the pass survives).
+  try {
+    const { inBackground } = await import('@/lib/background')
+    inBackground(refreshNodeContextSummary(userId, treeId, nodeId, lang))
   } catch { /* non-critical */ }
 
   return { xp, treeCompleted }

@@ -113,9 +113,18 @@ already covered, and it **builds on** that material instead of repeating it:
   verification).
 
 Implementation: `branchCoverage()` — a digest of what each ancestor's workspace
-actually taught (its syllabus, latest teaching, the learner's notes, verification
-state) injected into the node chat and explainer prompts — and the `NO_REDUNDANCY`
-rule text, both in `src/lib/tree-engine.ts`.
+actually taught, plus `nodePositionBlock()` (where this node sits on the way to
+solving the root), injected into the node chat and explainer prompts — and the
+`NO_REDUNDANCY` rule text, both in `src/lib/tree-engine.ts`. To keep this awareness
+from bloating every conversation with re-derived context, each node carries a
+**continuously-updated context summary** (`TreeNode.contextSummary`): a distilled
+digest of what that node proved and taught and its role toward the root, written by
+a cheap background pass (`refreshNodeContextSummary()`, Haiku) after substantive
+chat and on verification. `branchCoverage()` reads each ancestor's stored summary
+instead of re-slicing its raw conversation messages on every turn (falling back to a
+live derivation only for a node not yet summarized) — so a descendant's workspace
+stays fully aware of the branch below and its own position without paying the token
+cost of the whole history each turn.
 
 ## Bottleneck-Triggered Teaching — Capability-Oriented Learning (law)
 

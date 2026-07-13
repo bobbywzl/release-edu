@@ -68,9 +68,15 @@ Each session carries its own language / difficulty / personal background / PURPO
 - `src/lib/tree-engine.ts` — seeding, expansion proposals (with clarify), explainers,
   checkpoint verification (`judgeCheckpointAnswer`, `markNodeVerified`),
   `sessionDirectives()`, `ANSWER_STANDARD`, `NO_REDUNDANCY` + `branchCoverage()`
-  (ancestor-workspace digest → node chat/explainer prompts: every node builds on
-  the branch below, never re-teaches it — law in FOUNDATION.md). The heart of the
-  product.
+  (ancestor-workspace digest + `nodePositionBlock()` "where this node sits toward the
+  root" → node chat/explainer prompts: every node builds on the branch below, never
+  re-teaches it — law in FOUNDATION.md). `branchCoverage()` reads each ancestor's
+  persisted `TreeNode.contextSummary` — a continuously-updated, distilled per-node
+  digest written by the cheap background pass `refreshNodeContextSummary()` (Haiku,
+  usage tag `tree-summary`; triggered after substantive node chat and on
+  verification) — INSTEAD of re-deriving each ancestor from raw conversation messages
+  every turn (that's the token/context-bloat fix); it falls back to a live derivation
+  only for a node not yet summarized. The heart of the product.
 - `src/lib/mastery.ts` — client-safe single source of truth: `MASTERY_TARGET`
   (fallback), `masteryTarget`/`masteryFilled`/`masteryMet` (syllabus-coverage
   verification over `QuizState.facets`), `parseQuizState`, the `PendingQuiz`
@@ -115,10 +121,10 @@ Each session carries its own language / difficulty / personal background / PURPO
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,
-  `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `tree-copilot`,
-  `node-chat`, `reflection`, `insight`, `onboarding`, `portfolio`, `title`, `image`, `other`
-  (legacy values render with "(legacy)" labels). Every new AI call MUST record usage
-  with a fitting feature tag.
+  `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `tree-summary`,
+  `tree-copilot`, `node-chat`, `reflection`, `insight`, `onboarding`, `portfolio`,
+  `title`, `image`, `other` (legacy values render with "(legacy)" labels). Every new
+  AI call MUST record usage with a fitting feature tag.
 
 ## The Insight Constellation (the moat — grounded in learning-science research)
 
