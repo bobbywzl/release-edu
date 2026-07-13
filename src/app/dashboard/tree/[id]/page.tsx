@@ -324,7 +324,7 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
             <div key={node.id}>
               {showHeader && !q && (
                 <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mt-4 mb-2">
-                  {depth === 0 ? t('tree.levelRoot') : `${t('tree.levelLabel')} ${depth}`}
+                  {depth === 0 ? t('tree.levelRoot') : t('tree.levelLabel').replace('{n}', String(depth))}
                 </p>
               )}
               <div className="border border-border rounded-xl bg-card overflow-hidden">

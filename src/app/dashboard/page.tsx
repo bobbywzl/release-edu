@@ -167,7 +167,7 @@ export default function DashboardPage() {
               <p className="text-[11px] text-muted-foreground mb-2">{t('dashboard.bobKnowsSub')}</p>
               {insights.map(i => (
                 <div key={i.id} className="flex items-start gap-2 text-xs">
-                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium uppercase tracking-wide">{i.type}</span>
+                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium uppercase tracking-wide">{t(`insight.type.${i.type}`, i.type)}</span>
                   <span className="text-foreground/85 leading-snug">{i.content}{i.timesObserved > 1 ? <span className="text-muted-foreground/60"> ·×{i.timesObserved}</span> : null}</span>
                 </div>
               ))}

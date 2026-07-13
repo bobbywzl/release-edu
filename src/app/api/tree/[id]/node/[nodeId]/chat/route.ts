@@ -150,6 +150,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const store = dbStore.forUser(userId)
   const { message, lang } = (await req.json().catch(() => ({}))) as { message?: string; lang?: string }
   if (!message?.trim()) return new Response('Message required', { status: 400 })
+  // Cap message length BEFORE persisting: a giant paste stored verbatim would
+  // poison the history and make every later turn (incl. checkpoint/remediation
+  // triggers) exceed the model context — the file-upload path (LinkedFile) is
+  // the channel for large artifacts. Control triggers are exempt (short tokens).
+  const MSG_MAX = 8000
+  const isControlTrigger = ['[NODE_INTRO]', '[NODE_REVIEW]', '[NODE_CHECKPOINT]', '[NODE_REMEDIATE]'].includes(message.trim())
+  if (!isControlTrigger && message.length > MSG_MAX) {
+    return new Response(lang === 'zh' ? '消息太长，请精简后再发送。' : 'Message too long — please shorten it.', { status: 413 })
+  }
 
   const tree = await getTreeWithNodes(userId, id)
   const node = tree?.nodes.find(n => n.id === nodeId)
@@ -499,10 +508,16 @@ Write a full, TEXTBOOK-STYLE explainer of that specific piece of understanding �
 Everything here obeys the Answer Standard above (Relevant to exactly this gap, never a field survey) and Per-Node Redundancy Avoidance — if the ALREADY COVERED section shows an ancestor already taught something this touches, reference it in one clause, never re-teach it.
 Close with ONE short, conversational, inviting question checking they're following ("does that land?" / "want me to walk the [specific piece] again a different way?") — plain prose only. Do NOT ask a new checkpoint this turn, do NOT offer to quiz them, and do NOT emit a [[QUIZ]] block — they need room to actually absorb this before being tested on it again. Asking resumes once they re-engage.` : ''}${reflectionBlock}`
 
+  // Excerpt any oversized past entry so a message stored before the length
+  // cap (or a huge assistant turn) can't keep exceeding the model context.
+  const HISTORY_MSG_CAP = 4000
   const history = (conv!.messages ?? [])
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .slice(-20)
-    .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+    .map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content.length > HISTORY_MSG_CAP ? `${m.content.slice(0, HISTORY_MSG_CAP)}\n…[truncated]` : m.content,
+    }))
 
   const encoder = new TextEncoder()
   const convId = conv!.id
@@ -737,7 +752,19 @@ or
         return null
       }
 
-      if (qIdx !== -1) {
+      // BOTTLENECK-TRIGGERED TEACHING (law): no checkpoint may ride the node
+      // INTRO (openers never quiz) or a REMEDIATION turn (the learner needs
+      // room to absorb the explainer before being re-probed). If Bob emitted a
+      // [[QUIZ]] on such a turn anyway, DROP it — the prose is flushed/persisted
+      // as proseOnly and no card is armed. Enforced in code, not just prompt.
+      if (qIdx !== -1 && (isIntro || isRemediate)) {
+        if (qIdx > sentLen) {
+          try { controller.enqueue(encoder.encode(full.slice(sentLen, qIdx))) } catch { /* closed */ }
+          sentLen = qIdx
+        }
+        persistContent = proseOnly
+        console.warn('[tree] suppressed a checkpoint on', isIntro ? 'intro' : 'remediation', 'turn', { nodeId })
+      } else if (qIdx !== -1) {
         if (qIdx > sentLen) {
           try { controller.enqueue(encoder.encode(full.slice(sentLen, qIdx))) } catch { /* closed */ }
           sentLen = qIdx
@@ -879,7 +906,7 @@ Return ONLY JSON: {"recitable": true|false}`,
             const { inBackground } = await import('@/lib/background')
             // waitUntil-wrapped: the stream closes right after this, and a
             // frozen lambda would silently starve the insight moat.
-            inBackground(extractInsightsBackground(apiKey, message.trim(), persistContent, userId))
+            inBackground(extractInsightsBackground(apiKey, message.trim(), persistContent, userId, tree.language ?? undefined))
           }
         } catch { /* non-critical */ }
       }

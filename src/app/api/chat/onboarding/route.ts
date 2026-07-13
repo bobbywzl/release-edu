@@ -342,8 +342,14 @@ export async function POST(req: NextRequest) {
         if (profileMatch) {
           try {
             const profile = JSON.parse(profileMatch[1])
-            // Fire and forget — save profile and mark onboarded in background
-            void saveOnboardingProfile(storeUserId, profile)
+            // waitUntil-wrapped: the stream closes right after this, and a
+            // frozen lambda would silently drop the ONLY persistence of the
+            // interview (isOnboarded, interest/strength/aspiration insights,
+            // learningStyle, advancementLevel) — the moat cold-starting.
+            void (async () => {
+              const { inBackground } = await import('@/lib/background')
+              inBackground(saveOnboardingProfile(storeUserId, profile))
+            })()
           } catch (e) {
             console.error('[Onboarding] Failed to parse profile:', e)
           }
