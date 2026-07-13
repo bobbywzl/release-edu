@@ -17,6 +17,7 @@ import { motion } from 'framer-motion'
 import {
   Bot, Send, ArrowLeft, ShieldCheck, Loader2, StickyNote, Paperclip,
   Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
+  Maximize2, Download, X,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
@@ -92,6 +93,13 @@ function WorkspaceInner() {
   const [showNotes, setShowNotes] = useState<boolean>(() => (typeof window === 'undefined' ? true : window.innerWidth >= 1024))
   const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files' | 'log'>('notes')
   const [explainerLoading, setExplainerLoading] = useState(false)
+  // Explainer fullscreen overlay + PDF export state. The PDF is rasterized
+  // client-side from the rendered markdown (fonts incl. 中文 and KaTeX come
+  // out exactly as displayed), forced onto a white background for print.
+  const [explainerFull, setExplainerFull] = useState(false)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const explainerBodyRef = useRef<HTMLDivElement>(null)
+  const explainerFullRef = useRef<HTMLDivElement>(null)
   const [notesDraft, setNotesDraft] = useState<string | null>(null)
   const [notesSaved, setNotesSaved] = useState(false)
   const [notesError, setNotesError] = useState(false)
@@ -351,6 +359,82 @@ function WorkspaceInner() {
       setExplainerLoading(false)
     }
   }
+
+  // Export the rendered explainer as a paginated A4 PDF. Rasterized from the
+  // live DOM (html2canvas → jsPDF): the browser's own text layout means 中文,
+  // KaTeX math and generated diagrams export exactly as displayed, with no
+  // font embedding. The clone is forced onto white with dark text so a
+  // dark-theme screen still produces a printable document.
+  async function downloadExplainerPdf() {
+    const el = (explainerFull ? explainerFullRef.current : explainerBodyRef.current)
+    if (!el || !node?.explainer || pdfBusy) return
+    setPdfBusy(true)
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ])
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        windowWidth: 960,
+        onclone: (doc, cloned) => {
+          // Print styling: fixed readable width + light theme, regardless of
+          // the on-screen panel width or dark mode.
+          cloned.style.width = '820px'
+          cloned.style.maxWidth = '820px'
+          cloned.style.padding = '28px 34px'
+          cloned.style.background = '#ffffff'
+          const style = doc.createElement('style')
+          style.textContent = `
+            * { color: #16181d !important; background: transparent !important; border-color: #d7dae0 !important; box-shadow: none !important; text-shadow: none !important; }
+            a { color: #1d4ed8 !important; }
+            pre, code { background: #f4f5f7 !important; }
+            img, svg, canvas { max-width: 100% !important; }
+          `
+          doc.head.appendChild(style)
+        },
+      })
+      // Paginate the tall capture into A4 pages.
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+      const pageW = 210, pageH = 297, margin = 10
+      const imgW = pageW - margin * 2
+      const pxPerMm = canvas.width / imgW
+      const pageSliceH = Math.floor((pageH - margin * 2) * pxPerMm)
+      let y = 0
+      let first = true
+      while (y < canvas.height) {
+        const sliceH = Math.min(pageSliceH, canvas.height - y)
+        const slice = document.createElement('canvas')
+        slice.width = canvas.width
+        slice.height = sliceH
+        const ctx = slice.getContext('2d')
+        if (!ctx) break
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, slice.width, slice.height)
+        ctx.drawImage(canvas, 0, y, canvas.width, sliceH, 0, 0, canvas.width, sliceH)
+        if (!first) pdf.addPage()
+        pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, imgW, sliceH / pxPerMm)
+        y += sliceH
+        first = false
+      }
+      const safeName = (node.title || 'explainer').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80)
+      pdf.save(`${safeName}.pdf`)
+    } catch {
+      // Non-critical: the explainer stays on screen; the button re-enables.
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
+  // Esc closes the fullscreen explainer (matches every other overlay here).
+  useEffect(() => {
+    if (!explainerFull) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setExplainerFull(false) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [explainerFull])
 
   async function saveNotes() {
     if (notesDraft === null || !treeId || !nodeId) return
@@ -943,12 +1027,35 @@ function WorkspaceInner() {
           <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl bg-card lg:static lg:z-auto lg:w-96 lg:max-w-none lg:shadow-none lg:bg-card/40 flex-shrink-0 border-l border-border overflow-y-auto">
             <div className="p-4 space-y-4">
               <div>
-                <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5 mb-2">
-                  <StickyNote className="w-3.5 h-3.5 text-primary" /> {t('workspace.retainedKnowledge')}
-                </h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <StickyNote className="w-3.5 h-3.5 text-primary" /> {t('workspace.retainedKnowledge')}
+                  </h3>
+                  {node?.explainer && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={downloadExplainerPdf}
+                        disabled={pdfBusy}
+                        title={t('workspace.downloadPdf')}
+                        className="w-6 h-6 rounded-md hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                      >
+                        {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => setExplainerFull(true)}
+                        title={t('workspace.explainerExpand')}
+                        className="w-6 h-6 rounded-md hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {node?.explainer ? (
                   <div className="text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-72 overflow-y-auto">
-                    <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                    <div ref={explainerBodyRef}>
+                      <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                    </div>
                   </div>
                 ) : (
                   <button
@@ -1154,6 +1261,42 @@ function WorkspaceInner() {
           </div>
         )}
       </div>
+
+      {/* Fullscreen explainer — the same rendered content at reading width,
+          with PDF export. Esc or ✕ closes. */}
+      {explainerFull && node?.explainer && (
+        <div className="fixed inset-0 z-[120] bg-background flex flex-col">
+          <div className="h-14 flex-shrink-0 border-b border-border flex items-center gap-3 px-4">
+            <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-foreground truncate">{node.title}</div>
+              <div className="text-[11px] text-muted-foreground truncate">{t('workspace.retainedKnowledge')}</div>
+            </div>
+            <button
+              onClick={downloadExplainerPdf}
+              disabled={pdfBusy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {pdfBusy ? t('workspace.pdfPreparing') : t('workspace.downloadPdf')}
+            </button>
+            <button
+              onClick={() => setExplainerFull(false)}
+              aria-label={t('common.dismiss')}
+              className="w-8 h-8 rounded-lg hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-3xl mx-auto px-5 py-8 text-[15px] leading-relaxed">
+              <div ref={explainerFullRef}>
+                <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )
