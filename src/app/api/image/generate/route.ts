@@ -12,7 +12,6 @@
  * otherwise a list of known image models is tried in order.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { createHash } from 'crypto'
 import { authOptions } from '@/lib/auth'
@@ -35,11 +34,10 @@ const IMAGE_MODELS = [
 ].filter(Boolean) as string[]
 
 export async function POST(req: NextRequest) {
-  // Gate the expensive endpoint to authenticated / demo users.
-  const cookieStore = await cookies()
-  const isDemo = cookieStore.get('demo-mode')?.value === 'true'
+  // Gate the expensive endpoint to authenticated users (login is required
+  // product-wide — demo mode is gone).
   const session = await getServerSession(authOptions)
-  if (!session?.user && !isDemo) {
+  if (!session?.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

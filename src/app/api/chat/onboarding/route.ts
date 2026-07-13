@@ -3,7 +3,6 @@
  * Separate from the main /api/chat endpoint to avoid polluting the tutoring conversation.
  */
 import { NextRequest } from 'next/server'
-import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { dbStore } from '@/lib/db-store'
@@ -116,15 +115,10 @@ export async function POST(req: NextRequest) {
   const { message } = body
   let { conversationId } = body
 
-  const cookieStore = await cookies()
-  const isDemo = cookieStore.get('demo-mode')?.value === 'true'
   const session = await getServerSession(authOptions)
 
-  if (!session?.user && !isDemo) {
+  if (!session?.user) {
     return new Response('Unauthorized', { status: 401 })
-  }
-  if (isDemo) {
-    return new Response('Demo mode — onboarding not available', { status: 403 })
   }
 
   const storeUserId = await getUserId()

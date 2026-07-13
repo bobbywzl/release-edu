@@ -118,7 +118,7 @@ function extractJSON<T>(text: string): T | null {
 async function studentGrounding(userId: string): Promise<string> {
   try {
     const { getStudentContext } = await import('@/lib/student-context')
-    const ctx = await getStudentContext(null, false, userId)
+    const ctx = await getStudentContext(null, userId)
     const parts = [
       ctx.profile.advancementLevel ? `Target level: ${ctx.profile.advancementLevel}` : '',
       ctx.profile.occupation ? `Background: ${ctx.profile.occupation}` : '',
@@ -193,7 +193,7 @@ Return ONLY JSON:
   if (!seed?.solutions?.length) throw new Error('Seed generation failed')
 
   // The insert must never fail AFTER the seed was paid for — guarantee the
-  // FK target exists (first-action users and demo visitors have no row yet).
+  // FK target exists (first-action users have no row yet).
   await ensureUserRow(userId)
 
   const tree = await prisma.problemTree.create({

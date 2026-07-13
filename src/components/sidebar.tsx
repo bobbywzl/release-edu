@@ -37,10 +37,6 @@ export function Sidebar() {
   const initial = (mockStudent.name && mockStudent.name.trim()[0]?.toUpperCase()) || '·'
   const displayName = mockStudent.name?.trim() || ''
   const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [isDemo, setIsDemo] = useState(false)
-  useEffect(() => {
-    setIsDemo(document.cookie.includes('demo-mode=true'))
-  }, [])
 
   const expanded = pinned || hovered
 
@@ -205,7 +201,7 @@ export function Sidebar() {
                 </div>
               </Link>
               <button
-                onClick={() => { isDemo ? (window.location.href = '/api/demo/clear') : import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
+                onClick={() => { import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
                 className="w-7 h-7 rounded-md hover:bg-destructive/20 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                 title={t("nav.logout")}
               >
@@ -225,7 +221,7 @@ export function Sidebar() {
               </Link>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => { isDemo ? (window.location.href = '/api/demo/clear') : import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
+                  onClick={() => { import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
                   className="flex-1 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md px-2 py-1.5 transition-colors"
                   title={t("nav.logout")}
                 >
@@ -287,7 +283,7 @@ export function Sidebar() {
                 </div>
               </div>
               <button
-                onClick={() => { isDemo ? (window.location.href = '/api/demo/clear') : import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
+                onClick={() => { import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
                 className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-colors"
               >
                 <LogOut className="w-3.5 h-3.5" /> {t("nav.logout")}

@@ -1,15 +1,15 @@
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { cookies } from 'next/headers'
 
+/**
+ * The signed-in user's id (Google `sub`). Login is REQUIRED product-wide —
+ * demo mode is gone. Middleware already 401s unauthenticated calls to every
+ * user-data API and redirects /dashboard to /login, so the 'anonymous'
+ * return below is a defensive dead branch (a route outside the middleware
+ * matcher, a race during sign-out), never a supported identity: no data may
+ * be written for it by design.
+ */
 export async function getUserId(): Promise<string> {
-  // Demo cookie takes priority — allows logged-in users to enter demo mode
-  const cookieStore = await cookies()
-  const demoId = cookieStore.get('demo-session-id')?.value
-  if (cookieStore.get('demo-mode')?.value === 'true' && demoId) {
-    return `demo-${demoId}`
-  }
-
   const session = await getServerSession(authOptions)
   if (session?.user) {
     return (session.user as { id?: string }).id || session.user.email || 'unknown'
@@ -18,13 +18,6 @@ export async function getUserId(): Promise<string> {
 }
 
 export async function getUserInfo(): Promise<{ id: string; email?: string; name?: string; image?: string }> {
-  // Demo cookie takes priority
-  const cookieStore = await cookies()
-  const demoId = cookieStore.get('demo-session-id')?.value
-  if (cookieStore.get('demo-mode')?.value === 'true' && demoId) {
-    return { id: `demo-${demoId}`, email: `demo-${demoId}@release.edu`, name: 'Demo Student' }
-  }
-
   const session = await getServerSession(authOptions)
   if (session?.user) {
     return {

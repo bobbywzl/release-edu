@@ -25,10 +25,30 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 308)
   }
 
+  // User-data / AI API routes that must NEVER run for an unauthenticated
+  // caller — otherwise getUserId() falls back to the shared "anonymous"
+  // bucket (data leaks between strangers + unmetered AI spend). Login is
+  // REQUIRED product-wide (demo mode is gone): only a NextAuth token passes.
+  // Excluded: /api/auth/* (NextAuth itself), /api/admin/* (its own stronger
+  // gate below), /api/cron/* (secret-gated jobs), /api/image/* (public
+  // generated-visual cache).
+  const isUserApi = /^\/api\/(tree|xp|insights|files|conversations|portfolio|chat|student-profile|student-data|highlights|feedback|teacher|account|user|drive)(\/|$)/.test(pathname)
+
   // Everything below only guards the app's own gated areas.
   const isDashboard = pathname.startsWith('/dashboard')
   const isAdminArea = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
-  if (!isDashboard && !isAdminArea) return NextResponse.next()
+  if (!isDashboard && !isAdminArea && !isUserApi) return NextResponse.next()
+
+  // Authenticated-caller gate for the user-data APIs (a 401, never a redirect
+  // — these are fetch() targets). /api/teacher/* additionally enforces admin
+  // in its handlers; here we only require a signed-in caller.
+  if (isUserApi) {
+    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
+    if (!token) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    return NextResponse.next()
+  }
 
   // Admin login page AND the password-auth endpoint are always reachable with
   // no auth — they ARE the gate (password-based, independent of Google login).
@@ -66,11 +86,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Student dashboard — require auth or demo mode
+  // Student dashboard — a signed-in session is required, no exceptions
+  // (demo mode is gone; the web app is unusable without logging in).
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-  const demoMode = request.cookies.get('demo-mode')?.value === 'true'
 
-  if (!token && !demoMode) {
+  if (!token) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   return NextResponse.next()
