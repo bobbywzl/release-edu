@@ -427,7 +427,7 @@ ${node.status === 'understood'
   ? '- This node is already VERIFIED. Checkpoints are optional deepening now (exception: on a RETENTION REVIEW turn you MUST ask one) — focus on connections onward to the root problem.'
   : `- Mastery state: ${masteryFilled(quizStateNow)}/${masteryTarget(quizStateNow)} ${quizStateNow.facets ? 'syllabus facets proven' : 'checkpoint answers correct'} so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. The node verifies automatically when ${quizStateNow.facets ? 'EVERY facet in the coverage map below is proven by a correct checkpoint' : `${MASTERY_TARGET} answers are correct`} (incl. ${MASTERY_MIN_SHORT} own-words short answer), and the student is told in the feedback.`}
 ${node.status !== 'understood' && quizStateNow.facets ? `- SYLLABUS COVERAGE MAP (the node's VERIFICATION CONTRACT — the sub-points this node's syllabus promised): ${quizStateNow.facets.map(f => `${f.done ? '✅' : '⬜'} "${f.name}"`).join(' · ')}
-- EVERY checkpoint must include "facet":"<exact name from the map>" naming the ⬜ UNDONE facet it probes. Target undone facets — a correct answer proves that facet; questions on already-✅ facets never advance verification. Every promised facet must be probed and proven — none may be skipped, and verification is COVERAGE, not a count.` : ''}
+- EVERY checkpoint must include "facet":"<exact name from the map>" naming the ⬜ UNDONE facet it probes. Target undone facets — a correct answer proves that facet; questions on already-✅ facets never advance verification. Every promised facet must be probed and proven — none may be skipped, and verification is COVERAGE, not a count. If you omit the tag or misname the facet, that correct answer CANNOT advance coverage — copy the facet name EXACTLY from the map.` : ''}
 - VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
 - THE MASTERY STATE ABOVE IS THE ONLY TRUTH about progress. If the conversation's visible ✅ count, the student's belief, or your own memory disagrees with it, the mastery state WINS: say plainly how many answers are recorded (e.g. "the system has 2 of 3 recorded — one more correct answer verifies it") and simply continue with the next checkpoint. NEVER speculate about display bugs, sync issues, or tell the student to "trust the header over me" / refresh the page — the header and this state are the same number, and inventing a discrepancy story erodes the exact trust verification exists to build.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
@@ -480,13 +480,15 @@ FINALLY — as the very LAST line of the message, emit this machine block (never
 ## THIS TURN: RETENTION REVIEW (the student clicked Review on this verified node — they have not spoken)
 Memory fades; this visit exists to interrupt that.
 1. In 2-4 sentences, reactivate the core idea as a recall cue — what it is and why it mattered to the ROOT problem ("${tree.title}"). No full re-lecture.
-2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${isCheckpoint ? `
+2. END with exactly ONE [[QUIZ]] checkpoint (prefer "short") that probes the concept from an angle NOT used earlier in this conversation. Reviews pay full XP — make it a genuine transfer question.` : ''}${isCheckpoint ? (node.status === 'understood' ? `
+## THIS TURN: DEEPENING CHECK ON A VERIFIED NODE (the student just answered correctly — this node is ALREADY verified)
+There is NO verification progress to advance and you must never imply there is — no "N more to verify", no facet targeting, no own-words requirement talk (the mastery state above is the only truth: this node is verified). In 2-4 sentences, acknowledge the correct answer and connect it ONWARD — to the next unverified node in the tree above, or to the ROOT problem ("${tree.title}"). You MAY end with exactly ONE deeper transfer [[QUIZ]] checkpoint (Differentiator bar, scoped to THIS node) ONLY if the student has shown appetite for more practice this visit; otherwise end with the connection onward and NO checkpoint block.` : `
 ## THIS TURN: NEXT CHECKPOINT (the student just answered CORRECTLY — keep asking)
 BOTTLENECK-TRIGGERED TEACHING (law): no bottleneck was found — a correct answer means nothing needs teaching right now, so don't. This node is NOT yet verified (${masteryFilled(quizStateNow)}/${masteryTarget(quizStateNow)} ${quizStateNow.facets ? 'facets proven' : 'correct'}${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? `, and still needs ${MASTERY_MIN_SHORT} own-words short answer` : ''}). Keep the momentum:
 1. A 3-6 word "Good — next:" bridge is enough. No lecture.
 2. Then END with exactly ONE NEW [[QUIZ]] checkpoint — different from every question already asked, scoped strictly to THIS node${quizStateNow.facets ? ` and probing the NEXT UNDONE facet from the coverage map${quizStateNow.facets.find(f => !f.done) ? ` ("${quizStateNow.facets.find(f => !f.done)!.name}")` : ''} with its "facet" field set` : ''}${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ', and make it a "short" own-words probe (the node still needs one to verify)' : ' (vary MCQ / short)'}.
 Output nothing after the checkpoint block.
-(If their last answer was actually wrong/shaky — this trigger is only meant to fire on correct, but just in case — do NOT ask a new checkpoint; instead teach into it exactly as [NODE_REMEDIATE] would below.)` : ''}${isRemediate ? `
+(If their last answer was actually wrong/shaky — this trigger is only meant to fire on correct, but just in case — do NOT ask a new checkpoint; instead teach into it exactly as [NODE_REMEDIATE] would below.)`) : ''}${isRemediate ? `
 ## THIS TURN: BOTTLENECK TEACHING (the student just answered a checkpoint WRONG — this is the bottleneck the ask-first model exists to find)
 BOTTLENECK-TRIGGERED TEACHING (law, FOUNDATION.md): Tree EDU asks before it teaches — content is deployed reactively, exactly where a question just proved a gap exists. That gap is right here. Look at the checkpoint question, the student's answer, and the judge's feedback in the conversation above — together they pinpoint PRECISELY what this student does not yet understand. That gap, and ONLY that gap, is what you teach this turn.
 Write a full, TEXTBOOK-STYLE explainer of that specific piece of understanding — NOT a one-line correction, NOT a re-explanation of the whole node. Real depth, structured like a textbook passage (\`##\`/\`###\` headers where content earns them):
@@ -721,7 +723,12 @@ or
             const card = (fence?.[1] ? tryParse(fence[1]) : null)
               ?? tryParse(txt)
               ?? (o1 !== -1 && o2 > o1 ? tryParse(txt.slice(o1, o2 + 1)) : null)
-            if (card) return card
+            if (card) {
+              // The SERVER chose this facet (not a guess) — stamp it so the
+              // repair/guarantee-path card always credits the right facet.
+              if (nextFacet && !String(card.facet ?? '').trim()) card.facet = nextFacet
+              return card
+            }
             console.warn('[tree] authorCheckpoint: unparseable card output', txt.slice(0, 200))
           } catch (err) {
             console.warn('[tree] authorCheckpoint attempt failed:', err)
@@ -738,6 +745,15 @@ or
         persistContent = proseOnly
         let parsedCard: PendingQuiz | null = null
         try { parsedCard = JSON.parse(full.slice(qIdx + QUIZ_MARK.length).trim()) as PendingQuiz } catch { parsedCard = null }
+        // On a [NODE_CHECKPOINT] continue turn the prompt directed Bob at the
+        // next undone facet — stamp it if he forgot the tag, so the answer
+        // credits the right facet (never on free-chat/quiz-me/review/intro,
+        // where no single facet was directed — stamping there would recreate
+        // the blind-credit bug).
+        if (parsedCard && isCheckpoint && node.status !== 'understood' && !String(parsedCard.facet ?? '').trim()) {
+          const directed = quizStateNow.facets?.find(f => !f.done)?.name
+          if (directed) parsedCard.facet = directed
+        }
         if (parsedCard && cardShapeValid(parsedCard)) {
           // ── DIFFERENTIATOR LINT ──
           // A checkpoint answerable by copying from Bob's own text tests
@@ -810,7 +826,10 @@ Return ONLY JSON: {"recitable": true|false}`,
       // explainer; enforced in code here, not just by prompt instruction.
       if (!quizShipped && !isIntro && !isRemediate) {
         const msgNorm = message.trim()
-        const demanded = isCheckpoint || isReview
+        // On a VERIFIED node the system-solicited [NODE_CHECKPOINT] continue
+        // must NOT force a card (the review is one question, not a chain);
+        // reviews and explicit "quiz me" / can't-see-card requests still do.
+        const demanded = (isCheckpoint && node.status !== 'understood') || isReview
           || /^quiz me on this node[.!。]?$/i.test(msgNorm)
           || /^出一道检查题考考我[。.!！]?$/.test(msgNorm)
           // "I can't see the card/options" — ship a fresh card instead of

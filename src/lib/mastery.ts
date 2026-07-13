@@ -25,6 +25,30 @@ export interface SyllabusFacet {
   done: boolean
 }
 
+/** How a correct answer's facet tag resolves against the coverage map. */
+export type FacetResolution =
+  | { kind: 'credit'; index: number }   // tag names exactly one UNDONE facet → flip it
+  | { kind: 'deepening' }               // tag names an already-DONE facet → no coverage change
+  | { kind: 'unresolved' }              // no tag, matches nothing, or ambiguous
+
+/**
+ * Resolve which facet a checkpoint's tag credits — the truthful rule: a facet
+ * flips `done` ONLY when a checkpoint that actually targeted it is answered
+ * correctly. Fuzzy matching runs over ALL facets and only when UNAMBIGUOUS,
+ * so a tag like "water" that matches both "watering schedule" and "water
+ * chemistry" resolves to 'unresolved' (never a wrong-sibling flip).
+ */
+export function resolveFacetCredit(facets: SyllabusFacet[], tag: string | null | undefined): FacetResolution {
+  const want = (tag ?? '').trim().toLowerCase()
+  if (!want) return { kind: 'unresolved' }
+  const exact = facets.findIndex(f => f.name.trim().toLowerCase() === want)
+  if (exact !== -1) return facets[exact].done ? { kind: 'deepening' } : { kind: 'credit', index: exact }
+  const fuzzy = facets.map((f, i) => ({ f, i }))
+    .filter(({ f }) => { const n = f.name.trim().toLowerCase(); return n.includes(want) || want.includes(n) })
+  if (fuzzy.length !== 1) return { kind: 'unresolved' }
+  return fuzzy[0].f.done ? { kind: 'deepening' } : { kind: 'credit', index: fuzzy[0].i }
+}
+
 /** The node's verification target: its facet count when a syllabus contract
  *  exists, else the static fallback. */
 export function masteryTarget(qs: QuizState): number {
@@ -146,12 +170,16 @@ export interface QuizState {
    *  (done) by a correct checkpoint. null = no contract yet → static
    *  MASTERY_TARGET fallback applies. */
   facets?: SyllabusFacet[] | null
+  /** Consecutive CORRECT answers on a contract-bearing node whose facet tag
+   *  could not be resolved (missing / unmatched / ambiguous). Legit facet
+   *  credit resets it; at 2 the gated anti-stall backstop fires. */
+  untaggedStreak?: number
 }
 
 export function parseQuizState(raw: string | null | undefined): QuizState {
   const fallback: QuizState = {
     correct: 0, attempts: 0, combo: 0, shortCorrect: 0,
-    sureWrong: 0, sureRight: 0, missed: [], reviewedAt: null, pending: null, facets: null,
+    sureWrong: 0, sureRight: 0, missed: [], reviewedAt: null, pending: null, facets: null, untaggedStreak: 0,
   }
   if (!raw) return fallback
   try {
@@ -177,6 +205,7 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
       // A contract needs at least 2 facets to be meaningful — below that,
       // treat as absent so the static fallback governs.
       facets: facets && facets.length >= 2 ? facets : null,
+      untaggedStreak: Math.max(0, p.untaggedStreak ?? 0),
     }
   } catch {
     return fallback

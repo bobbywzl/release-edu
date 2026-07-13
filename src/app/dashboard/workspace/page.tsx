@@ -515,6 +515,10 @@ function WorkspaceInner() {
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
       const verified = !!body.verified
       const wasCorrect = !!body.correct
+      // Server truth first (node row read at answer time); body.review and the
+      // client tree state are mid-deploy fallbacks. Review cards only ever
+      // exist on already-verified nodes.
+      const alreadyVerified = !!body.alreadyVerified || !!body.review || node?.status === 'understood'
       setQuizResult({ correct: wasCorrect, verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
       setQuizError(false)
       if (quizTimerRef.current) clearTimeout(quizTimerRef.current)
@@ -525,12 +529,19 @@ function WorkspaceInner() {
         loadTree()                  // flip header pips / Verified chip
         if (nodeIdRef.current !== answeredNode) return
         setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
-        // Bottleneck-Triggered Teaching (FOUNDATION.md): a correct answer
-        // found no bottleneck — keep asking (NEXT CHECKPOINT). A wrong answer
-        // just found one — teach into it before asking again (REMEDIATE),
-        // never a checkpoint in that same turn. Verified nodes stop entirely
-        // — the Verified chip + celebration already fired.
-        if (!verified) void streamFromBob(wasCorrect ? '[NODE_CHECKPOINT]' : '[NODE_REMEDIATE]', false)
+        // Bottleneck-Triggered Teaching (FOUNDATION.md): a correct answer on an
+        // UNVERIFIED node found no bottleneck — keep asking (NEXT CHECKPOINT).
+        // A wrong answer found one — teach into it (REMEDIATE), never a
+        // checkpoint that same turn; this holds on verified nodes too (a wrong
+        // review answer means retention faded — exactly a proven gap).
+        // A correct answer on an ALREADY-VERIFIED node (the review card, a
+        // deepening card) ends the exchange — the ✅ / review-complete note IS
+        // the closure; the designed review is ONE question, not a chain.
+        // Newly-verified stops too (chip + celebration already fired).
+        if (!verified) {
+          if (!wasCorrect) void streamFromBob('[NODE_REMEDIATE]', false)
+          else if (!alreadyVerified) void streamFromBob('[NODE_CHECKPOINT]', false)
+        }
       }, verified ? 2200 : 1500)
     } catch {
       // Transient (judge unavailable / network) — surface it so the button
