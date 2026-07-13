@@ -70,12 +70,14 @@ interface XpAwardResult {
   rank: RankInfo
 }
 
-/** Compute the rank-progression fields for a level transition. */
+/** Compute the rank-progression fields for a level transition. Every level
+ *  carries its OWN title, so any level-up is a rank-up (fresh name + fanfare);
+ *  tier-ups (new color/emblem family) get the bigger ceremony. */
 function rankTransition(oldLevel: number, newLevel: number): { rankUp: boolean; tierUp: boolean; rank: RankInfo } {
   const from = getRank(oldLevel)
   const to = getRank(newLevel)
   return {
-    rankUp: from.key !== to.key || from.division !== to.division,
+    rankUp: from.en !== to.en,
     tierUp: from.tier !== to.tier,
     rank: to,
   }
@@ -183,13 +185,35 @@ export interface RankInfo {
   vfx: number
 }
 
-const ROMAN = ['', 'I', 'II', 'III']
+// EVERY LEVEL HAS ITS OWN TITLE — a fresh name is the reward for every
+// level-up (per-level names, not per-tier). Titles flow through the 10 tier
+// families (which keep the color/emblem/vfx escalation): index 0 = level 1.
+// Level 75+ is the pinnacle "A Real Beginner", the enlightened full circle.
+const LEVEL_TITLES: Array<{ en: string; zh: string }> = [
+  // Rookie family (1-3) 🌱
+  { en: 'Rookie', zh: '新秀' }, { en: 'Sprout', zh: '新芽' }, { en: 'Sapling', zh: '幼苗' },
+  // Seeker family (4-7) 🧭
+  { en: 'Seeker', zh: '探索者' }, { en: 'Pathfinder', zh: '寻路者' }, { en: 'Trailblazer', zh: '开路者' }, { en: 'Voyager', zh: '远行者' },
+  // Scholar family (8-12) 📖
+  { en: 'Scholar', zh: '学者' }, { en: 'Analyst', zh: '析理者' }, { en: 'Thinker', zh: '思想者' }, { en: 'Synthesist', zh: '融会者' }, { en: 'Theorist', zh: '理论家' },
+  // Prodigy family (13-18) ⚡
+  { en: 'Prodigy', zh: '奇才' }, { en: 'Quicksilver', zh: '敏思者' }, { en: 'Pattern Hunter', zh: '规律猎手' }, { en: 'Connector', zh: '触类旁通' }, { en: 'Rising Star', zh: '新星' }, { en: 'Phenom', zh: '惊才' },
+  // Virtuoso family (19-26) 🎯
+  { en: 'Virtuoso', zh: '大匠' }, { en: 'Artisan', zh: '巧匠' }, { en: 'Specialist', zh: '专精者' }, { en: 'Adept', zh: '娴熟者' }, { en: 'Expert', zh: '行家' }, { en: 'Precisionist', zh: '至精者' }, { en: 'Master Hand', zh: '妙手' }, { en: 'Perfectionist', zh: '至臻者' },
+  // Luminary family (27-36) 🌟
+  { en: 'Luminary', zh: '泰斗' }, { en: 'Beacon', zh: '灯塔' }, { en: 'Mentor', zh: '导师' }, { en: 'Illuminator', zh: '启明者' }, { en: 'Torchbearer', zh: '执炬者' }, { en: 'Polymath', zh: '博学者' }, { en: 'Visionary', zh: '远见者' }, { en: 'Luminous Mind', zh: '明澈之心' }, { en: 'North Star', zh: '北辰' }, { en: 'Radiant', zh: '光辉者' },
+  // Guru family (37-46) 🔮
+  { en: 'Guru', zh: '宗师' }, { en: 'Oracle', zh: '先知' }, { en: 'Sage', zh: '贤者' }, { en: 'Mystic', zh: '玄悟者' }, { en: 'Enlightener', zh: '开悟者' }, { en: 'Philosopher', zh: '哲人' }, { en: 'Archsage', zh: '大贤' }, { en: 'Keeper of Depths', zh: '渊守者' }, { en: 'Wisdom Incarnate', zh: '智慧化身' }, { en: 'Living Library', zh: '活典籍' },
+  // Grandmaster family (47-59) 🏆
+  { en: 'Grandmaster', zh: '大宗师' }, { en: 'Champion', zh: '冠军' }, { en: 'Titan', zh: '巨擘' }, { en: 'Paragon', zh: '典范' }, { en: 'Sovereign', zh: '王者' }, { en: 'Legend', zh: '传奇' }, { en: 'Immortal Hand', zh: '不朽妙手' }, { en: 'Apex', zh: '绝巅' }, { en: 'Colossus', zh: '擎天者' }, { en: 'Peerless', zh: '无双' }, { en: 'Monarch of Mind', zh: '心智之王' }, { en: 'World-Class', zh: '世界级' }, { en: 'Pinnacle', zh: '绝顶' },
+  // Transcendent family (60-74) 🌌
+  { en: 'Transcendent', zh: '超凡' }, { en: 'Ascendant', zh: '飞升者' }, { en: 'Ethereal', zh: '缥缈者' }, { en: 'Boundless', zh: '无界' }, { en: 'Celestial', zh: '天穹者' }, { en: 'Starforger', zh: '铸星者' }, { en: 'Voidwalker', zh: '踏虚者' }, { en: 'Cosmic Mind', zh: '宇宙心智' }, { en: 'Infinite', zh: '无限' }, { en: 'Eternal', zh: '永恒' }, { en: 'All-Seeing', zh: '洞悉万象' }, { en: 'Beyond', zh: '彼岸' }, { en: 'Singularity', zh: '奇点' }, { en: 'Universal', zh: '寰宇' }, { en: 'Threshold', zh: '门槛' },
+]
 
 /**
- * The rank for a level: its tier + division (III at the bottom of the tier,
- * I at the top, just below the next promotion). The base Rookie tier and the
- * top tier are UNDIVIDED — a beginner is simply "Rookie" (a clean, humble
- * start with no numeral), and the pinnacle "A Real Beginner" stands alone.
+ * The rank for a level: a UNIQUE per-level title inside its tier family
+ * (tier supplies color/emblem/vfx and the promotion ceremony scale). The
+ * pinnacle (level 75+) is "A Real Beginner" — beginner's mind, full circle.
  */
 export function getRank(level: number): RankInfo {
   let idx = 0
@@ -197,20 +221,15 @@ export function getRank(level: number): RankInfo {
     if (level >= TIERS[i].minLevel) { idx = i; break }
   }
   const tier = TIERS[idx]
-  const next = TIERS[idx + 1]
-  let division = 0
-  if (next && idx > 0) {
-    const span = Math.max(1, next.minLevel - tier.minLevel)
-    const pos = Math.min(span - 1, Math.max(0, level - tier.minLevel))
-    division = 3 - Math.floor((pos / span) * 3) // 3 (bottom) → 1 (top)
-  }
-  const suffix = division ? ` ${ROMAN[division]}` : ''
+  const title = level >= 75
+    ? { en: tier.en, zh: tier.zh } // "A Real Beginner" holds from 75 on
+    : LEVEL_TITLES[Math.max(1, Math.min(level, LEVEL_TITLES.length)) - 1] ?? { en: tier.en, zh: tier.zh }
   return {
     key: tier.key,
     tier: idx,
-    division,
-    en: `${tier.en}${suffix}`,
-    zh: `${tier.zh}${suffix}`,
+    division: 0, // per-level titles replaced divisions; field kept for compat
+    en: title.en,
+    zh: title.zh,
     color: tier.color,
     glow: tier.glow,
     emblem: tier.emblem,

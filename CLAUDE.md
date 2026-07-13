@@ -105,7 +105,9 @@ Each session carries its own language / difficulty / personal background / PURPO
   timezone (`StudentProfile.lastCheckinDay`, compare-and-set so parallel tabs can't
   double-award); all XP writes are atomic increments. `getRank(level)` returns the
   learning-journey rank (`RankInfo`: tier/division/color/emblem/vfx,
-  Rookie→…→Transcendent→A Real Beginner, 10 tiers, derived from level — no schema); `awardXp`/`awardXpBatch` attach `rankUp`/`tierUp`/`rank`
+  a UNIQUE title per level via `LEVEL_TITLES` (74 names through 10 tier families,
+  Rookie→…→Transcendent→A Real Beginner at 75+, derived from level — no schema;
+  every level-up is a rank-up, tier changes escalate the ceremony); `awardXp`/`awardXpBatch` attach `rankUp`/`tierUp`/`rank`
   so the client fires `playRankUp(vfx, tierUp)` (`src/lib/sfx.ts`, escalating
   synthesized fanfare) + the rank-colored `RankUpOverlay` (`xp-toast.tsx`).
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
