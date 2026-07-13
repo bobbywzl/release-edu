@@ -36,6 +36,14 @@ export default function TreePage() {
   const [step, setStep] = useState(0)
   const STEPS = 5
   const [sessLang, setSessLang] = useState<'en' | 'zh'>(language === 'zh' ? 'zh' : 'en')
+  // The provider's language resolves async (localStorage → DB) — the initial
+  // useState capture can be a stale 'en' for a 中文 account. Track whether the
+  // user explicitly picked a session language; until they do, follow the app
+  // language so the stepper default always matches Settings.
+  const sessLangTouched = useRef(false)
+  useEffect(() => {
+    if (!sessLangTouched.current) setSessLang(language === 'zh' ? 'zh' : 'en')
+  }, [language])
   const [purpose, setPurpose] = useState('')
   const [background, setBackground] = useState('')
   const [difficulty, setDifficulty] = useState<string>('intermediate')
@@ -191,7 +199,7 @@ export default function TreePage() {
               {([['en', 'English'], ['zh', '中文']] as const).map(([code, label]) => (
                 <button
                   key={code}
-                  onClick={() => setSessLang(code)}
+                  onClick={() => { sessLangTouched.current = true; setSessLang(code) }}
                   className={`px-5 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
                     sessLang === code ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
                   }`}

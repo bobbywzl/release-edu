@@ -34,17 +34,18 @@ export async function POST(req: NextRequest) {
   const existing = await store.getProfile()
   const currentMeta = existing?.roadmapState ? JSON.parse(existing.roadmapState) : {}
 
-  // ── Language lock ──────────────────────────────────────────────────────
-  // Language is a one-time choice at onboarding. Once the user is onboarded,
-  // ignore any further `language` field in incoming payloads — the stored
-  // value wins. This prevents post-onboarding flips that would mismatch
-  // Bob's voice with the already-generated curriculum (which was written in
-  // the original language). The frontend has no UI for this either; this is
-  // the server-side enforcement.
+  // ── Language switch (Tree EDU) ─────────────────────────────────────────
+  // Language is freely switchable from Settings. The old Release EDU lock
+  // (one-time choice, frozen once the curriculum generated) is gone — Tree EDU
+  // has no generated curriculum, and each ProblemTree carries its own session
+  // language. A valid `language` here updates the account default AND is
+  // propagated to every existing tree below, so Bob's next reply in ANY
+  // session follows the switch. Already-written messages/explainers keep
+  // their original language — only future AI output flips.
   const incomingBody = { ...body }
-  if (existing?.isOnboarded && 'language' in incomingBody) {
-    delete incomingBody.language
-  }
+  const switchedLanguage: 'en' | 'zh' | null =
+    incomingBody.language === 'en' || incomingBody.language === 'zh' ? incomingBody.language : null
+  if (!switchedLanguage) delete incomingBody.language // never store junk values
 
   const merged = {
     ...currentMeta,
@@ -62,6 +63,18 @@ export async function POST(req: NextRequest) {
     update: profileUpdate,
     create: { userId, ...profileUpdate },
   })
+
+  // Propagate a language switch to every session: ProblemTree.language wins
+  // over the profile default in sessionDirectives(), so without this an
+  // existing tree would keep talking in the old language forever. Awaited
+  // (not fire-and-forget) — if it fails the client must not believe the
+  // whole app switched.
+  if (switchedLanguage) {
+    await prisma.problemTree.updateMany({
+      where: { userId },
+      data: { language: switchedLanguage },
+    })
+  }
 
   // Update MentorConfig learning prefs if provided
   if (body.learningPrefs) {

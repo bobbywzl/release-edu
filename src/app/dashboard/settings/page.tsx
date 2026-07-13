@@ -1,23 +1,22 @@
 'use client'
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Check, Camera, Loader2 } from 'lucide-react'
+import { Check, Camera, Loader2, Languages } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { STAGE_LABELS } from '@/lib/utils'
 import { useToast } from '@/components/toast'
 import { useStudentData, refreshStudentData, setDisplayName } from '@/lib/student-data'
-import { useLanguage } from '@/lib/i18n'
+import { useLanguage, translate, type Language } from '@/lib/i18n'
 import Link from 'next/link'
 
 export default function SettingsPage() {
   const { data, loading } = useStudentData()
   const { student } = data
-  // Language is intentionally NOT editable here — it's a one-time choice at
-  // onboarding (setup screen + onboarding chat) so the generated curriculum,
-  // insights, and Bob's voice stay in a single language for the whole run.
-  // Changing it post-onboarding would create a mismatch between stored
-  // Chinese content and English Bob (or vice versa).
-  const { t } = useLanguage()
+  // Language IS editable here (Tree EDU): setLanguage flips the UI instantly,
+  // persists the account default, and the server propagates it to every
+  // ProblemTree so Bob's next reply in ANY session follows the switch.
+  // (The old Release EDU one-time lock died with the generated curriculum.)
+  const { t, language, setLanguage } = useLanguage()
   const [name, setName] = useState(student.name)
   const [email, setEmail] = useState(student.email)
   const [birthdate, setBirthdate] = useState('')
@@ -88,11 +87,26 @@ export default function SettingsPage() {
   function toggleNotif(key: keyof typeof notifications) {
     const next = !notifications[key]
     setNotifications(prev => ({ ...prev, [key]: next }))
-    toast.info(next ? 'Notification enabled' : 'Notification disabled', key.replace(/([A-Z])/g, ' $1').trim())
+    toast.info(next ? t('settings.notifOn') : t('settings.notifOff'), t(`settings.notif.${key}`))
   }
 
   function togglePref(key: keyof typeof learningPrefs) {
     setLearningPrefs(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  // ── Language switch ──
+  // setLanguage does the whole job: UI state + localStorage + <html lang> +
+  // POST /api/student-profile, where the server also bulk-updates every
+  // ProblemTree.language so all future Bob replies follow the switch.
+  // The confirmation toast is deliberately written in the TARGET language —
+  // it renders after the flip, when the whole page is already in it.
+  function switchLanguage(l: Language) {
+    if (l === language) return
+    setLanguage(l)
+    toast.success(
+      translate(l, 'settings.languageSwitched'),
+      translate(l, 'settings.languageSwitchedDesc'),
+    )
   }
 
   // ── Auto-save ──
@@ -149,8 +163,8 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-          <p className="text-muted-foreground mt-1 text-sm">Manage your profile and preferences</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('settings.title')}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t('settings.subtitle')}</p>
         </div>
         {/* Auto-save status — no explicit save button; changes persist automatically */}
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground h-9">
@@ -163,6 +177,39 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {/* Language — the app-wide EN/中文 switch. Flips UI + menus instantly and
+          every session's future Bob replies (server propagates to all trees). */}
+      <section className="space-y-4">
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+          <Languages className="w-3.5 h-3.5" /> {t('settings.language')}
+        </h2>
+        <p className="text-xs text-muted-foreground">{t('settings.languageHint')}</p>
+        <div className="grid grid-cols-2 gap-3">
+          {([
+            { code: 'en' as Language, title: 'English', sub: t('settings.languageEnglish') },
+            { code: 'zh' as Language, title: '中文（简体）', sub: t('settings.languageChinese') },
+          ]).map(opt => (
+            <button
+              key={opt.code}
+              onClick={() => switchLanguage(opt.code)}
+              aria-pressed={language === opt.code}
+              className={`group flex items-center justify-between rounded-xl border px-4 py-3.5 text-left transition-all ${
+                language === opt.code
+                  ? 'border-primary/60 bg-primary/10'
+                  : 'border-border bg-background hover:border-primary/30 hover:bg-primary/5'
+              }`}
+            >
+              <div>
+                <div className="text-sm font-semibold text-foreground">{opt.title}</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{opt.sub}</div>
+              </div>
+              <Check className={`w-4 h-4 text-primary transition-opacity ${language === opt.code ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`} />
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground/80 leading-relaxed">{t('settings.languageNote')}</p>
+      </section>
 
       {/* Profile */}
       <section className="space-y-6">
@@ -192,19 +239,19 @@ export default function SettingsPage() {
           </button>
           <div>
             <div className="font-medium text-foreground">{student.name}</div>
-            <div className="text-sm text-muted-foreground">Level {student.level} · {STAGE_LABELS[student.stage]}</div>
+            <div className="text-sm text-muted-foreground">{t('common.level')} {student.level} · {STAGE_LABELS[student.stage]}</div>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="text-xs text-primary hover:underline mt-0.5"
             >
-              Change photo
+              {t('settings.changePhoto')}
             </button>
           </div>
         </div>
         <Separator />
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-muted-foreground block mb-1.5">Display Name</label>
+            <label className="text-xs text-muted-foreground block mb-1.5">{t('settings.displayName')}</label>
             <input
               value={name}
               onChange={e => setName(e.target.value)}
@@ -213,8 +260,8 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="text-xs text-muted-foreground block mb-1.5">
-              Email
-              <span className="ml-2 text-[10px] text-muted-foreground/50">(linked to Google — cannot be changed)</span>
+              {t('settings.email')}
+              <span className="ml-2 text-[10px] text-muted-foreground/50">{t('settings.emailLinked')}</span>
             </label>
             <input
               value={email}
@@ -224,10 +271,10 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground block mb-1.5">Member Since</label>
+            <label className="text-xs text-muted-foreground block mb-1.5">{t('settings.memberSince')}</label>
             <div className="text-sm text-muted-foreground">
               {student.joinedAt
-                ? new Date(student.joinedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                ? new Date(student.joinedAt).toLocaleDateString(language === 'zh' ? 'zh-CN' : 'en-US', { month: 'long', day: 'numeric', year: 'numeric' })
                 : '—'}
             </div>
           </div>
@@ -236,10 +283,10 @@ export default function SettingsPage() {
 
       {/* Personal Info */}
       <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Personal Info</h2>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.personalInfo')}</h2>
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-muted-foreground block mb-1.5">Birthdate</label>
+            <label className="text-xs text-muted-foreground block mb-1.5">{t('settings.birthdate')}</label>
             <input
               value={birthdate}
               onChange={e => setBirthdate(e.target.value)}
@@ -248,7 +295,7 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground block mb-1.5">Timezone</label>
+            <label className="text-xs text-muted-foreground block mb-1.5">{t('settings.timezone')}</label>
             <input
               value={timezone}
               onChange={e => setTimezone(e.target.value)}
@@ -260,23 +307,23 @@ export default function SettingsPage() {
 
       {/* Organization */}
       <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Organization</h2>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.organization')}</h2>
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-muted-foreground block mb-1.5">School / Organization</label>
+            <label className="text-xs text-muted-foreground block mb-1.5">{t('settings.orgSchool')}</label>
             <input
               value={organization}
               onChange={e => setOrganization(e.target.value)}
-              placeholder="e.g., Lincoln High School"
+              placeholder={t('settings.orgPlaceholder')}
               className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground block mb-1.5">Education Level</label>
+            <label className="text-xs text-muted-foreground block mb-1.5">{t('settings.educationLevel')}</label>
             <input
               value={education}
               onChange={e => setEducation(e.target.value)}
-              placeholder="e.g., High School"
+              placeholder={t('settings.eduPlaceholder')}
               className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
             />
           </div>
@@ -285,23 +332,23 @@ export default function SettingsPage() {
 
       {/* Mentor & Parent */}
       <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Mentor & Parent</h2>
-        <p className="text-xs text-muted-foreground">Link your mentor and parent/guardian for curriculum review and progress visibility.</p>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.mentorParent')}</h2>
+        <p className="text-xs text-muted-foreground">{t('settings.mentorParentDesc')}</p>
 
         <div className="p-4 rounded-lg border border-border space-y-3">
-          <p className="text-xs font-medium text-foreground">Mentor</p>
+          <p className="text-xs font-medium text-foreground">{t('settings.mentor')}</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">Name</label>
+              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.name')}</label>
               <input
                 value={mentorName}
                 onChange={e => setMentorName(e.target.value)}
-                placeholder="Mentor name"
+                placeholder={t('settings.mentorPlaceholder')}
                 className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
               />
             </div>
             <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">Email</label>
+              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.email')}</label>
               <input
                 value={mentorEmail}
                 onChange={e => setMentorEmail(e.target.value)}
@@ -312,24 +359,24 @@ export default function SettingsPage() {
             </div>
           </div>
           {!mentorEmail && (
-            <p className="text-[10px] text-muted-foreground">No Mentor linked yet. Your Mentor can review your curriculum and approve changes.</p>
+            <p className="text-[10px] text-muted-foreground">{t('settings.noMentor')}</p>
           )}
         </div>
 
         <div className="p-4 rounded-lg border border-border space-y-3">
-          <p className="text-xs font-medium text-foreground">Parent / Guardian</p>
+          <p className="text-xs font-medium text-foreground">{t('settings.parent')}</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">Name</label>
+              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.name')}</label>
               <input
                 value={parentName}
                 onChange={e => setParentName(e.target.value)}
-                placeholder="Parent name"
+                placeholder={t('settings.parentPlaceholder')}
                 className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
               />
             </div>
             <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">Email</label>
+              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.email')}</label>
               <input
                 value={parentEmail}
                 onChange={e => setParentEmail(e.target.value)}
@@ -340,7 +387,7 @@ export default function SettingsPage() {
             </div>
           </div>
           {!parentEmail && (
-            <p className="text-[10px] text-muted-foreground">No parent linked yet. Parents can view your progress and receive weekly reports.</p>
+            <p className="text-[10px] text-muted-foreground">{t('settings.noParent')}</p>
           )}
         </div>
       </section>
@@ -350,23 +397,18 @@ export default function SettingsPage() {
 
       {/* Notifications */}
       <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Notifications</h2>
-        {[
-          { key: 'streakReminders' as const, label: 'Streak Reminders', desc: 'Daily reminders to keep your streak alive' },
-          { key: 'weeklyProgress' as const, label: 'Weekly Report', desc: 'Summary of your week every Sunday' },
-          { key: 'aiSessions' as const, label: 'Session Suggestions', desc: 'Personalized prompts to start a mentor session' },
-          { key: 'achievements' as const, label: 'Achievements', desc: 'Notify when you earn a new milestone' },
-          { key: 'projectUpdates' as const, label: 'Project Updates', desc: 'Collaborator activity on your projects' },
-          { key: 'mentorMessages' as const, label: 'Mentor Messages', desc: 'Messages from your Mentor' },
-        ].map((item, i) => (
-          <div key={item.key}>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.notifications')}</h2>
+        {([
+          'streakReminders', 'weeklyProgress', 'aiSessions', 'achievements', 'projectUpdates', 'mentorMessages',
+        ] as const).map((key, i) => (
+          <div key={key}>
             {i > 0 && <Separator className="mb-4" />}
             <div className="flex items-center justify-between gap-4">
               <div>
-                <div className="text-sm font-medium text-foreground">{item.label}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{item.desc}</div>
+                <div className="text-sm font-medium text-foreground">{t(`settings.notif.${key}`)}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{t(`settings.notif.${key}Desc`)}</div>
               </div>
-              <Switch checked={notifications[item.key]} onCheckedChange={() => toggleNotif(item.key)} />
+              <Switch checked={notifications[key]} onCheckedChange={() => toggleNotif(key)} />
             </div>
           </div>
         ))}
@@ -374,21 +416,21 @@ export default function SettingsPage() {
 
       {/* Account */}
       <section className="space-y-1">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">Account</h2>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">{t('settings.account')}</h2>
         {[
-          { label: 'Change Password', desc: 'Update your account password', href: '/dashboard/settings/password' },
-          { label: 'Connected Accounts', desc: 'Manage linked providers (Google, GitHub)', href: '/dashboard/settings/connected-accounts' },
-          { label: 'Export My Data', desc: 'Download all your learning data and history', href: '/dashboard/settings/export-data' },
-          { label: 'Privacy Settings', desc: 'Control what others can see about your profile', href: '/dashboard/settings/privacy' },
+          { key: 'password', href: '/dashboard/settings/password' },
+          { key: 'connected', href: '/dashboard/settings/connected-accounts' },
+          { key: 'export', href: '/dashboard/settings/export-data' },
+          { key: 'privacy', href: '/dashboard/settings/privacy' },
         ].map(item => (
           <Link
-            key={item.label}
+            key={item.key}
             href={item.href}
             className="w-full flex items-start p-3 rounded-lg hover:bg-accent transition-colors text-left block"
           >
             <div>
-              <div className="text-sm font-medium text-foreground">{item.label}</div>
-              <div className="text-xs text-muted-foreground">{item.desc}</div>
+              <div className="text-sm font-medium text-foreground">{t(`settings.acct.${item.key}`)}</div>
+              <div className="text-xs text-muted-foreground">{t(`settings.acct.${item.key}Desc`)}</div>
             </div>
           </Link>
         ))}
@@ -397,8 +439,8 @@ export default function SettingsPage() {
           href="/dashboard/settings/delete-account"
           className="w-full text-left p-3 rounded-lg hover:bg-destructive/10 transition-colors block"
         >
-          <div className="text-sm font-medium text-destructive">Delete Account</div>
-          <div className="text-xs text-muted-foreground">Permanently delete your account and all data</div>
+          <div className="text-sm font-medium text-destructive">{t('settings.deleteAccount')}</div>
+          <div className="text-xs text-muted-foreground">{t('settings.deleteAccountDesc')}</div>
         </Link>
       </section>
 
