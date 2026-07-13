@@ -13,6 +13,12 @@ export async function extractInsightsBackground(
   userMessage: string,
   assistantResponse: string,
   storeUserId: string,
+  // The SESSION language (tree.language) — when set it governs insight
+  // content, so the "What Bob knows about you" panel doesn't mix the global
+  // app language (chat-extracted insights) with the session language
+  // (verification/struggle/misconception insights). Falls back to the global
+  // profile language only when no session language is provided.
+  sessionLang?: string,
 ): Promise<void> {
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default
@@ -25,10 +31,11 @@ export async function extractInsightsBackground(
       import('@/lib/insight-memory'),
       import('@/lib/get-user-language'),
     ])
-    const [existing, lang] = await Promise.all([
+    const [existing, globalLang] = await Promise.all([
       getTopInsights(storeUserId, { limit: 30 }),
       getUserLanguage(storeUserId),
     ])
+    const lang = sessionLang === 'zh' || sessionLang === 'en' ? sessionLang : globalLang
     const existingListing = existing.map(i => `${i.id} | ${i.type} | ${i.content.slice(0, 120)}`).join('\n')
 
     const result = await client.messages.create({

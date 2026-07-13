@@ -25,6 +25,30 @@ export interface SyllabusFacet {
   done: boolean
 }
 
+/** How a correct answer's facet tag resolves against the coverage map. */
+export type FacetResolution =
+  | { kind: 'credit'; index: number }   // tag names exactly one UNDONE facet → flip it
+  | { kind: 'deepening' }               // tag names an already-DONE facet → no coverage change
+  | { kind: 'unresolved' }              // no tag, matches nothing, or ambiguous
+
+/**
+ * Resolve which facet a checkpoint's tag credits — the truthful rule: a facet
+ * flips `done` ONLY when a checkpoint that actually targeted it is answered
+ * correctly. Fuzzy matching runs over ALL facets and only when UNAMBIGUOUS,
+ * so a tag like "water" that matches both "watering schedule" and "water
+ * chemistry" resolves to 'unresolved' (never a wrong-sibling flip).
+ */
+export function resolveFacetCredit(facets: SyllabusFacet[], tag: string | null | undefined): FacetResolution {
+  const want = (tag ?? '').trim().toLowerCase()
+  if (!want) return { kind: 'unresolved' }
+  const exact = facets.findIndex(f => f.name.trim().toLowerCase() === want)
+  if (exact !== -1) return facets[exact].done ? { kind: 'deepening' } : { kind: 'credit', index: exact }
+  const fuzzy = facets.map((f, i) => ({ f, i }))
+    .filter(({ f }) => { const n = f.name.trim().toLowerCase(); return n.includes(want) || want.includes(n) })
+  if (fuzzy.length !== 1) return { kind: 'unresolved' }
+  return fuzzy[0].f.done ? { kind: 'deepening' } : { kind: 'credit', index: fuzzy[0].i }
+}
+
 /** The node's verification target: its facet count when a syllabus contract
  *  exists, else the static fallback. */
 export function masteryTarget(qs: QuizState): number {
@@ -77,6 +101,49 @@ export interface PendingQuiz {
   askedAt?: string
 }
 
+/**
+ * The ONLY checkpoint shape allowed to cross to a client — the answer key
+ * (correctIndex / explanation / rubric) is stripped. The workspace card
+ * renders from exactly these fields; it never needs the key (the quiz route
+ * judges server-side against the DB copy).
+ */
+export interface SanitizedPending {
+  kind: 'mcq' | 'short'
+  question: string
+  options?: string[]
+  hint?: string
+}
+
+/** Strip a pending checkpoint down to the client-safe shape (no answer key). */
+export function sanitizePending(p: PendingQuiz | null | undefined): SanitizedPending | null {
+  if (!p || typeof p.question !== 'string') return null
+  return {
+    kind: p.kind,
+    question: p.question,
+    ...(p.kind === 'mcq' && Array.isArray(p.options) ? { options: p.options } : {}),
+    ...(typeof p.hint === 'string' && p.hint.trim() ? { hint: p.hint } : {}),
+  }
+}
+
+/**
+ * Sanitize a raw quizState JSON string for a CLIENT payload: the answer key
+ * NEVER leaves the server. Keeps every tally/facet field the workspace pips
+ * need and a sanitized pending; drops correctIndex/explanation/rubric. Any
+ * route that serializes TreeNode.quizState to a browser MUST run this — the
+ * one enforcement point so the tree-GET and chat-GET shapes can't drift.
+ */
+export function sanitizeQuizStateForClient(raw: string | null | undefined): string {
+  const qs = parseQuizState(raw)
+  const safe = {
+    correct: qs.correct, attempts: qs.attempts, combo: qs.combo,
+    shortCorrect: qs.shortCorrect, sureWrong: qs.sureWrong, sureRight: qs.sureRight,
+    missed: qs.missed, reviewedAt: qs.reviewedAt ?? null,
+    facets: qs.facets ?? null,
+    pending: sanitizePending(qs.pending),
+  }
+  return JSON.stringify(safe)
+}
+
 /** A previously missed checkpoint, queued for a delayed retest when the
  *  student returns to the node hours later (memory needs the gap). */
 export interface MissedCheckpoint {
@@ -103,12 +170,16 @@ export interface QuizState {
    *  (done) by a correct checkpoint. null = no contract yet → static
    *  MASTERY_TARGET fallback applies. */
   facets?: SyllabusFacet[] | null
+  /** Consecutive CORRECT answers on a contract-bearing node whose facet tag
+   *  could not be resolved (missing / unmatched / ambiguous). Legit facet
+   *  credit resets it; at 2 the gated anti-stall backstop fires. */
+  untaggedStreak?: number
 }
 
 export function parseQuizState(raw: string | null | undefined): QuizState {
   const fallback: QuizState = {
     correct: 0, attempts: 0, combo: 0, shortCorrect: 0,
-    sureWrong: 0, sureRight: 0, missed: [], reviewedAt: null, pending: null, facets: null,
+    sureWrong: 0, sureRight: 0, missed: [], reviewedAt: null, pending: null, facets: null, untaggedStreak: 0,
   }
   if (!raw) return fallback
   try {
@@ -134,6 +205,7 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
       // A contract needs at least 2 facets to be meaningful — below that,
       // treat as absent so the static fallback governs.
       facets: facets && facets.length >= 2 ? facets : null,
+      untaggedStreak: Math.max(0, p.untaggedStreak ?? 0),
     }
   } catch {
     return fallback

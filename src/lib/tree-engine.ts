@@ -365,12 +365,19 @@ export async function branchCoverage(userId: string, nodes: TreeNode[], nodeId: 
         select: { id: true },
       }).catch(() => null)
       if (conv) {
-        const [firstBob, lastBob] = await Promise.all([
+        const [firstBob, recentBobs] = await Promise.all([
           prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
-          prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, select: { id: true, content: true } }).catch(() => null),
+          prisma.message.findMany({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 8, select: { id: true, content: true } }).catch(() => []),
         ])
         const syllabus = firstBob ? clean(firstBob.content).slice(0, 600) : ''
-        const latest = lastBob && lastBob.id !== firstBob?.id ? clean(lastBob.content).slice(0, 350) : ''
+        // The NEWEST assistant message on a verified/in-progress ancestor is
+        // usually a quiz-route VERDICT BANNER (starts ✅/❌/🎉) — bookkeeping,
+        // not teaching. Sample the newest NON-verdict turn so the digest
+        // reflects the real remediation/analogy teaching a descendant must
+        // build on (emoji prefix is language-independent).
+        const isVerdict = (s: string) => /^\s*(✅|❌|🎉|🌱)/.test(s)
+        const teaching = recentBobs.find(m => m.id !== firstBob?.id && clean(m.content).length > 0 && !isVerdict(clean(m.content)))
+        const latest = teaching ? clean(teaching.content).slice(0, 350) : ''
         covered = [
           syllabus ? `Its workspace laid out: ${syllabus}` : '',
           latest ? `Latest teaching there: ${latest}` : '',

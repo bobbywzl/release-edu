@@ -516,8 +516,12 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
   // updatedAt fallback would read as "already here today", muting the most
   // retention-critical moment of the product). A stamped lastCheckinDay
   // always wins over that heuristic.
-  if (lastDay === today && (profile.lastCheckinDay !== null || profile.streak > 0)) {
-    // Already checked in today — no streak update.
+  // Already checked in for today OR a day AFTER today (a westward timezone
+  // shift — travel, a mis-set second device — makes a stamp from an eastward
+  // zone lexically > today). A YYYY-MM-DD string compare treats both as
+  // "already here", so a live streak is never reset to 1 and show-up XP is
+  // never double-paid for the same absolute day.
+  if (lastDay >= today && (profile.lastCheckinDay !== null || profile.streak > 0)) {
     return { streak: profile.streak, awards: [] }
   }
 

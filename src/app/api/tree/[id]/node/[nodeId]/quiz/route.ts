@@ -32,7 +32,7 @@ import {
   recordCheckpointStruggle, type XpAwardLite,
 } from '@/lib/tree-engine'
 import { clampText } from '@/lib/clamp'
-import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, type PendingQuiz } from '@/lib/mastery'
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, resolveFacetCredit, type PendingQuiz } from '@/lib/mastery'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
   const { id, nodeId } = await params
@@ -184,23 +184,44 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // quizState string (one retry recomputes on the newer state), so this tally
   // and a concurrent pending-card store from the chat stream on another
   // device can never erase each other.
+  // Turn-scoped coverage outcome, recomputed deterministically by applyOutcome
+  // from the base state each CAS attempt, so the flags match the tally that
+  // actually landed.
+  let coverageAdvanced = false
+  let coverageOutcome: 'credit' | 'deepening' | 'unresolved' | 'backstop' | 'nocontract' = 'nocontract'
   const applyOutcome = (tally: ReturnType<typeof parseQuizState>) => {
     tally.attempts += 1
     if (correct) {
       tally.correct += 1
       tally.combo += 1
       if (quiz.kind === 'short') tally.shortCorrect += 1
-      // Syllabus coverage: a correct answer PROVES the facet this card
-      // probes. Exact match first, fuzzy second; an untagged/unmatched card
-      // credits the next unproven facet so a model that forgot the tag can
-      // never stall verification forever (the prompt steers questions
-      // per-facet — this is the monotonic-progress backstop).
+      // Syllabus coverage — TRUTHFUL crediting: a facet flips `done` ONLY when
+      // a checkpoint that actually targeted it is answered correctly. A tag on
+      // an already-done facet is a deepening question (no coverage change); a
+      // missing/ambiguous tag never blind-credits an unprobed facet. The old
+      // "credit the first undone facet" fallback let a node verify with
+      // promises never tested — its one legit job (a model that SYSTEMATICALLY
+      // drops tags must not stall forever) is preserved as a gated N=2 backstop.
       if (Array.isArray(tally.facets) && tally.facets.length > 0) {
-        const want = (quiz.facet ?? '').trim().toLowerCase()
-        const hit = (want && tally.facets.find(f => !f.done && f.name.trim().toLowerCase() === want))
-          || (want && tally.facets.find(f => !f.done && (f.name.toLowerCase().includes(want) || want.includes(f.name.toLowerCase()))))
-          || tally.facets.find(f => !f.done)
-        if (hit) hit.done = true
+        const r = resolveFacetCredit(tally.facets, quiz.facet)
+        coverageOutcome = r.kind
+        coverageAdvanced = false
+        if (r.kind === 'credit') {
+          tally.facets[r.index].done = true
+          tally.untaggedStreak = 0
+          coverageAdvanced = true
+        } else if (r.kind === 'deepening') {
+          // Coverage MUST NOT move — the exact promise the prompt makes
+          // ("questions on already-✅ facets never advance verification").
+          // The tag itself was fine, so untaggedStreak is untouched.
+        } else {
+          tally.untaggedStreak = (tally.untaggedStreak ?? 0) + 1
+          if (tally.untaggedStreak >= 2) {
+            const first = tally.facets.find(f => !f.done)
+            if (first) { first.done = true; coverageAdvanced = true; coverageOutcome = 'backstop' }
+            tally.untaggedStreak = 0
+          }
+        }
       }
     } else {
       tally.combo = 0
@@ -306,7 +327,32 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     const verifiedNote = verified
       ? (zh ? '\n\n🎉 **该节点已验证** — 你已通过检查题证明了真正的理解。' : '\n\n🎉 **Node verified** — you proved genuine understanding through checkpoints.')
       : ''
-    await store.addMessage(conv.id, 'assistant', `${banner}${feedback ? ` — ${feedback}` : ''}${verifiedNote}`)
+    // Review closure — the designed review is ONE question; its ✅ + this line
+    // ARE the closure moment (no follow-up chain). verified and isReview are
+    // mutually exclusive (review nodes are already understood), so these never
+    // co-fire.
+    const reviewNote = isReview && correct
+      ? (zh ? '\n\n🌱 **复习完成** — 记忆已刷新，该节点保持已验证状态。' : '\n\n🌱 **Review complete** — memory refreshed; this node stays verified.')
+      : ''
+    // Coverage honesty: a correct answer that legitimately moved no pip
+    // (deepening an already-proven point, or an unresolvable tag) must SAY so
+    // — a silent non-move is the exact header/chat mismatch this route guards
+    // against. Composed server-side per session language (client t() context
+    // is unavailable for persisted messages — the sanctioned i18n path here).
+    let coverageNote = ''
+    const outcome: string = coverageOutcome
+    if (correct && !verified && !isVerifiedNode && Array.isArray(tally.facets) && tally.facets.length > 0 && !coverageAdvanced) {
+      if (outcome === 'deepening') {
+        coverageNote = zh
+          ? '（这是对你已证明知识点的加深提问——大纲覆盖不变；下一道检查题将针对未证明的知识点）'
+          : ' (a deepening question on a point you already proved — the coverage map is unchanged; the next checkpoint targets an unproven point)'
+      } else if (outcome === 'unresolved') {
+        coverageNote = zh
+          ? '（已记录——当检查题证明未证明的大纲知识点时，覆盖进度才会前进）'
+          : ' (recorded — the coverage map advances when a checkpoint proves an unproven syllabus point)'
+      }
+    }
+    await store.addMessage(conv.id, 'assistant', `${banner}${feedback ? ` — ${feedback}` : ''}${coverageNote}${verifiedNote}${reviewNote}`)
   } catch { /* non-critical */ }
 
   return NextResponse.json({
@@ -316,6 +362,10 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     xp,
     mastery: { correct: masteryFilled(tally), target: masteryTarget(tally), shortCorrect: tally.shortCorrect, needShort: tally.shortCorrect < MASTERY_MIN_SHORT },
     verified,
+    // verified = newly flipped THIS answer; alreadyVerified = was verified
+    // before it (the client uses this to stop soliciting cards on a node
+    // that's already done — the review is ONE question, not a chain).
+    alreadyVerified: isVerifiedNode,
     treeCompleted,
     review: isReview,
   })
