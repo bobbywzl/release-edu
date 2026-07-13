@@ -965,7 +965,11 @@ Return ONLY JSON: {"recitable": true|false}`,
           // syllabus at once), then refresh on a light cadence as real teaching
           // accumulates. Skip other pure trigger turns (review/checkpoint
           // auto-continues carry no new teaching worth re-summarizing for).
-          if (isIntro || (!isTrigger && count % 4 === 0)) {
+          // The modulus MUST be odd: a free-form turn persists BOTH a user and
+          // an assistant message (+2, parity-preserving) and the intro seeds an
+          // odd count, so a run of pure Q&A keeps `count` odd — an even modulus
+          // would never fire there, leaving the summary stuck at the intro seed.
+          if (isIntro || (!isTrigger && count % 3 === 0)) {
             inBackground(refreshNodeContextSummary(userId, id, nodeId, tree.language ?? undefined))
           }
         } catch { /* non-critical */ }

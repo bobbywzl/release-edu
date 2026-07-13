@@ -475,6 +475,11 @@ export async function refreshNodeContextSummary(userId: string, treeId: string, 
     const isVerdict = (s: string) => /^\s*(✅|❌|🎉|🌱)/.test(s)
     let syllabus = ''
     let teachingExcerpts: string[] = []
+    // The newest source-message time this summary is built FROM — used below as
+    // a monotonic write guard so an older-state refresh that finishes late can
+    // never clobber a newer one (both call sites are backgrounded and can race,
+    // e.g. a chat refresh still in flight when verification schedules another).
+    let basisAt: Date | null = null
     const conv = await prisma.conversation.findFirst({
       where: { userId, context: `tree-node:${nodeId}` },
       orderBy: { createdAt: 'asc' },
@@ -483,13 +488,17 @@ export async function refreshNodeContextSummary(userId: string, treeId: string, 
     if (conv) {
       const [firstBob, recentBobs] = await Promise.all([
         prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
-        prisma.message.findMany({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, content: true } }).catch(() => []),
+        prisma.message.findMany({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, content: true, createdAt: true } }).catch(() => []),
       ])
       syllabus = firstBob ? clean(firstBob.content).slice(0, 1200) : ''
       teachingExcerpts = recentBobs
         .filter(m => m.id !== firstBob?.id && clean(m.content).length > 0 && !isVerdict(clean(m.content)))
         .slice(0, 3)
         .map(m => clean(m.content).slice(0, 700))
+      // recentBobs is ordered newest-first, so [0] is the latest activity here
+      // (a verification refresh runs after the quiz route persists its banner,
+      // so its basis is strictly newer than any pre-verification chat refresh).
+      basisAt = recentBobs[0]?.createdAt ?? null
     }
 
     // Nothing to summarize yet — don't burn a call or clobber a good summary
@@ -538,9 +547,14 @@ Keep the WHOLE summary under 180 words. Write every word in ${zh ? 'Simplified C
     void recordUsage(result, userId, model, 'tree-summary')
     const summary = (result.content[0] as { text?: string })?.text?.trim() ?? ''
     if (!summary) return
-    await prisma.treeNode.update({
-      where: { id: nodeId },
-      data: { contextSummary: clampText(summary, 1600), contextSummaryAt: new Date() },
+    // Monotonic compare-and-set: write only if no fresher summary already
+    // landed (contextSummaryAt is the basis-message time, so "fresher" = built
+    // from newer messages). A summary with no conversation basis (notes/
+    // explainer only) stamps write-time — it races nothing message-based.
+    const writeAt = basisAt ?? new Date()
+    await prisma.treeNode.updateMany({
+      where: { id: nodeId, OR: [{ contextSummaryAt: null }, { contextSummaryAt: { lt: writeAt } }] },
+      data: { contextSummary: clampText(summary, 1600), contextSummaryAt: writeAt },
     }).catch(() => null)
   } catch { /* non-critical */ }
 }
