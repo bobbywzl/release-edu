@@ -3,6 +3,15 @@
  */
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
+// Gemini is the sole engine for understanding the learner's visual & auditory
+// files (images, video, PDFs, voice notes) — it is more capable at multimodal
+// than the teaching tier, so ALL such processing routes here. The PRO tier is
+// the primary for genuine understanding; flash is the fast fallback if pro is
+// unavailable or errors. (Pinned like every other Gemini id in this file — the
+// dynamic resolver governs the Anthropic teaching/judging tiers only.)
+export const GEMINI_MULTIMODAL_MODEL = 'gemini-3.1-pro-preview'
+export const GEMINI_MULTIMODAL_FALLBACK = 'gemini-3-flash-preview'
+
 function getClient(): GoogleGenerativeAI | null {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) return null
@@ -63,41 +72,36 @@ export async function analyzeImage(imageBase64: string, context: string, mimeTyp
   const isAudio = detectedMime.startsWith('audio/')
   const isPDF = detectedMime === 'application/pdf'
 
-  try {
-    // Use gemini-3-flash-preview (stable) for multimodal
-    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' })
+  const prompt = isAudio
+    ? `This is a voice recording from a student, in the context of: ${context}. First TRANSCRIBE what they said (verbatim, in the language spoken). Then, in one short paragraph, note anything relevant beyond the words themselves (described objects/sounds, uncertainty, emphasis). Format: "TRANSCRIPT: ..." then "NOTES: ...".`
+    : isVideo
+    ? `Analyze this video in the context of: ${context}. Describe what's shown, explain key concepts, and explain how it relates to the student's learning. Be thorough.`
+    : isPDF
+    ? `Analyze this PDF document in the context of: ${context}. Extract key information, summarize main points, and explain how it relates to the student's learning.`
+    : `Analyze this image in the context of: ${context}. Describe what you see in detail, explain any relevant concepts, and suggest how this relates to the student's learning. Be thorough and helpful.`
 
-    const prompt = isAudio
-      ? `This is a voice recording from a student, in the context of: ${context}. First TRANSCRIBE what they said (verbatim, in the language spoken). Then, in one short paragraph, note anything relevant beyond the words themselves (described objects/sounds, uncertainty, emphasis). Format: "TRANSCRIPT: ..." then "NOTES: ...".`
-      : isVideo
-      ? `Analyze this video in the context of: ${context}. Describe what's shown, explain key concepts, and explain how it relates to the student's learning. Be thorough.`
-      : isPDF
-      ? `Analyze this PDF document in the context of: ${context}. Extract key information, summarize main points, and explain how it relates to the student's learning.`
-      : `Analyze this image in the context of: ${context}. Describe what you see in detail, explain any relevant concepts, and suggest how this relates to the student's learning. Be thorough and helpful.`
-    
-    const result = await model.generateContent([
-      { text: prompt },
-      { inlineData: { mimeType: detectedMime, data: imageBase64 } },
-    ])
-    {
-      const { recordGeminiUsage } = await import('@/lib/usage')
-      recordGeminiUsage(result.response.usageMetadata, { model: 'gemini-3-flash-preview', feature: 'image' })
-    }
-    return result.response.text()
-  } catch (err) {
-    console.error('Gemini multimodal analysis error:', err)
-    // Try fallback with text-only description request
+  // Genuine multimodal understanding: try the PRO model first, fall back to
+  // flash on any error (rate limit, model unavailable). BOTH actually read the
+  // media — flash is a capability fallback, not a text-only apology.
+  for (const modelId of [GEMINI_MULTIMODAL_MODEL, GEMINI_MULTIMODAL_FALLBACK]) {
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' })
-      const result = await model.generateContent(
-        `A student is sharing a ${isVideo ? 'video' : isPDF ? 'PDF' : 'image'} related to: ${context}. ` +
-        `Please tell them you can see they've shared a file and ask them to describe what they're looking at or what they'd like help with.`
-      )
+      const model = genAI.getGenerativeModel({ model: modelId })
+      const result = await model.generateContent([
+        { text: prompt },
+        { inlineData: { mimeType: detectedMime, data: imageBase64 } },
+      ])
+      {
+        const { recordGeminiUsage } = await import('@/lib/usage')
+        recordGeminiUsage(result.response.usageMetadata, { model: modelId, feature: 'image' })
+      }
       return result.response.text()
-    } catch {
-      return `I can see you've shared a ${isVideo ? 'video' : isPDF ? 'PDF' : 'file'}. Could you tell me what you'd like to discuss about it?`
+    } catch (err) {
+      console.error(`Gemini multimodal analysis error (${modelId}):`, err)
+      // try the next model in the chain
     }
   }
+  // Both models failed — degrade gracefully instead of killing the turn.
+  return `I can see you've shared a ${isVideo ? 'video' : isAudio ? 'voice note' : isPDF ? 'PDF' : 'file'}. Could you tell me what you'd like to discuss about it?`
 }
 
 // Video analysis specifically
