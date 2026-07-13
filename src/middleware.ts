@@ -32,7 +32,7 @@ export async function middleware(request: NextRequest) {
   // excluded: /api/auth/* (NextAuth itself), /api/demo* (sets the demo
   // cookie), /api/admin/* (its own stronger gate below), /api/cron/* (secret-
   // gated jobs), /api/image/* (public generated-visual cache).
-  const isUserApi = /^\/api\/(tree|xp|insights|files|conversations|portfolio|chat|student-profile|student-data|highlights|feedback|teacher)(\/|$)/.test(pathname)
+  const isUserApi = /^\/api\/(tree|xp|insights|files|conversations|portfolio|chat|student-profile|student-data|highlights|feedback|teacher|account|user|drive)(\/|$)/.test(pathname)
 
   // Everything below only guards the app's own gated areas.
   const isDashboard = pathname.startsWith('/dashboard')

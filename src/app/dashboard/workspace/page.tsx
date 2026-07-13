@@ -245,6 +245,14 @@ function WorkspaceInner() {
         signal: abortRef.current.signal,
         body: JSON.stringify({ message: text, lang: language }),
       })
+      // Message too long (server 413): show the actionable reason, not the
+      // generic "trouble connecting" that invites retrying the same doomed
+      // paste. Drop the optimistic user bubble (it was never persisted).
+      if (res.status === 413) {
+        if (showUser) setMessages(prev => prev.filter(m => m.content !== text || m.role !== 'user'))
+        setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.messageTooLong') }])
+        return
+      }
       if (!res.ok || !res.body) throw new Error('stream error')
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -307,6 +315,12 @@ function WorkspaceInner() {
   async function send() {
     const text = input.trim()
     if (!text) return
+    // Pre-check the server's 8000-char cap so an over-length paste is caught
+    // before the round-trip (the server still enforces it as the backstop).
+    if (text.length > 8000) {
+      setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.messageTooLong') }])
+      return
+    }
     setInput('')
     await streamFromBob(text, true)
   }
