@@ -4,15 +4,19 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 /**
- * The TREE COPILOT — one chatbox on the tree page combining every tree-level
- * function: converse/teach about the whole problem, propose branches under
- * any node (pending ghosts — permission-based), refine the session purpose
- * (approval-gated), all grounded in multimodal attachments (images, voice
- * recordings, video, files → analyzed by Gemini before the turn).
+ * The TREE COPILOT — one conversation on the tree page combining every
+ * tree-level function: converse/teach about the whole problem, propose
+ * branches under any node (pending ghosts — permission-based), refine the
+ * session purpose (approval-gated), and RESHAPE the tree (edit/move/delete
+ * chips the student applies via the node PATCH route), all grounded in
+ * multimodal attachments (images, voice recordings, video, files → analyzed
+ * by Gemini before the turn).
  *
  * GET  — rehydrate the persisted copilot thread (context "tree-copilot:<id>")
  * POST — one turn: { message, lang?, replaceIds?, attachments?: [{name,type,content}] }
  *        content is a data: URI for media or plain text for text files.
+ *        Returns { reply, proposals, purposeUpdate?, actions } — actions are
+ *        approval chips, never applied server-side here.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'

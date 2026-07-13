@@ -560,23 +560,41 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
 
 // ── Tree Copilot (one chatbox, every tree function) ──────────────────────
 
+/** A tree-reshaping action the copilot proposes — rendered as an approval
+ *  chip; the student applies it with a tap (PATCH node route). NOTHING is
+ *  executed by the copilot itself: same permission covenant as growth. */
+export interface CopilotAction {
+  type: 'edit' | 'move' | 'delete'
+  nodeId: string
+  /** The node's CURRENT title — what the chip names. */
+  title: string
+  newTitle?: string
+  newSummary?: string
+  newParentId?: string
+  newParentTitle?: string
+}
+
 export interface CopilotResult {
   reply: string
   proposals: TreeNode[]
   /** A sharper session purpose the conversation surfaced — applied only
    *  after the student taps Approve (permission-based, like all growth). */
   purposeUpdate?: string | null
+  /** Edit/move/delete chips — approval-gated tree reshaping. */
+  actions: CopilotAction[]
 }
 
 /**
  * One turn of the TREE COPILOT — the tree page's single conversational box
  * that combines every tree-level function: teach about the whole problem,
- * propose branches under ANY node, and refine the session PURPOSE (e.g.
+ * propose branches under ANY node, refine the session PURPOSE (e.g.
  * reorienting the tree into a build-partner for a product the student is
- * making). Attachment analyses (images/audio/video/files, via Gemini) arrive
- * as grounding. All growth stays permission-based: proposals are pending
- * ghosts; purpose changes ship back for explicit approval; nothing existing
- * is ever deleted or overwritten by the copilot.
+ * making), and RESHAPE the tree map and node contents (edit titles/summaries,
+ * move subtrees, delete branches). Attachment analyses (images/audio/video/
+ * files, via Gemini) arrive as grounding. EVERYTHING stays permission-based:
+ * proposals are pending ghosts; purpose changes and reshaping actions ship
+ * back as chips the student must explicitly approve — the copilot itself
+ * never mutates an existing node.
  */
 export async function copilotTurn(
   userId: string, treeId: string, message: string, lang?: string,
@@ -620,28 +638,34 @@ ${attachBlock}
 YOUR FUNCTIONS (all in one box):
 1. CONVERSE & TEACH about the whole problem under the Answer Standard — every answer Relevant (scoped to this tree's problem and purpose) and Informative (carries the mechanism/why). Never re-teach what an existing node already owns — point to that node instead ("open '<node>' for that — here's how it connects…").
 2. PROPOSE BRANCHES anywhere: return proposals as {"parent": <numeric handle>, "title", "summary", "kind"} — they appear as pending ghosts the student must approve. Propose under the MOST fitting parent (root for new solution directions, deeper nodes for components). 0-6 per turn; each must be a distinct pain point/concept NOT already in the tree, with an informative summary (what it is + why it unlocks the goal).
-3. REFINE THE PURPOSE: when the conversation (or an attachment — e.g. the product they're building) reveals what this tree is REALLY for, return "purposeUpdate": a sharp 1-2 sentence purpose. The student approves it with a tap. When the purpose reorients the tree (e.g. "improve MY product" → build-partner mode: solution-proposing, evidence-grounded, deployable depth), ALSO propose the new solution branches that fit — NEVER suggest deleting existing nodes; the tree only grows.
+3. REFINE THE PURPOSE: when the conversation (or an attachment — e.g. the product they're building) reveals what this tree is REALLY for, return "purposeUpdate": a sharp 1-2 sentence purpose. The student approves it with a tap. When the purpose reorients the tree (e.g. "improve MY product" → build-partner mode: solution-proposing, evidence-grounded, deployable depth), ALSO propose the new solution branches that fit — prefer growing over pruning: a reorientation alone is never a reason to delete nodes (that needs function 6's bar).
 4. BE A BUILD PARTNER when the purpose is a real product/project: ground every proposal and answer in the student's actual artifacts (attachments above), propose concrete improvement branches, and teach the mechanism behind each suggestion.
 5. GENERATED VISUALS: when the student asks for a diagram/graph/sketch, OR the concept is inherently visual (structure, flow, comparison, a product sketch), place EXACTLY one fenced block inside your reply markdown where the visual belongs:
 \`\`\`image
 one-sentence description of the diagram/sketch to draw — name every part and label explicitly
 \`\`\`
 The UI renders it as a generated image in place. Never mention the block. At most ONE per reply; it must carry mechanism or a concrete design, never decoration.
+6. RESHAPE THE TREE (edit / move / delete — approval-gated): when the student asks to rename, rewrite, reorganize or remove nodes — or the conversation shows a node is mistitled, misplaced, or doesn't belong — return "actions". Each ships to the student as an approve/dismiss chip; NOTHING changes until they tap it. Ops:
+   {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — rewrite a node's title and/or summary; include ONLY the field(s) you're changing.
+   {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
+   {"op":"delete","node":<handle>} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
+   The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
 
 RULES:
 - CURIOUS SPECIFICITY (like the grow box): judge each ask yourself; when underspecified, still act under the most likely reading AND end with ONE sharp fork question that would change what you propose. Never a bare "tell me more".
-- Growth is PERMISSION-BASED: proposals/purpose changes are suggestions until tapped — never claim you already changed anything.
-- On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept).
-- The reply never lists proposal titles as a menu (the UI shows cards) — speak about them naturally.
+- EVERYTHING is PERMISSION-BASED: proposals, purpose changes, and reshape actions are suggestions until tapped — never claim you already changed anything; say what the chips will do when approved.
+- On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept). Actions don't accumulate either — re-emit any still-relevant ones.
+- The reply never lists proposal/action titles as a menu (the UI shows cards) — speak about them naturally.
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON:
-{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "purposeUpdate": "sharper purpose or null"}`
+{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete","node":0,"title":"…","summary":"…","newParent":0}]}`
 
   type CopilotParsed = {
     reply?: string
     proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string }>
     purposeUpdate?: string | null
+    actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number }>
   }
   const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
     r.content.filter(b => b.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
@@ -706,7 +730,43 @@ Return ONLY JSON:
     ? parsed.purposeUpdate.trim().slice(0, 500)
     : null
 
-  return { reply, proposals: created, purposeUpdate }
+  // ── Reshape actions (edit / move / delete) — validated, never executed ──
+  // Chips only: the student applies each via the node PATCH route, which
+  // re-validates on live data. Root is never movable/deletable; a move that
+  // would orbit a node into its own subtree is dropped. Cycle checks walk
+  // ALL nodes (pending included) so no chain can slip through.
+  const descendantsOf = (rootId: string): Set<string> => {
+    const out = new Set<string>([rootId])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const n of tree.nodes) {
+        if (n.parentId && out.has(n.parentId) && !out.has(n.id)) { out.add(n.id); grew = true }
+      }
+    }
+    return out
+  }
+  const actions: CopilotAction[] = []
+  for (const a of (Array.isArray(parsed?.actions) ? parsed!.actions! : []).slice(0, 8)) {
+    const target = a && Number.isInteger(a.node) && (a.node as number) >= 0 ? real[a.node as number] : undefined
+    if (!target) continue
+    if (a.op === 'edit') {
+      const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
+      const newSummary = typeof a.summary === 'string' && a.summary.trim() ? a.summary.trim().slice(0, 500) : undefined
+      if (!newTitle && !newSummary) continue
+      actions.push({ type: 'edit', nodeId: target.id, title: target.title, newTitle, newSummary })
+    } else if (a.op === 'move') {
+      const parent = Number.isInteger(a.newParent) && (a.newParent as number) >= 0 ? real[a.newParent as number] : undefined
+      if (!parent || target.parentId === null || parent.id === target.parentId) continue
+      if (descendantsOf(target.id).has(parent.id)) continue
+      actions.push({ type: 'move', nodeId: target.id, title: target.title, newParentId: parent.id, newParentTitle: parent.title })
+    } else if (a.op === 'delete') {
+      if (target.parentId === null) continue
+      actions.push({ type: 'delete', nodeId: target.id, title: target.title })
+    }
+  }
+
+  return { reply, proposals: created, purposeUpdate, actions }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────
