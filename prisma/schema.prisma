@@ -461,6 +461,11 @@ model LinkedFile {
   mimeType  String?
   url       String?  // Google Drive webViewLink or public path
   content   String?  // File content stored as text or base64 data URI for persistence
+  analysis  String?  // Gemini's understanding of a visual/auditory file (image
+                     // description, PDF summary, voice-note TRANSCRIPT+NOTES) —
+                     // so Bob can reference the CONTENT of media evidence on
+                     // any later turn, not just its filename. Null for text
+                     // files (content is already readable) and un-analyzed rows.
   size      Int?     // File size in bytes
   addedAt   DateTime @default(now())
 

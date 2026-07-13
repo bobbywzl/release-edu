@@ -51,11 +51,19 @@ export async function analyzeAndPersistAttachments(
         if (!b64) return null
         const { analyzeImage } = await import('@/lib/gemini')
         const analysis = await analyzeImage(b64, opts.context, mime)
+        // Small images keep their raw data URI in `content` (so they still
+        // render in the Files tab); heavy media keeps the analysis text there.
+        // EITHER way the Gemini analysis is ALSO stored in `analysis`, so a
+        // later turn can reference the media's CONTENT, not just its filename.
         const storable = mime.startsWith('image/') && content.length <= 1_000_000
           ? content
           : `[${mime} — analyzed]\n${analysis.slice(0, 8000)}`
         const row = await prisma.linkedFile.create({
-          data: { userId, workType: opts.workType, workId: opts.workId, name, mimeType: mime, content: storable.slice(0, 1_500_000) },
+          data: {
+            userId, workType: opts.workType, workId: opts.workId, name, mimeType: mime,
+            content: storable.slice(0, 1_500_000),
+            analysis: analysis.slice(0, 8000),
+          },
         }).catch(() => null)
         return { name, analysis, fileId: row?.id ?? null }
       }
