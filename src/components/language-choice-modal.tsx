@@ -12,12 +12,14 @@
  * HIDDEN and only reveals itself after confirming, via the server, that the
  * user is not yet onboarded.
  *
- * On confirm it sets the language and records languageConfirmed=true (used by
- * the server to lock the language once the curriculum is generated).
+ * On confirm it sets the language and records languageConfirmed=true (a
+ * deliberate-choice marker). The language is NOT locked afterwards — it can be
+ * switched any time in Settings, which flips the UI and every session's
+ * future Bob replies.
  */
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Languages, Check, AlertTriangle } from 'lucide-react'
+import { Languages, Check } from 'lucide-react'
 import { useLanguage, type Language } from '@/lib/i18n'
 
 export function LanguageChoiceModal({ onProceed }: { onProceed?: () => void }) {
@@ -92,17 +94,15 @@ export function LanguageChoiceModal({ onProceed }: { onProceed?: () => void }) {
               </p>
             </div>
 
-            {/* Permanent-choice warning — impossible to miss, in both languages. */}
-            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 flex items-start gap-2.5 text-left">
-              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-amber-300 leading-relaxed">
-                  This is permanent. Once your curriculum is generated, the language <span className="underline">cannot be changed</span> — you would have to start over completely.
-                </p>
-                <p className="text-xs font-semibold text-amber-300/90 leading-relaxed">
-                  此选择不可更改。课程一旦生成，语言<span className="underline">无法修改</span> —— 只能完全重新开始。
-                </p>
-              </div>
+            {/* Reassurance note — the choice is NOT permanent; Settings has a
+                full app-wide switch. In both languages, like everything here. */}
+            <div className="rounded-xl border border-border bg-muted/30 p-3.5 text-left">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                You can change this anytime in Settings — the app and Bob switch together.
+              </p>
+              <p className="text-xs text-muted-foreground/90 leading-relaxed mt-1">
+                之后可随时在「设置」中更改 —— 界面和 Bob 会一起切换语言。
+              </p>
             </div>
 
             {pending ? (
@@ -111,7 +111,7 @@ export function LanguageChoiceModal({ onProceed }: { onProceed?: () => void }) {
                 <p className="text-sm text-foreground font-medium">
                   Continue in <span className="text-primary font-bold">{pending === 'zh' ? '中文（简体）' : 'English'}</span>?
                   <br />
-                  <span className="text-muted-foreground text-xs">确定使用{pending === 'zh' ? '中文' : 'English'}继续吗？此后无法更改。</span>
+                  <span className="text-muted-foreground text-xs">确定使用{pending === 'zh' ? '中文' : 'English'}继续吗？</span>
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <button
