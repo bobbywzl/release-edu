@@ -18,6 +18,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
+import { collectSubtreeIds } from '@/lib/tree-engine'
 
 export async function PATCH(
   req: NextRequest,
@@ -65,16 +66,29 @@ export async function PATCH(
     case 'edit': {
       // Approved reshape chip (or a manual rename): rewrite title/summary
       // only — status, mastery tally, notes and children are untouched.
-      const title = typeof body.title === 'string' ? body.title.trim() : ''
-      const summary = typeof body.summary === 'string' ? body.summary.trim() : ''
+      // Edits refine the SAME concept (the copilot is instructed to propose
+      // delete + regrow for a different one).
+      const title = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : ''
+      const summary = typeof body.summary === 'string' ? body.summary.trim().slice(0, 500) : ''
       if (!title && !summary) return NextResponse.json({ error: 'Nothing to edit' }, { status: 400 })
+      const titleChanged = !!title && title !== node.title
       await prisma.treeNode.update({
         where: { id: nodeId },
         data: {
-          ...(title ? { title: title.slice(0, 120) } : {}),
-          ...(summary ? { summary: summary.slice(0, 500) } : {}),
+          ...(title ? { title } : {}),
+          ...(summary ? { summary } : {}),
+          // A renamed node's cached explainer opens with the OLD framing —
+          // drop it so the next visit regenerates against the new wording.
+          ...(titleChanged && node.explainer ? { explainer: null } : {}),
         },
       })
+      // The root node IS the problem: keep ProblemTree.title (page headers,
+      // the tree list, every prompt's PROBLEM line) in lock-step with a root
+      // rename — a desync would put two contradictory problem statements in
+      // Bob's context forever.
+      if (titleChanged && !node.parentId) {
+        await prisma.problemTree.update({ where: { id }, data: { title } }).catch(() => null)
+      }
       return NextResponse.json({ ok: true })
     }
     case 'move': {
@@ -85,20 +99,11 @@ export async function PATCH(
       const parent = await prisma.treeNode.findFirst({ where: { id: newParentId, treeId: id } })
       if (!parent || parent.pending) return NextResponse.json({ error: 'Target parent not found' }, { status: 400 })
       // Cycle guard on live data: the new parent must not live inside the
-      // moving node's own subtree (walk ALL nodes, pending included).
+      // moving node's own subtree (walks ALL nodes, pending included).
       const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
-      const subtree = new Set<string>([nodeId])
-      let grew = true
-      while (grew) {
-        grew = false
-        for (const n of all) {
-          if (n.parentId && subtree.has(n.parentId) && !subtree.has(n.id)) {
-            subtree.add(n.id)
-            grew = true
-          }
-        }
+      if (collectSubtreeIds(all, nodeId).has(newParentId)) {
+        return NextResponse.json({ error: 'Cannot move a node into its own branch' }, { status: 400 })
       }
-      if (subtree.has(newParentId)) return NextResponse.json({ error: 'Cannot move a node into its own branch' }, { status: 400 })
       const siblings = await prisma.treeNode.count({ where: { parentId: newParentId } })
       await prisma.treeNode.update({ where: { id: nodeId }, data: { parentId: newParentId, order: siblings } })
       return NextResponse.json({ ok: true })
@@ -108,17 +113,7 @@ export async function PATCH(
       // Children reference parents by id without a cascading FK — collect the
       // whole subtree and delete it in one sweep so no orphans remain.
       const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
-      const toDelete = new Set<string>([nodeId])
-      let grew = true
-      while (grew) {
-        grew = false
-        for (const n of all) {
-          if (n.parentId && toDelete.has(n.parentId) && !toDelete.has(n.id)) {
-            toDelete.add(n.id)
-            grew = true
-          }
-        }
-      }
+      const toDelete = collectSubtreeIds(all, nodeId)
       await prisma.treeNode.deleteMany({ where: { id: { in: Array.from(toDelete) } } })
       return NextResponse.json({ ok: true, deleted: toDelete.size })
     }

@@ -325,6 +325,10 @@ function WorkspaceInner() {
   }
 
   async function send() {
+    // The streaming check must run BEFORE clearing: a send attempted while
+    // Bob is mid-stream must keep the text and staged media (a cleared voice
+    // note is unrecoverable), not silently destroy them.
+    if (streaming) return
     const text = input.trim()
     if (!text && attachments.length === 0) return
     const atts = attachments
@@ -891,7 +895,11 @@ function WorkspaceInner() {
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                  onKeyDown={e => {
+                    // isComposing: Enter that commits an IME candidate (拼音)
+                    // must never send the half-composed message.
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+                  }}
                   placeholder={t('workspace.placeholder')}
                   rows={1}
                   className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all h-12 min-h-[48px] max-h-[140px]"

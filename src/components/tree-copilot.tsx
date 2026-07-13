@@ -14,6 +14,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2,
 } from 'lucide-react'
@@ -47,7 +48,8 @@ export function TreeCopilot({ tree, onChanged, fit }: {
   const [actionBusy, setActionBusy] = useState<number | null>(null)
   const [purposeProposal, setPurposeProposal] = useState<string | null>(null)
   const [purposeBusy, setPurposeBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
+  // tone matters: a failure note must never wear success colors.
+  const [note, setNote] = useState<{ text: string; tone: 'ok' | 'warn' } | null>(null)
   const {
     attachments, note: attachNote, recording,
     addFiles, toggleRecord, removeAt, clear: clearAttachments,
@@ -57,15 +59,6 @@ export function TreeCopilot({ tree, onChanged, fit }: {
 
   useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [thread, busy, open])
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 250) }, [open])
-
-  // Esc collapses back to the bubble (a live mic keeps recording so a stray
-  // Esc can't eat a voice note — the bubble state persists everything).
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open])
 
   // Rehydrate the persisted thread on first open.
   useEffect(() => {
@@ -108,7 +101,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         setGhosts(proposals
           .filter((p: { id?: string }) => p?.id)
           .map((p: { id: string; title?: string; summary?: string }) => ({ id: p.id, title: p.title ?? '', summary: p.summary ?? '' })))
-        setNote(t('tree.proposedN').replace('{n}', String(proposals.length)))
+        setNote({ text: t('tree.proposedN').replace('{n}', String(proposals.length)), tone: 'ok' })
       }
       // Reshape chips are per-turn: the latest turn's set is the live one.
       setActions(Array.isArray(body.actions) ? (body.actions as CopilotAction[]) : [])
@@ -140,10 +133,10 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         await onChanged()
         if (action === 'approve') setTimeout(fit, 150)
       } else {
-        setNote(t('tree.actionFailed'))
+        setNote({ text: t('tree.actionFailed'), tone: 'warn' })
       }
     } catch {
-      setNote(t('tree.actionFailed'))
+      setNote({ text: t('tree.actionFailed'), tone: 'warn' })
     } finally {
       setGhostBusy(null)
     }
@@ -168,14 +161,21 @@ export function TreeCopilot({ tree, onChanged, fit }: {
       })
       if (res.ok) {
         setActions(list => list.filter((_, i) => i !== idx))
-        setNote(t('tree.copilotApplied'))
+        setNote({ text: t('tree.copilotApplied'), tone: 'ok' })
         await onChanged()
         setTimeout(fit, 150)
+      } else if (res.status >= 400 && res.status < 500) {
+        // Terminal: the chip's snapshot no longer matches the live tree
+        // (target deleted by an earlier chip, cycle, root guard) — retire it
+        // instead of leaving an immortal Apply button, and resync the map.
+        setActions(list => list.filter((_, i) => i !== idx))
+        setNote({ text: t('tree.actionFailed'), tone: 'warn' })
+        await onChanged()
       } else {
-        setNote(t('tree.actionFailed'))
+        setNote({ text: t('tree.actionFailed'), tone: 'warn' })
       }
     } catch {
-      setNote(t('tree.actionFailed'))
+      setNote({ text: t('tree.actionFailed'), tone: 'warn' })
     } finally {
       setActionBusy(null)
     }
@@ -195,10 +195,10 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         setPurposeProposal(null)
         await onChanged()
       } else {
-        setNote(t('tree.actionFailed'))
+        setNote({ text: t('tree.actionFailed'), tone: 'warn' })
       }
     } catch {
-      setNote(t('tree.actionFailed'))
+      setNote({ text: t('tree.actionFailed'), tone: 'warn' })
     } finally {
       setPurposeBusy(false)
     }
@@ -235,16 +235,28 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         )}
       </AnimatePresence>
 
-      {/* The fullscreen conversation */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.985 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.985 }}
-            transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="fixed inset-0 z-50 bg-background/95 backdrop-blur-xl flex flex-col"
-          >
+      {/* The fullscreen conversation — a real modal dialog (Radix: focus
+          trap, aria-modal, scroll lock, Esc), animated by framer-motion. */}
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <AnimatePresence>
+          {open && (
+            <Dialog.Portal forceMount>
+              <Dialog.Content
+                asChild
+                forceMount
+                aria-describedby={undefined}
+                // Committing/cancelling an IME composition (拼音) with Esc
+                // must never collapse the conversation.
+                onEscapeKeyDown={e => { if (e.isComposing) e.preventDefault() }}
+                onOpenAutoFocus={e => { e.preventDefault(); setTimeout(() => inputRef.current?.focus(), 250) }}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.985 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.985 }}
+                  transition={{ duration: 0.16, ease: 'easeOut' }}
+                  className="fixed inset-0 z-50 bg-background/95 backdrop-blur-xl flex flex-col"
+                >
             <div className="w-full max-w-3xl mx-auto flex-1 min-h-0 flex flex-col px-4">
               {/* Header */}
               <div className="flex items-center gap-3 py-3.5 border-b border-border">
@@ -252,7 +264,9 @@ export function TreeCopilot({ tree, onChanged, fit }: {
                   <Bot className="w-5 h-5 text-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-foreground">{t('tree.copilotTitle')}</p>
+                  <Dialog.Title asChild>
+                    <p className="text-sm font-bold text-foreground">{t('tree.copilotTitle')}</p>
+                  </Dialog.Title>
                   <p className="text-[11px] text-muted-foreground truncate">{tree.title}</p>
                 </div>
                 <button
@@ -387,7 +401,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
 
               {/* Input dock — the SOTA multimodal capture row + text */}
               <div className="border-t border-border py-2.5 space-y-1.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
-                {note && <p className="text-[11px] text-emerald-300">{note}</p>}
+                {note && <p className={cn('text-[11px]', note.tone === 'warn' ? 'text-amber-400' : 'text-emerald-300')}>{note.text}</p>}
                 <AttachmentTray attachments={attachments} note={attachNote} onRemove={removeAt} />
                 <CaptureControls addFiles={addFiles} recording={recording} toggleRecord={toggleRecord} />
                 <div className="flex items-end gap-1.5">
@@ -395,7 +409,11 @@ export function TreeCopilot({ tree, onChanged, fit }: {
                     ref={inputRef}
                     value={input}
                     onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                    onKeyDown={e => {
+                      // isComposing: Enter that commits an IME candidate (拼音)
+                      // must never send the half-composed message.
+                      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+                    }}
                     rows={1}
                     placeholder={t('tree.copilotPlaceholder')}
                     className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all h-12 min-h-[48px] max-h-[140px]"
@@ -410,9 +428,12 @@ export function TreeCopilot({ tree, onChanged, fit }: {
                 </div>
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                </motion.div>
+              </Dialog.Content>
+            </Dialog.Portal>
+          )}
+        </AnimatePresence>
+      </Dialog.Root>
     </>
   )
 }

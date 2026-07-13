@@ -7,10 +7,13 @@
  * Files stage as removable chips; media reads to data: URIs (text-like files
  * as text). Server-side, every attachment goes through Gemini before Bob's
  * turn (images/video/PDFs analyzed, voice transcribed) and persists as
- * LinkedFile evidence.
+ * LinkedFile evidence (see src/lib/attachments.ts — the server twin).
  *
- * The ~3MB/file cap (hosting request-size cap) is enforced with a VISIBLE
- * note — never silent truncation (truncated base64 is corrupt).
+ * Size policy, enforced with a VISIBLE note (never silent truncation —
+ * truncated base64 is corrupt):
+ *  - per file: ~3MB raw;
+ *  - per message: the ENCODED total (base64 inflates ~4/3) must fit the
+ *    hosting request cap (~4.5MB), so staging stops at ~4.2MB of content.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Paperclip, Camera, Video, Mic, Square, X } from 'lucide-react'
@@ -19,14 +22,18 @@ import { cn } from '@/lib/utils'
 
 export interface ChatAttachment { name: string; type: string; content: string }
 
-/** Request bodies must stay under Vercel's ~4.5MB cap — media above this is
- *  rejected with a visible note, never silently truncated. */
-export const MAX_ATTACH_BYTES = 3_000_000
+// Per-file raw cap (pre-read fast reject) and the per-message encoded budget
+// the request body must respect (Vercel rejects ~4.5MB bodies with a 413
+// before the route ever runs — and by then the chips would already be gone).
+const MAX_FILE_BYTES = 3_000_000
+const MAX_TOTAL_ENCODED = 4_200_000
 
-/** The user-bubble / persisted-record label for a message with attachments. */
+/** The user-bubble label for a message with attachments — kept in lock-step
+ *  with the server's persisted-record label (attachmentRecordLabel in
+ *  src/lib/attachments.ts) so live and rehydrated threads render the same. */
 export function attachmentLabel(message: string, atts: ChatAttachment[]): string {
   if (atts.length === 0) return message
-  return `${message}${message ? '\n' : ''}[${atts.map(a => `📎 ${a.name}`).join(' · ')}]`
+  return `${message}${message ? '\n' : ''}[${atts.map(a => `📎 ${a.name.slice(0, 80)}`).join(' · ')}]`
 }
 
 export function useAttachments() {
@@ -36,23 +43,50 @@ export function useAttachments() {
   const [recording, setRecording] = useState(false)
   const recRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  // Mirror of the staged list so async completions (file reads, recorder
+  // stops) can budget-check against the CURRENT set, not a stale closure.
+  const stagedRef = useRef<ChatAttachment[]>([])
   // Set by cancelRecording so an in-flight recording stopped by a node
   // switch / unmount is dropped instead of landing in the next context.
   const discardRef = useRef(false)
 
+  const commit = useCallback((next: ChatAttachment[]) => {
+    stagedRef.current = next
+    setAttachments(next)
+  }, [])
+
+  /** Budget-checked staging: keeps the newest 3, rejects (with the visible
+   *  size note) when the message's encoded payload would exceed the cap. */
+  const stage = useCallback((item: ChatAttachment): boolean => {
+    const kept = stagedRef.current.slice(-2)
+    const total = kept.reduce((s, x) => s + x.content.length, 0) + item.content.length
+    if (total > MAX_TOTAL_ENCODED) {
+      setNote(t('tree.copilotTooLarge'))
+      return false
+    }
+    commit([...kept, item])
+    setNote(null)
+    return true
+  }, [commit, t])
+
   const addFiles = useCallback(async (files: FileList | null, fallbackName: string) => {
     const file = files?.[0]
     if (!file) return
-    if (file.size > MAX_ATTACH_BYTES) { setNote(t('tree.copilotTooLarge')); return }
-    const isTextLike = file.type.startsWith('text/') || /json|xml|csv|javascript|markdown/.test(file.type)
+    if (file.size > MAX_FILE_BYTES) { setNote(t('tree.copilotTooLarge')); return }
+    const isTextLike = file.type.startsWith('text/')
+      || /json|xml|csv|javascript|markdown/.test(file.type)
+      || (!file.type && /\.(txt|md|csv|json|log|py|js|ts)$/i.test(file.name))
     const content: string = await new Promise(res => {
       const r = new FileReader()
       r.onload = () => res(String(r.result ?? ''))
+      // A failed read (cloud placeholder, file ejected mid-pick) must settle
+      // the promise — an onload-only reader hangs forever with no feedback.
+      r.onerror = () => res('')
       if (isTextLike) r.readAsText(file); else r.readAsDataURL(file)
     })
-    setAttachments(a => [...a.slice(-2), { name: file.name || fallbackName, type: file.type || 'application/octet-stream', content }])
-    setNote(null)
-  }, [t])
+    if (!content) { setNote(t('tree.copilotReadFailed')); return }
+    stage({ name: file.name || fallbackName, type: file.type || 'application/octet-stream', content })
+  }, [stage, t])
 
   const toggleRecord = useCallback(async () => {
     if (recRef.current?.state === 'recording') { try { recRef.current.stop() } catch { /* already stopped */ } return }
@@ -69,13 +103,18 @@ export function useAttachments() {
         if (discarded) return
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
         if (blob.size === 0) return
-        if (blob.size > MAX_ATTACH_BYTES) { setNote(t('tree.copilotTooLarge')); return }
+        if (blob.size > MAX_FILE_BYTES) { setNote(t('tree.copilotTooLarge')); return }
         const r = new FileReader()
-        r.onload = () => setAttachments(a => [...a.slice(-2), {
-          name: `voice-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.webm`,
-          type: blob.type || 'audio/webm',
-          content: String(r.result ?? ''),
-        }])
+        r.onload = () => {
+          const content = String(r.result ?? '')
+          if (!content) { setNote(t('tree.copilotReadFailed')); return }
+          stage({
+            name: `voice-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.webm`,
+            type: blob.type || 'audio/webm',
+            content,
+          })
+        }
+        r.onerror = () => setNote(t('tree.copilotReadFailed'))
         r.readAsDataURL(blob)
       }
       rec.start()
@@ -86,7 +125,7 @@ export function useAttachments() {
     } catch {
       setNote(t('tree.copilotMicDenied'))
     }
-  }, [t])
+  }, [stage, t])
 
   /** Stop AND drop any in-flight recording (context switch / unmount). */
   const cancelRecording = useCallback(() => {
@@ -97,8 +136,10 @@ export function useAttachments() {
     }
   }, [])
 
-  const removeAt = useCallback((i: number) => setAttachments(a => a.filter((_, j) => j !== i)), [])
-  const clear = useCallback(() => { setAttachments([]); setNote(null) }, [])
+  const removeAt = useCallback((i: number) => {
+    commit(stagedRef.current.filter((_, j) => j !== i))
+  }, [commit])
+  const clear = useCallback(() => { commit([]); setNote(null) }, [commit])
 
   // Never leave a mic running after the surface unmounts.
   useEffect(() => () => {
@@ -109,7 +150,7 @@ export function useAttachments() {
     }
   }, [])
 
-  return { attachments, note, setNote, recording, addFiles, toggleRecord, cancelRecording, removeAt, clear }
+  return { attachments, note, recording, addFiles, toggleRecord, cancelRecording, removeAt, clear }
 }
 
 /** The four capture controls: 📎 file · 📷 photo · 🎥 video · 🎙️ voice. */

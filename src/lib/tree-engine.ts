@@ -307,6 +307,30 @@ export function nodePath(nodes: TreeNode[], nodeId: string): TreeNode[] {
 }
 
 /**
+ * The node's whole subtree (itself + every descendant), walked over ALL
+ * nodes — pending ghosts included, so no chain can slip through. The ONE
+ * implementation behind every cycle guard and subtree sweep (copilot move
+ * validation, the node route's move/delete): these must stay semantically
+ * identical for advisory validation and authoritative enforcement to agree.
+ */
+export function collectSubtreeIds(nodes: Array<{ id: string; parentId: string | null }>, rootId: string): Set<string> {
+  const children = new Map<string, string[]>()
+  for (const n of nodes) {
+    if (!n.parentId) continue
+    if (!children.has(n.parentId)) children.set(n.parentId, [])
+    children.get(n.parentId)!.push(n.id)
+  }
+  const out = new Set<string>([rootId])
+  const queue = [rootId]
+  while (queue.length) {
+    for (const kid of children.get(queue.shift()!) ?? []) {
+      if (!out.has(kid)) { out.add(kid); queue.push(kid) }
+    }
+  }
+  return out
+}
+
+/**
  * ALREADY-COVERED digest of the branch BELOW a node — what each ancestor's
  * workspace (root → parent) actually taught: its syllabus opener, the latest
  * teaching excerpt, the student's own notes, and its verification state.
@@ -646,7 +670,7 @@ one-sentence description of the diagram/sketch to draw — name every part and l
 \`\`\`
 The UI renders it as a generated image in place. Never mention the block. At most ONE per reply; it must carry mechanism or a concrete design, never decoration.
 6. RESHAPE THE TREE (edit / move / delete — approval-gated): when the student asks to rename, rewrite, reorganize or remove nodes — or the conversation shows a node is mistitled, misplaced, or doesn't belong — return "actions". Each ships to the student as an approve/dismiss chip; NOTHING changes until they tap it. Ops:
-   {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — rewrite a node's title and/or summary; include ONLY the field(s) you're changing.
+   {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — sharpen the wording of the SAME concept; include ONLY the field(s) you're changing. An edit never retargets a node to a DIFFERENT concept (its checkpoint history would lie) — for that, propose delete + a new branch.
    {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
    {"op":"delete","node":<handle>} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
    The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
@@ -733,19 +757,7 @@ Return ONLY JSON:
   // ── Reshape actions (edit / move / delete) — validated, never executed ──
   // Chips only: the student applies each via the node PATCH route, which
   // re-validates on live data. Root is never movable/deletable; a move that
-  // would orbit a node into its own subtree is dropped. Cycle checks walk
-  // ALL nodes (pending included) so no chain can slip through.
-  const descendantsOf = (rootId: string): Set<string> => {
-    const out = new Set<string>([rootId])
-    let grew = true
-    while (grew) {
-      grew = false
-      for (const n of tree.nodes) {
-        if (n.parentId && out.has(n.parentId) && !out.has(n.id)) { out.add(n.id); grew = true }
-      }
-    }
-    return out
-  }
+  // would orbit a node into its own subtree is dropped.
   const actions: CopilotAction[] = []
   for (const a of (Array.isArray(parsed?.actions) ? parsed!.actions! : []).slice(0, 8)) {
     const target = a && Number.isInteger(a.node) && (a.node as number) >= 0 ? real[a.node as number] : undefined
@@ -758,7 +770,7 @@ Return ONLY JSON:
     } else if (a.op === 'move') {
       const parent = Number.isInteger(a.newParent) && (a.newParent as number) >= 0 ? real[a.newParent as number] : undefined
       if (!parent || target.parentId === null || parent.id === target.parentId) continue
-      if (descendantsOf(target.id).has(parent.id)) continue
+      if (collectSubtreeIds(tree.nodes, target.id).has(parent.id)) continue
       actions.push({ type: 'move', nodeId: target.id, title: target.title, newParentId: parent.id, newParentTitle: parent.title })
     } else if (a.op === 'delete') {
       if (target.parentId === null) continue
