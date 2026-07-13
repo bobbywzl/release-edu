@@ -25,6 +25,7 @@ import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { emitXpAwards } from '@/components/xp-toast'
 import { MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
+import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel, type ChatAttachment } from '@/components/multimodal-input'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
 interface NodeData {
@@ -126,6 +127,13 @@ function WorkspaceInner() {
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // SOTA multimodal input — the same capture row as the tree copilot
+  // (file / camera photo / video / voice note), staged as chips and analyzed
+  // by Gemini server-side before Bob's turn.
+  const {
+    attachments, note: attachNote, recording,
+    addFiles, toggleRecord, cancelRecording, removeAt, clear: clearAttachments,
+  } = useAttachments()
   // Latest node in view + the pending quiz-resync timer — so an async resync
   // that resolves after the user switches nodes can't clobber the new node's
   // chat, and the timer is cancelled on switch.
@@ -226,15 +234,20 @@ function WorkspaceInner() {
       }).catch(() => { /* best-effort flush */ })
     }
     if (quizTimerRef.current) { clearTimeout(quizTimerRef.current); quizTimerRef.current = null }
+    // Staged attachments (and a live mic) belong to ONE node's chat — drop
+    // them on switch so evidence can't land in the wrong workspace.
+    cancelRecording(); clearAttachments()
     setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowThread([]); setDialogGhostIds([]); setGhostBusy(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
   // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
   // first-open trigger — Bob speaks without a student bubble appearing.
-  async function streamFromBob(text: string, showUser: boolean) {
+  // Attachments (multimodal) are analyzed server-side before Bob replies and
+  // persist as this node's file evidence.
+  async function streamFromBob(text: string, showUser: boolean, atts: ChatAttachment[] = []) {
     if (streaming || !treeId || !nodeId) return
-    if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'user', content: text }])
+    if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'user', content: attachmentLabel(text, atts) }])
     setStreaming(true)
     setStreamText('')
     try {
@@ -243,7 +256,7 @@ function WorkspaceInner() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: abortRef.current.signal,
-        body: JSON.stringify({ message: text, lang: language }),
+        body: JSON.stringify({ message: text, lang: language, attachments: atts }),
       })
       // Message too long (server 413): show the actionable reason, not the
       // generic "trouble connecting" that invites retrying the same doomed
@@ -303,6 +316,13 @@ function WorkspaceInner() {
             if (d?.pending) setActiveQuiz(prev => (prev && prev.question === d.pending.question ? prev : d.pending as QuizPayload))
           })
           .catch(() => {})
+        // Sent attachments persisted as node evidence — refresh the Files tab.
+        if (atts.length > 0) {
+          fetch(`/api/files/upload?workType=tree-node&workId=${turnNode}`, { cache: 'no-store' })
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => { if (nodeIdRef.current === turnNode && d?.files) setFiles(d.files) })
+            .catch(() => {})
+        }
       }, 600)
     } catch {
       if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.connectError') }])
@@ -313,16 +333,22 @@ function WorkspaceInner() {
   }
 
   async function send() {
+    // The streaming check must run BEFORE clearing: a send attempted while
+    // Bob is mid-stream must keep the text and staged media (a cleared voice
+    // note is unrecoverable), not silently destroy them.
+    if (streaming) return
     const text = input.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
     // Pre-check the server's 8000-char cap so an over-length paste is caught
     // before the round-trip (the server still enforces it as the backstop).
     if (text.length > 8000) {
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.messageTooLong') }])
       return
     }
+    const atts = attachments
     setInput('')
-    await streamFromBob(text, true)
+    clearAttachments()
+    await streamFromBob(text, true, atts)
   }
 
   async function ensureExplainer() {
@@ -883,33 +909,43 @@ function WorkspaceInner() {
             <div ref={endRef} />
           </div>
 
-          {/* Input bar — same visual language as the Bob chat */}
+          {/* Input bar — same visual language as the Bob chat, with the same
+              SOTA multimodal capture row as the tree copilot (uniformity):
+              📎 file · 📷 photo · 🎥 video · 🎙️ voice note. */}
           <div className="p-3 lg:p-4 border-t border-border bg-card/50 backdrop-blur-sm">
-            <div className="flex items-end gap-2 max-w-3xl mx-auto w-full">
-              <textarea
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-                placeholder={t('workspace.placeholder')}
-                rows={1}
-                className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all h-12 min-h-[48px] max-h-[140px]"
-              />
-              {streaming ? (
-                <button
-                  onClick={() => abortRef.current?.abort()}
-                  className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors"
-                >
-                  <div className="w-3 h-3 rounded-[2px] bg-primary-foreground" />
-                </button>
-              ) : (
-                <button
-                  onClick={send}
-                  disabled={!input.trim()}
-                  className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              )}
+            <div className="max-w-3xl mx-auto w-full space-y-1.5">
+              <AttachmentTray attachments={attachments} note={attachNote} onRemove={removeAt} />
+              <CaptureControls addFiles={addFiles} recording={recording} toggleRecord={toggleRecord} />
+              <div className="flex items-end gap-2 w-full">
+                <textarea
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => {
+                    // isComposing: Enter that commits an IME candidate (拼音)
+                    // must never send the half-composed message.
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+                  }}
+                  placeholder={t('workspace.placeholder')}
+                  rows={1}
+                  className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all h-12 min-h-[48px] max-h-[140px]"
+                />
+                {streaming ? (
+                  <button
+                    onClick={() => abortRef.current?.abort()}
+                    className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    <div className="w-3 h-3 rounded-[2px] bg-primary-foreground" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={send}
+                    disabled={!input.trim() && attachments.length === 0}
+                    className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

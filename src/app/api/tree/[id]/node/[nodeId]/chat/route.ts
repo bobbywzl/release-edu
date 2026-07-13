@@ -2,11 +2,18 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 /**
- * POST /api/tree/[id]/node/[nodeId]/chat { message, lang }
+ * POST /api/tree/[id]/node/[nodeId]/chat { message, lang, attachments? }
  *
  * Bob inside the node workspace: a streaming tutoring chat grounded in the
  * problem tree, the node's lineage, and its explainer. One persistent
  * conversation per node (Conversation.context = "tree-node:<nodeId>").
+ *
+ * Multimodal (same contract as the tree copilot): attachments arrive as
+ * [{name, type, content}] — content is a data: URI for media or plain text
+ * for text files. Each is analyzed by Gemini BEFORE Bob's turn (images/
+ * video/PDFs described, voice notes transcribed) so the analysis grounds
+ * the reply, and persists as node-level evidence (LinkedFile "tree-node" —
+ * the workspace Files tab) that future turns read back.
  *
  * If the student's question opens genuinely NEW ground (not teachable within
  * this node), Bob points them to the Grow button instead of silently
@@ -78,7 +85,7 @@ ${treeSketch.slice(0, 2500)}
 Student's recent questions in this node (oldest first):
 ${recentUserMsgs.slice(-4).map(m => `- "${m.slice(0, 200)}"`).join('\n') || '(first question)'}
 Tutor's last message (context): "${lastBobMsg.slice(0, 400)}"
-Student's NEW message: "${studentMsg.slice(0, 500)}"
+Student's NEW message: "${studentMsg.slice(0, 900)}"
 Prior wrong-streak: ${prior?.streakWrong ?? 0}
 
 Assess and return ONLY JSON:
@@ -144,19 +151,25 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ nod
   })
 }
 
+interface AttachmentIn { name?: string; type?: string; content?: string }
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
   const { id, nodeId } = await params
   const userId = await getUserId()
   const store = dbStore.forUser(userId)
-  const { message, lang } = (await req.json().catch(() => ({}))) as { message?: string; lang?: string }
-  if (!message?.trim()) return new Response('Message required', { status: 400 })
+  const { message, lang, attachments } = (await req.json().catch(() => ({}))) as {
+    message?: string; lang?: string; attachments?: AttachmentIn[]
+  }
+  const msgText = (message ?? '').trim()
+  const atts = (Array.isArray(attachments) ? attachments : []).slice(0, 3)
+  if (!msgText && atts.length === 0) return new Response('Message or attachment required', { status: 400 })
   // Cap message length BEFORE persisting: a giant paste stored verbatim would
   // poison the history and make every later turn (incl. checkpoint/remediation
-  // triggers) exceed the model context — the file-upload path (LinkedFile) is
-  // the channel for large artifacts. Control triggers are exempt (short tokens).
+  // triggers) exceed the model context — the attachment path is the channel
+  // for large artifacts. Control triggers are exempt (short tokens).
   const MSG_MAX = 8000
-  const isControlTrigger = ['[NODE_INTRO]', '[NODE_REVIEW]', '[NODE_CHECKPOINT]', '[NODE_REMEDIATE]'].includes(message.trim())
-  if (!isControlTrigger && message.length > MSG_MAX) {
+  const isControlTrigger = ['[NODE_INTRO]', '[NODE_REVIEW]', '[NODE_CHECKPOINT]', '[NODE_REMEDIATE]'].includes(msgText)
+  if (!isControlTrigger && msgText.length > MSG_MAX) {
     return new Response(lang === 'zh' ? '消息太长，请精简后再发送。' : 'Message too long — please shorten it.', { status: 413 })
   }
 
@@ -166,6 +179,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return new Response('Not configured', { status: 503 })
+
+  // Client triggers, not student messages — nothing is persisted for the
+  // trigger itself; only Bob's reply is saved.
+  //   [NODE_INTRO]     — first open: condensed syllabus-style hook.
+  //   [NODE_REVIEW]    — retention review of a verified node: reactivate the
+  //                      idea, then one fresh checkpoint (full XP).
+  //   [NODE_CHECKPOINT] / [NODE_REMEDIATE] — Bottleneck-Triggered Teaching
+  //   (FOUNDATION.md): the client fires CHECKPOINT after a CORRECT answer
+  //   (no bottleneck found — keep asking) and REMEDIATE after a WRONG one
+  //   (a bottleneck WAS just found — teach into it before asking again).
+  const isIntro = msgText === '[NODE_INTRO]'
+  const isReview = msgText === '[NODE_REVIEW]'
+  const isCheckpoint = msgText === '[NODE_CHECKPOINT]'
+  const isRemediate = msgText === '[NODE_REMEDIATE]'
+  const isTrigger = isIntro || isReview || isCheckpoint || isRemediate
 
   // One conversation per node, found by context tag. The window must be the
   // LATEST 40 messages (desc + reverse to chronological) — an ascending take
@@ -183,21 +211,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     conv = { ...created, messages: [] } as typeof conv & { messages: [] }
   }
 
-  // Client triggers, not student messages — nothing is persisted for the
-  // trigger itself; only Bob's reply is saved.
-  //   [NODE_INTRO]     — first open: condensed syllabus-style hook.
-  //   [NODE_REVIEW]    — retention review of a verified node: reactivate the
-  //                      idea, then one fresh checkpoint (full XP).
-  //   [NODE_CHECKPOINT] / [NODE_REMEDIATE] — Bottleneck-Triggered Teaching
-  //   (FOUNDATION.md): the client fires CHECKPOINT after a CORRECT answer
-  //   (no bottleneck found — keep asking) and REMEDIATE after a WRONG one
-  //   (a bottleneck WAS just found — teach into it before asking again).
-  const isIntro = message.trim() === '[NODE_INTRO]'
-  const isReview = message.trim() === '[NODE_REVIEW]'
-  const isCheckpoint = message.trim() === '[NODE_CHECKPOINT]'
-  const isRemediate = message.trim() === '[NODE_REMEDIATE]'
-  const isTrigger = isIntro || isReview || isCheckpoint || isRemediate
-  if (!isTrigger) await store.addMessage(conv!.id, 'user', message.trim())
+  // The persisted record carries the attachment chips so the thread shows
+  // them after reloads (same convention as the copilot). Persisted BEFORE
+  // the (slow) attachment analysis: if Gemini stalls past the function
+  // limit, the student's message must already be in the thread.
+  const { analyzeAndPersistAttachments, attachmentRecordLabel } = await import('@/lib/attachments')
+  const userRecord = attachmentRecordLabel(msgText, atts)
+  if (!isTrigger) await store.addMessage(conv!.id, 'user', userRecord)
+
+  // ── Analyze attachments (image / voice / video / pdf / text) ──
+  // Shared pipeline with the tree copilot: Gemini reads the media before
+  // Bob's turn (voice notes come back as TRANSCRIPT + NOTES), and every
+  // attachment persists as THIS NODE's evidence (the workspace Files tab) —
+  // future turns read it back through the files block below.
+  const { analyses, fileIds: attachedFileIds } = isTrigger || atts.length === 0
+    ? { analyses: [], fileIds: [] }
+    : await analyzeAndPersistAttachments(userId, atts, {
+        context: `The student is working on the node "${node.title}" (${node.summary}) of their problem-mastery tree "${tree.title}". They shared this in the node's workspace chat.`,
+        workType: 'tree-node',
+        workId: nodeId,
+      })
+
+  // ONE definition of "what the student said this turn" for every silent
+  // consumer (reflection pre-pass, insight extraction): the typed text plus
+  // a clearly-framed digest of the attachment analyses — a voice note's
+  // transcript IS the student speaking, and dropping it would starve the
+  // insight moat on exactly the richest turns.
+  const turnContent = analyses.length > 0
+    ? `${msgText}${msgText ? '\n' : ''}[Shared: ${analyses.map(a => a.name).join(', ')}] ${analyses.map(a => a.analysis).join(' · ').slice(0, 800)}`
+    : msgText
 
   // Contextual thinking (Haiku) before Bob speaks — persisted on the
   // conversation so the wrong-streak survives across turns. The same pass
@@ -213,7 +255,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
     const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
-    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, message.trim(), prior, tree.language ?? lang)
+    // turnContent carries the attachment analyses too — a photo/voice note
+    // of the student's real work is exactly what the project-progress and
+    // misconception detectors should see.
+    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, turnContent, prior, tree.language ?? lang)
     if (r) {
       // ── ANALOGY BRIDGE (the insight moat at work) ──
       // 2+ confused turns → stop re-explaining in the abstract. Pull the
@@ -347,22 +392,37 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
   }
 
   // The student's uploaded evidence for this node — Bob reads actual file
-  // content (text files excerpted; images/binaries listed by name).
+  // content (text files excerpted; images/binaries listed by name). Files
+  // persisted from THIS turn's attachments are excluded: their full analyses
+  // already ride in the ATTACHMENTS block below. Split queries so MB-scale
+  // data-URI media rows never ship their base64 content just to be listed
+  // by name — only text-content rows (which includes stored analyses) are
+  // fetched with content.
   let filesBlock = ''
   try {
-    const nodeFiles = await prisma.linkedFile.findMany({
-      where: { userId, workType: 'tree-node', workId: nodeId },
-      select: { name: true, mimeType: true, content: true },
-      orderBy: { addedAt: 'desc' },
-      take: 5,
-    })
-    if (nodeFiles.length > 0) {
-      filesBlock = `\n## THE STUDENT'S FILES ON THIS NODE (their real work — read and reference it)\n` + nodeFiles.map(f => {
-        const isText = !(f.content ?? '').startsWith('data:')
-        return isText
-          ? `### ${f.name}\n${(f.content ?? '').slice(0, 2000)}${(f.content ?? '').length > 2000 ? '\n…(truncated)' : ''}`
-          : `### ${f.name} (binary/image — content not inlined)`
-      }).join('\n\n')
+    const baseWhere = {
+      userId, workType: 'tree-node', workId: nodeId,
+      ...(attachedFileIds.length ? { id: { notIn: attachedFileIds } } : {}),
+    }
+    const [textFiles, mediaFiles] = await Promise.all([
+      prisma.linkedFile.findMany({
+        where: { ...baseWhere, NOT: { content: { startsWith: 'data:' } } },
+        select: { name: true, content: true },
+        orderBy: { addedAt: 'desc' },
+        take: 5,
+      }),
+      prisma.linkedFile.findMany({
+        where: { ...baseWhere, content: { startsWith: 'data:' } },
+        select: { name: true },
+        orderBy: { addedAt: 'desc' },
+        take: 5,
+      }),
+    ])
+    if (textFiles.length > 0 || mediaFiles.length > 0) {
+      filesBlock = `\n## THE STUDENT'S FILES ON THIS NODE (their real work — read and reference it)\n` + [
+        ...textFiles.map(f => `### ${f.name}\n${(f.content ?? '').slice(0, 2000)}${(f.content ?? '').length > 2000 ? '\n…(truncated)' : ''}`),
+        ...mediaFiles.map(f => `### ${f.name} (binary/image — content not inlined)`),
+      ].join('\n\n')
     }
   } catch { /* non-critical */ }
 
@@ -374,6 +434,17 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
   // What the branch BELOW this node already taught (ancestor workspaces) —
   // the per-node redundancy-avoidance law: build on it, never re-teach it.
   const coverageBlock = await branchCoverage(userId, tree.nodes, nodeId)
+
+  // What the student attached to THIS message, analyzed — the reply must be
+  // grounded in the actual content (same convention as the tree copilot).
+  // When attachments arrived but NOTHING could be read/analyzed, Bob must be
+  // told so — otherwise "(see the attachments above)" points at nothing and
+  // he narrates around a phantom.
+  const attachBlock = analyses.length > 0
+    ? `\n## ATTACHMENTS THE STUDENT JUST SHARED (analyzed for you — ground your reply in their ACTUAL content; a voice note's TRANSCRIPT is the student speaking, so answer it as their words)\n${analyses.map(a => `### ${a.name}\n${a.analysis.slice(0, 3000)}`).join('\n\n')}`
+    : !isTrigger && atts.length > 0
+      ? `\n## ATTACHMENTS: the student attached ${atts.map(a => `"${(a.name ?? 'attachment').slice(0, 80)}"`).join(', ')} but the content could not be read or analyzed this turn. Say so briefly and ask them to describe it or re-send it — do NOT pretend to have seen it.`
+      : ''
 
   const path = nodePath(tree.nodes, nodeId)
   const quizStateNow = parseQuizState(node.quizState)
@@ -411,6 +482,7 @@ ${node.explainer ? `\nThe node's explainer (already shown to the student):\n${no
 ${filesBlock}
 ${lockerBlock}
 ${coverageBlock}
+${attachBlock}
 
 ## HOW TO TEACH HERE
 - Everything you say serves ONE goal: this student genuinely understanding THIS node in service of the root problem.
@@ -552,7 +624,7 @@ Close with ONE short, conversational, inviting question checking they're followi
           model,
           max_tokens: 2000,
           system: systemPrompt,
-          messages: [...history, { role: 'user' as const, content: message.trim() }],
+          messages: [...history, { role: 'user' as const, content: msgText || '(see the attachments above)' }],
         })
         for await (const event of response) {
           if (event.type === 'content_block_delta' && 'text' in event.delta) {
@@ -852,7 +924,7 @@ Return ONLY JSON: {"recitable": true|false}`,
       // (FOUNDATION.md) forbids a checkpoint riding the same turn as the
       // explainer; enforced in code here, not just by prompt instruction.
       if (!quizShipped && !isIntro && !isRemediate) {
-        const msgNorm = message.trim()
+        const msgNorm = msgText
         // On a VERIFIED node the system-solicited [NODE_CHECKPOINT] continue
         // must NOT force a card (the review is one question, not a chain);
         // reviews and explicit "quiz me" / can't-see-card requests still do.
@@ -906,7 +978,11 @@ Return ONLY JSON: {"recitable": true|false}`,
             const { inBackground } = await import('@/lib/background')
             // waitUntil-wrapped: the stream closes right after this, and a
             // frozen lambda would silently starve the insight moat.
-            inBackground(extractInsightsBackground(apiKey, message.trim(), persistContent, userId, tree.language ?? undefined))
+            // turnContent (message + attachment-analysis digest), never the
+            // bare 📎 chip label — a voice-note-only turn's transcript is
+            // the student's actual utterance. Session language rides along so
+            // insights are written in the tree's language, not the UI's.
+            inBackground(extractInsightsBackground(apiKey, turnContent || userRecord, persistContent, userId, tree.language ?? undefined))
           }
         } catch { /* non-critical */ }
       }
