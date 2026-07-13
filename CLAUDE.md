@@ -86,7 +86,13 @@ Each session carries its own language / difficulty / personal background / PURPO
   grinding pays ~25% XP (reviews pay full and stamp `reviewedAt`).
 - `src/app/dashboard/tree/**` — tree list + session-onboarding stepper; the canvas
   (organic layout, string-tension drag physics, shape-preserving subtree follow,
-  hierarchy clamps) and the searchable list view.
+  hierarchy clamps) and the searchable list view; the TREE COPILOT (floating
+  chatbox combining every tree-level function: teach, propose branches under ANY
+  node via `copilotTurn()` in tree-engine, approval-gated purpose refinement via
+  `PATCH /api/tree/[id]` `set_purpose`, multimodal input — file/camera/video
+  capture inputs + MediaRecorder voice → Gemini `analyzeImage` analysis, stored
+  as `LinkedFile` workType `tree` — and generated visuals via ```image blocks;
+  thread persisted as Conversation context `tree-copilot:<treeId>`).
 - `src/app/dashboard/workspace/page.tsx` — per-node work area: Bob chat,
   explainer, editable notes, highlight-based annotations, file evidence.
 - `src/lib/insight-memory.ts` + `src/lib/insight-extraction.ts` — the personalization
@@ -105,8 +111,8 @@ Each session carries its own language / difficulty / personal background / PURPO
 - `src/app/api/portfolio/generate` — session-pure portfolio (version-stamped ≥2;
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,
-  `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `node-chat`,
-  `reflection`, `insight`, `onboarding`, `portfolio`, `title`, `image`, `other`
+  `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `tree-copilot`,
+  `node-chat`, `reflection`, `insight`, `onboarding`, `portfolio`, `title`, `image`, `other`
   (legacy values render with "(legacy)" labels). Every new AI call MUST record usage
   with a fitting feature tag.
 

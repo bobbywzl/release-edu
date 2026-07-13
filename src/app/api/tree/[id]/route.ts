@@ -21,7 +21,19 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const userId = await getUserId()
-  const { status } = (await req.json().catch(() => ({}))) as { status?: string }
+  const body = (await req.json().catch(() => ({}))) as { status?: string; action?: string; purpose?: string }
+
+  // Copilot purpose refinement — applied only on the student's explicit
+  // Approve tap (permission-based, like all tree changes).
+  if (body.action === 'set_purpose') {
+    const purpose = (body.purpose ?? '').trim().slice(0, 500)
+    if (!purpose) return NextResponse.json({ error: 'Purpose required' }, { status: 400 })
+    const updated = await prisma.problemTree.updateMany({ where: { id, userId }, data: { purpose } })
+    if (updated.count === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json({ ok: true })
+  }
+
+  const status = body.status
   if (!status || !['active', 'completed', 'archived'].includes(status)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
   }
