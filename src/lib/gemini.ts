@@ -60,13 +60,16 @@ export async function analyzeImage(imageBase64: string, context: string, mimeTyp
   
   const detectedMime = detectMimeType(imageBase64, mimeType)
   const isVideo = detectedMime.startsWith('video/')
+  const isAudio = detectedMime.startsWith('audio/')
   const isPDF = detectedMime === 'application/pdf'
-  
+
   try {
     // Use gemini-3-flash-preview (stable) for multimodal
     const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' })
-    
-    const prompt = isVideo
+
+    const prompt = isAudio
+      ? `This is a voice recording from a student, in the context of: ${context}. First TRANSCRIBE what they said (verbatim, in the language spoken). Then, in one short paragraph, note anything relevant beyond the words themselves (described objects/sounds, uncertainty, emphasis). Format: "TRANSCRIPT: ..." then "NOTES: ...".`
+      : isVideo
       ? `Analyze this video in the context of: ${context}. Describe what's shown, explain key concepts, and explain how it relates to the student's learning. Be thorough.`
       : isPDF
       ? `Analyze this PDF document in the context of: ${context}. Extract key information, summarize main points, and explain how it relates to the student's learning.`

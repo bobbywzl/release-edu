@@ -79,7 +79,7 @@ export function sessionDirectives(tree: SessionFields, fallbackLang?: string): s
 }
 
 
-async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest') {
+async function recordUsage(result: { usage?: unknown }, userId: string, model: string, feature: 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest' | 'tree-copilot') {
   try {
     const { recordAnthropicUsage } = await import('@/lib/usage')
     recordAnthropicUsage(result.usage as Parameters<typeof recordAnthropicUsage>[0], { userId, model, feature })
@@ -556,6 +556,157 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
   }
   const clarify = typeof parsed?.clarify === 'string' && parsed.clarify.trim() ? parsed.clarify.trim() : undefined
   return { proposals: created, reply, clarify }
+}
+
+// ── Tree Copilot (one chatbox, every tree function) ──────────────────────
+
+export interface CopilotResult {
+  reply: string
+  proposals: TreeNode[]
+  /** A sharper session purpose the conversation surfaced — applied only
+   *  after the student taps Approve (permission-based, like all growth). */
+  purposeUpdate?: string | null
+}
+
+/**
+ * One turn of the TREE COPILOT — the tree page's single conversational box
+ * that combines every tree-level function: teach about the whole problem,
+ * propose branches under ANY node, and refine the session PURPOSE (e.g.
+ * reorienting the tree into a build-partner for a product the student is
+ * making). Attachment analyses (images/audio/video/files, via Gemini) arrive
+ * as grounding. All growth stays permission-based: proposals are pending
+ * ghosts; purpose changes ship back for explicit approval; nothing existing
+ * is ever deleted or overwritten by the copilot.
+ */
+export async function copilotTurn(
+  userId: string, treeId: string, message: string, lang?: string,
+  opts: {
+    history?: GrowTurn[]
+    attachments?: Array<{ name: string; analysis: string }>
+    replaceIds?: string[]
+  } = {},
+): Promise<CopilotResult> {
+  const tree = await getTreeWithNodes(userId, treeId)
+  if (!tree) throw new Error('Tree not found')
+
+  const real = tree.nodes.filter(n => !n.pending)
+  // Stable numeric handles so the model can target ANY parent without
+  // handling raw ids.
+  const indexList = real.map((n, i) =>
+    `[#${i}] "${n.title}" (${n.parentId === null ? 'ROOT' : n.status})${n.summary ? ` — ${n.summary.slice(0, 100)}` : ''}`).join('\n')
+
+  const history = (opts.history ?? []).slice(-10).map(h => ({
+    role: h.role === 'assistant' ? 'assistant' as const : 'user' as const,
+    content: String(h.content ?? '').slice(0, 1500),
+  })).filter(h => h.content.trim())
+
+  const attachBlock = (opts.attachments ?? []).length > 0
+    ? `\n## ATTACHMENTS THE STUDENT JUST SHARED (analyzed for you — ground your reply in their ACTUAL content)\n${(opts.attachments ?? []).map(a => `### ${a.name}\n${a.analysis.slice(0, 3000)}`).join('\n\n')}`
+    : ''
+
+  const replaceIds = (opts.replaceIds ?? []).filter(id => typeof id === 'string').slice(0, 8)
+
+  const client = await anthropic()
+  const model = await getTeachingModel()
+  const system = `You are Bob, the TREE COPILOT for one problem-mastery learning tree — a single conversation that can operate EVERY tree-level function. The student talks to you about the tree as a whole; you converse, teach, grow, and re-aim it.
+
+PROBLEM (root): "${tree.title}"
+${tree.framing ? `FRAMING: ${tree.framing}` : ''}
+SESSION PURPOSE: ${tree.purpose ? `"${tree.purpose}"` : '(not yet stated — surfacing it is one of your jobs)'}
+CURRENT TREE (numeric handles for proposing):
+${indexList}
+${attachBlock}
+
+YOUR FUNCTIONS (all in one box):
+1. CONVERSE & TEACH about the whole problem under the Answer Standard — every answer Relevant (scoped to this tree's problem and purpose) and Informative (carries the mechanism/why). Never re-teach what an existing node already owns — point to that node instead ("open '<node>' for that — here's how it connects…").
+2. PROPOSE BRANCHES anywhere: return proposals as {"parent": <numeric handle>, "title", "summary", "kind"} — they appear as pending ghosts the student must approve. Propose under the MOST fitting parent (root for new solution directions, deeper nodes for components). 0-6 per turn; each must be a distinct pain point/concept NOT already in the tree, with an informative summary (what it is + why it unlocks the goal).
+3. REFINE THE PURPOSE: when the conversation (or an attachment — e.g. the product they're building) reveals what this tree is REALLY for, return "purposeUpdate": a sharp 1-2 sentence purpose. The student approves it with a tap. When the purpose reorients the tree (e.g. "improve MY product" → build-partner mode: solution-proposing, evidence-grounded, deployable depth), ALSO propose the new solution branches that fit — NEVER suggest deleting existing nodes; the tree only grows.
+4. BE A BUILD PARTNER when the purpose is a real product/project: ground every proposal and answer in the student's actual artifacts (attachments above), propose concrete improvement branches, and teach the mechanism behind each suggestion.
+5. GENERATED VISUALS: when the student asks for a diagram/graph/sketch, OR the concept is inherently visual (structure, flow, comparison, a product sketch), place EXACTLY one fenced block inside your reply markdown where the visual belongs:
+\`\`\`image
+one-sentence description of the diagram/sketch to draw — name every part and label explicitly
+\`\`\`
+The UI renders it as a generated image in place. Never mention the block. At most ONE per reply; it must carry mechanism or a concrete design, never decoration.
+
+RULES:
+- CURIOUS SPECIFICITY (like the grow box): judge each ask yourself; when underspecified, still act under the most likely reading AND end with ONE sharp fork question that would change what you propose. Never a bare "tell me more".
+- Growth is PERMISSION-BASED: proposals/purpose changes are suggestions until tapped — never claim you already changed anything.
+- On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept).
+- The reply never lists proposal titles as a menu (the UI shows cards) — speak about them naturally.
+${sessionDirectives(tree, lang)}
+
+Return ONLY JSON:
+{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "purposeUpdate": "sharper purpose or null"}`
+
+  type CopilotParsed = {
+    reply?: string
+    proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string }>
+    purposeUpdate?: string | null
+  }
+  const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
+    r.content.filter(b => b.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
+  const parseTurn = (text: string): CopilotParsed | null => {
+    const obj = extractJSON<CopilotParsed>(text)
+    return obj && (typeof obj.reply === 'string' || Array.isArray(obj.proposals)) ? obj : null
+  }
+  const turnMessages = [...history, { role: 'user' as const, content: message.slice(0, 2000) }]
+
+  let parsed: CopilotParsed | null = null
+  {
+    const result = await client.messages.create({ model, max_tokens: 3500, system, messages: turnMessages })
+    void recordUsage(result, userId, model, 'tree-copilot')
+    parsed = parseTurn(textOf(result))
+  }
+  if (!parsed) {
+    try {
+      const result = await client.messages.create({
+        model, max_tokens: 3500,
+        system: `${system}\n\nCRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.`,
+        messages: turnMessages,
+      })
+      void recordUsage(result, userId, model, 'tree-copilot')
+      parsed = parseTurn(textOf(result))
+    } catch { /* degrade to the localized fallback below */ }
+  }
+
+  const zh = (tree.language ?? lang) === 'zh'
+  const rawProposals = (parsed?.proposals ?? []).filter(p => p && typeof p.title === 'string' && p.title.trim()).slice(0, 6)
+
+  // Replace this dialog's previous unapproved ghosts ONLY when the new turn
+  // actually produced replacements (same covenant as the grow box).
+  if (replaceIds.length > 0 && rawProposals.length > 0) {
+    await prisma.treeNode.deleteMany({
+      where: { id: { in: replaceIds }, treeId, pending: true },
+    }).catch(() => null)
+  }
+
+  const created: TreeNode[] = []
+  for (const p of rawProposals) {
+    const parentIdx = Number.isInteger(p.parent) ? (p.parent as number) : 0
+    const parent = real[Math.min(Math.max(parentIdx, 0), real.length - 1)] ?? real[0]
+    if (!parent) continue
+    const siblings = await prisma.treeNode.count({ where: { parentId: parent.id } })
+    created.push(await prisma.treeNode.create({
+      data: {
+        treeId, parentId: parent.id,
+        kind: p.kind === 'leaf' ? 'leaf' : 'component',
+        title: (p.title as string).slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
+        pending: true, order: siblings,
+      },
+    }))
+  }
+
+  let reply = typeof parsed?.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim().slice(0, 6000) : ''
+  if (!reply) {
+    reply = created.length > 0
+      ? (zh ? `我提出了 ${created.length} 个分枝建议——在树上确认，或继续告诉我方向。` : `I've proposed ${created.length} ${created.length === 1 ? 'branch' : 'branches'} — approve them on the tree, or keep steering me.`)
+      : (zh ? '这次没能生成回应——再发一次，我会直接按最可能的理解来做。' : "That one didn't generate — send it again and I'll act on the most likely reading directly.")
+  }
+  const purposeUpdate = typeof parsed?.purposeUpdate === 'string' && parsed.purposeUpdate.trim()
+    ? parsed.purposeUpdate.trim().slice(0, 500)
+    : null
+
+  return { reply, proposals: created, purposeUpdate }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────

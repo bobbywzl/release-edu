@@ -89,6 +89,7 @@ const FEATURE_LABELS: Record<string, string> = {
   'tree-seed': 'Tree seeding', 'tree-expand': 'Branch proposals',
   'tree-explainer': 'Node explainers', 'tree-verify': 'Mastery verification',
   'tree-digest': 'Tree digests',
+  'tree-copilot': 'Tree copilot',
   'node-chat': 'Workspace chat (Bob)', reflection: 'Contextual thinking (Haiku)',
   onboarding: 'Onboarding', insight: 'Insight memory', title: 'Title generation',
   portfolio: 'Portfolio', image: 'Image/file analysis', other: 'Other',
