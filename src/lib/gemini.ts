@@ -5,12 +5,12 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 
 // Gemini is the sole engine for understanding the learner's visual & auditory
 // files (images, video, PDFs, voice notes) — it is more capable at multimodal
-// than the teaching tier, so ALL such processing routes here. The PRO tier is
-// the primary for genuine understanding; flash is the fast fallback if pro is
-// unavailable or errors. (Pinned like every other Gemini id in this file — the
-// dynamic resolver governs the Anthropic teaching/judging tiers only.)
-export const GEMINI_MULTIMODAL_MODEL = 'gemini-3.1-pro-preview'
-export const GEMINI_MULTIMODAL_FALLBACK = 'gemini-3-flash-preview'
+// than the teaching tier, so ALL such processing routes here, on Gemini's best
+// FLASH model: strong at multimodal with the fast, low-cost latency that fits
+// analysis running BEFORE Bob's reply. (Pinned like every other Gemini id in
+// this file — the dynamic resolver governs the Anthropic teaching/judging
+// tiers only.)
+export const GEMINI_MULTIMODAL_MODEL = 'gemini-3-flash-preview'
 
 function getClient(): GoogleGenerativeAI | null {
   const apiKey = process.env.GEMINI_API_KEY
@@ -80,27 +80,24 @@ export async function analyzeImage(imageBase64: string, context: string, mimeTyp
     ? `Analyze this PDF document in the context of: ${context}. Extract key information, summarize main points, and explain how it relates to the student's learning.`
     : `Analyze this image in the context of: ${context}. Describe what you see in detail, explain any relevant concepts, and suggest how this relates to the student's learning. Be thorough and helpful.`
 
-  // Genuine multimodal understanding: try the PRO model first, fall back to
-  // flash on any error (rate limit, model unavailable). BOTH actually read the
-  // media — flash is a capability fallback, not a text-only apology.
-  for (const modelId of [GEMINI_MULTIMODAL_MODEL, GEMINI_MULTIMODAL_FALLBACK]) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelId })
-      const result = await model.generateContent([
-        { text: prompt },
-        { inlineData: { mimeType: detectedMime, data: imageBase64 } },
-      ])
-      {
-        const { recordGeminiUsage } = await import('@/lib/usage')
-        recordGeminiUsage(result.response.usageMetadata, { model: modelId, feature: 'image' })
-      }
-      return result.response.text()
-    } catch (err) {
-      console.error(`Gemini multimodal analysis error (${modelId}):`, err)
-      // try the next model in the chain
+  // Genuine multimodal understanding on Gemini's best flash model, with a
+  // graceful degrade if it errors (rate limit / unavailable) so a bad call
+  // never kills the turn.
+  try {
+    const model = genAI.getGenerativeModel({ model: GEMINI_MULTIMODAL_MODEL })
+    const result = await model.generateContent([
+      { text: prompt },
+      { inlineData: { mimeType: detectedMime, data: imageBase64 } },
+    ])
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: GEMINI_MULTIMODAL_MODEL, feature: 'image' })
     }
+    return result.response.text()
+  } catch (err) {
+    console.error(`Gemini multimodal analysis error (${GEMINI_MULTIMODAL_MODEL}):`, err)
   }
-  // Both models failed — degrade gracefully instead of killing the turn.
+  // Degrade gracefully instead of killing the turn.
   return `I can see you've shared a ${isVideo ? 'video' : isAudio ? 'voice note' : isPDF ? 'PDF' : 'file'}. Could you tell me what you'd like to discuss about it?`
 }
 
