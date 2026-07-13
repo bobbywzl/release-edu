@@ -17,9 +17,13 @@ export async function GET(req: NextRequest) {
 
   if (!workId) return NextResponse.json({ files: [] })
 
+  // Metadata only — every consumer renders name/id chips, and shipping the
+  // content column would stream megabytes of stored base64 evidence (chat
+  // photo attachments) just to draw a file list.
   const files = await prisma.linkedFile.findMany({
     where: { userId, workType: workType || undefined, workId },
     orderBy: { addedAt: 'desc' },
+    select: { id: true, name: true, mimeType: true, size: true, addedAt: true, workType: true, workId: true },
   })
 
   return NextResponse.json({ files })

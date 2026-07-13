@@ -186,50 +186,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const isRemediate = msgText === '[NODE_REMEDIATE]'
   const isTrigger = isIntro || isReview || isCheckpoint || isRemediate
 
-  // ── Analyze attachments (image / voice / video / pdf / text) ──
-  // Same pipeline as the tree copilot: Gemini reads the media before Bob's
-  // turn (voice notes come back as TRANSCRIPT + NOTES), and every attachment
-  // persists as THIS NODE's evidence (the workspace Files tab) — future
-  // turns read it back through the files block below.
-  const analyses: Array<{ name: string; analysis: string }> = []
-  const attachedFileIds: string[] = []
-  if (!isTrigger) {
-    for (const a of atts) {
-      const name = (a.name ?? 'attachment').slice(0, 120)
-      const content = a.content ?? ''
-      if (!content) continue
-      try {
-        const geminiContext = `The student is working on the node "${node.title}" (${node.summary}) of their problem-mastery tree "${tree.title}". They shared this in the node's workspace chat.`
-        if (content.startsWith('data:')) {
-          // Request bodies are capped (~4.5MB on Vercel) so this is bounded,
-          // but clamp defensively anyway.
-          const [head, b64] = content.split(',', 2)
-          const mime = /data:([^;]+)/.exec(head)?.[1] ?? (a.type || 'image/jpeg')
-          if (!b64) continue
-          const { analyzeImage } = await import('@/lib/gemini')
-          const analysis = await analyzeImage(b64, geminiContext, mime)
-          analyses.push({ name, analysis })
-          // Keep it as node evidence: small images verbatim (renderable
-          // later), heavy media as their analysis text.
-          const storable = mime.startsWith('image/') && content.length <= 1_000_000
-            ? content
-            : `[${mime} — analyzed]\n${analysis.slice(0, 8000)}`
-          const row = await prisma.linkedFile.create({
-            data: { userId, workType: 'tree-node', workId: nodeId, name, mimeType: mime, content: storable.slice(0, 1_500_000) },
-          }).catch(() => null)
-          if (row) attachedFileIds.push(row.id)
-        } else {
-          const text = content.slice(0, 6000)
-          analyses.push({ name, analysis: `Text file content:\n${text}` })
-          const row = await prisma.linkedFile.create({
-            data: { userId, workType: 'tree-node', workId: nodeId, name, mimeType: a.type || 'text/plain', content: content.slice(0, 1_500_000) },
-          }).catch(() => null)
-          if (row) attachedFileIds.push(row.id)
-        }
-      } catch { /* an unanalyzable attachment must not kill the turn */ }
-    }
-  }
-
   // One conversation per node, found by context tag. The window must be the
   // LATEST 40 messages (desc + reverse to chronological) — an ascending take
   // would pin Bob's context and the return-visit gate to the conversation's
@@ -247,11 +203,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // The persisted record carries the attachment chips so the thread shows
-  // them after reloads (same convention as the copilot).
-  const userRecord = atts.length > 0
-    ? `${msgText}${msgText ? '\n' : ''}[${atts.map(a => `📎 ${(a.name ?? 'attachment').slice(0, 80)}`).join(' · ')}]`
-    : msgText
+  // them after reloads (same convention as the copilot). Persisted BEFORE
+  // the (slow) attachment analysis: if Gemini stalls past the function
+  // limit, the student's message must already be in the thread.
+  const { analyzeAndPersistAttachments, attachmentRecordLabel } = await import('@/lib/attachments')
+  const userRecord = attachmentRecordLabel(msgText, atts)
   if (!isTrigger) await store.addMessage(conv!.id, 'user', userRecord)
+
+  // ── Analyze attachments (image / voice / video / pdf / text) ──
+  // Shared pipeline with the tree copilot: Gemini reads the media before
+  // Bob's turn (voice notes come back as TRANSCRIPT + NOTES), and every
+  // attachment persists as THIS NODE's evidence (the workspace Files tab) —
+  // future turns read it back through the files block below.
+  const { analyses, fileIds: attachedFileIds } = isTrigger || atts.length === 0
+    ? { analyses: [], fileIds: [] }
+    : await analyzeAndPersistAttachments(userId, atts, {
+        context: `The student is working on the node "${node.title}" (${node.summary}) of their problem-mastery tree "${tree.title}". They shared this in the node's workspace chat.`,
+        workType: 'tree-node',
+        workId: nodeId,
+      })
+
+  // ONE definition of "what the student said this turn" for every silent
+  // consumer (reflection pre-pass, insight extraction): the typed text plus
+  // a clearly-framed digest of the attachment analyses — a voice note's
+  // transcript IS the student speaking, and dropping it would starve the
+  // insight moat on exactly the richest turns.
+  const turnContent = analyses.length > 0
+    ? `${msgText}${msgText ? '\n' : ''}[Shared: ${analyses.map(a => a.name).join(', ')}] ${analyses.map(a => a.analysis).join(' · ').slice(0, 800)}`
+    : msgText
 
   // Contextual thinking (Haiku) before Bob speaks — persisted on the
   // conversation so the wrong-streak survives across turns. The same pass
@@ -267,13 +246,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
     const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
     const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
-    // Attachment analyses ride along so the pre-pass can read them too — a
-    // photo/voice note of the student's real work is exactly what the
-    // project-progress and misconception detectors should see.
-    const reflectSrc = analyses.length > 0
-      ? `${msgText}\n[Shared: ${analyses.map(a => a.name).join(', ')}] ${analyses.map(a => a.analysis).join(' · ').slice(0, 500)}`
-      : msgText
-    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, reflectSrc, prior, tree.language ?? lang)
+    // turnContent carries the attachment analyses too — a photo/voice note
+    // of the student's real work is exactly what the project-progress and
+    // misconception detectors should see.
+    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, turnContent, prior, tree.language ?? lang)
     if (r) {
       // ── ANALOGY BRIDGE (the insight moat at work) ──
       // 2+ confused turns → stop re-explaining in the abstract. Pull the
@@ -409,25 +385,35 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
   // The student's uploaded evidence for this node — Bob reads actual file
   // content (text files excerpted; images/binaries listed by name). Files
   // persisted from THIS turn's attachments are excluded: their full analyses
-  // already ride in the ATTACHMENTS block below.
+  // already ride in the ATTACHMENTS block below. Split queries so MB-scale
+  // data-URI media rows never ship their base64 content just to be listed
+  // by name — only text-content rows (which includes stored analyses) are
+  // fetched with content.
   let filesBlock = ''
   try {
-    const nodeFiles = await prisma.linkedFile.findMany({
-      where: {
-        userId, workType: 'tree-node', workId: nodeId,
-        ...(attachedFileIds.length ? { id: { notIn: attachedFileIds } } : {}),
-      },
-      select: { name: true, mimeType: true, content: true },
-      orderBy: { addedAt: 'desc' },
-      take: 5,
-    })
-    if (nodeFiles.length > 0) {
-      filesBlock = `\n## THE STUDENT'S FILES ON THIS NODE (their real work — read and reference it)\n` + nodeFiles.map(f => {
-        const isText = !(f.content ?? '').startsWith('data:')
-        return isText
-          ? `### ${f.name}\n${(f.content ?? '').slice(0, 2000)}${(f.content ?? '').length > 2000 ? '\n…(truncated)' : ''}`
-          : `### ${f.name} (binary/image — content not inlined)`
-      }).join('\n\n')
+    const baseWhere = {
+      userId, workType: 'tree-node', workId: nodeId,
+      ...(attachedFileIds.length ? { id: { notIn: attachedFileIds } } : {}),
+    }
+    const [textFiles, mediaFiles] = await Promise.all([
+      prisma.linkedFile.findMany({
+        where: { ...baseWhere, NOT: { content: { startsWith: 'data:' } } },
+        select: { name: true, content: true },
+        orderBy: { addedAt: 'desc' },
+        take: 5,
+      }),
+      prisma.linkedFile.findMany({
+        where: { ...baseWhere, content: { startsWith: 'data:' } },
+        select: { name: true },
+        orderBy: { addedAt: 'desc' },
+        take: 5,
+      }),
+    ])
+    if (textFiles.length > 0 || mediaFiles.length > 0) {
+      filesBlock = `\n## THE STUDENT'S FILES ON THIS NODE (their real work — read and reference it)\n` + [
+        ...textFiles.map(f => `### ${f.name}\n${(f.content ?? '').slice(0, 2000)}${(f.content ?? '').length > 2000 ? '\n…(truncated)' : ''}`),
+        ...mediaFiles.map(f => `### ${f.name} (binary/image — content not inlined)`),
+      ].join('\n\n')
     }
   } catch { /* non-critical */ }
 
@@ -442,9 +428,14 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
 
   // What the student attached to THIS message, analyzed — the reply must be
   // grounded in the actual content (same convention as the tree copilot).
+  // When attachments arrived but NOTHING could be read/analyzed, Bob must be
+  // told so — otherwise "(see the attachments above)" points at nothing and
+  // he narrates around a phantom.
   const attachBlock = analyses.length > 0
     ? `\n## ATTACHMENTS THE STUDENT JUST SHARED (analyzed for you — ground your reply in their ACTUAL content; a voice note's TRANSCRIPT is the student speaking, so answer it as their words)\n${analyses.map(a => `### ${a.name}\n${a.analysis.slice(0, 3000)}`).join('\n\n')}`
-    : ''
+    : !isTrigger && atts.length > 0
+      ? `\n## ATTACHMENTS: the student attached ${atts.map(a => `"${(a.name ?? 'attachment').slice(0, 80)}"`).join(', ')} but the content could not be read or analyzed this turn. Say so briefly and ask them to describe it or re-send it — do NOT pretend to have seen it.`
+      : ''
 
   const path = nodePath(tree.nodes, nodeId)
   const quizStateNow = parseQuizState(node.quizState)
@@ -941,7 +932,10 @@ Return ONLY JSON: {"recitable": true|false}`,
             const { inBackground } = await import('@/lib/background')
             // waitUntil-wrapped: the stream closes right after this, and a
             // frozen lambda would silently starve the insight moat.
-            inBackground(extractInsightsBackground(apiKey, msgText || userRecord, persistContent, userId))
+            // turnContent (message + attachment-analysis digest), never the
+            // bare 📎 chip label — a voice-note-only turn's transcript is
+            // the student's actual utterance.
+            inBackground(extractInsightsBackground(apiKey, turnContent || userRecord, persistContent, userId))
           }
         } catch { /* non-critical */ }
       }
