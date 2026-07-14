@@ -893,6 +893,9 @@ export async function judgeCheckpointAnswer(
 
   const client = await anthropic()
   const model = await getJudgeModel()
+  // Bounded so a slow/stalled judge call can never ride the full function
+  // duration (which stranded the client on "Judging…"); one retry rides out a
+  // transient 429/5xx/529 blip. Worst case ≈ 2 × 22s, well under maxDuration.
   const result = await client.messages.create({
     model,
     max_tokens: 700,
@@ -914,7 +917,7 @@ ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
     }],
-  })
+  }, { timeout: 22000, maxRetries: 1 })
   void recordUsage(result, userId, model, 'tree-verify')
   const parsed = extractJSON<{ score?: number; feedback?: string }>((result.content[0] as { text?: string })?.text ?? '')
   if (!parsed || typeof parsed.score !== 'number') throw new Error('Judging failed')

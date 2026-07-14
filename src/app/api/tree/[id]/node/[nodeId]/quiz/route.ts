@@ -138,7 +138,7 @@ The option THEY chose (wrong): "${options[idx].slice(0, 200)}"
 The correct option: "${options[quiz.correctIndex as number].slice(0, 200)}"
 Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — why that exact choice is tempting and precisely why it fails. Do not restate the general explanation (it follows separately). ${zh ? 'Respond in Simplified Chinese (简体中文).' : 'Respond in English.'} Return ONLY the sentences.`,
               }],
-            })
+            }, { timeout: 15000, maxRetries: 1 })
             try {
               const { recordAnthropicUsage } = await import('@/lib/usage')
               recordAnthropicUsage(res.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
