@@ -590,11 +590,19 @@ function WorkspaceInner() {
     const answer = activeQuiz.kind === 'mcq' ? quizSel : quizText.trim()
     if (answer === null || answer === '') return
     setQuizBusy(true)
+    setQuizError(false) // clear any prior "connect error" so a retry starts clean
+    // Hard client-side ceiling: the server bounds judging to well under this,
+    // so if the request hasn't resolved by now it never will — abort it into
+    // the retryable error state rather than leaving the spinner on "Judging…"
+    // forever (the exact stuck state this fix targets).
+    const ctrl = new AbortController()
+    const timeout = setTimeout(() => ctrl.abort(), 55000)
     try {
       const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/quiz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf ?? undefined, lang: language }),
+        signal: ctrl.signal,
       })
       const body = await res.json().catch(() => null)
       // Only apply a resync if the user is still on the node we answered.
@@ -654,11 +662,12 @@ function WorkspaceInner() {
         }
       }, verified ? 2200 : 1500)
     } catch {
-      // Transient (judge unavailable / network) — surface it so the button
-      // doesn't silently revert from "Judging…" to "Submit"; the card stays
-      // armed and the server re-arms the pending, so retry is safe.
+      // Transient (judge unavailable / network / client timeout) — surface it
+      // so the button doesn't silently revert from "Judging…" to "Submit"; the
+      // card stays armed and the server re-arms the pending, so retry is safe.
       setQuizError(true)
     } finally {
+      clearTimeout(timeout)
       setQuizBusy(false)
     }
   }
