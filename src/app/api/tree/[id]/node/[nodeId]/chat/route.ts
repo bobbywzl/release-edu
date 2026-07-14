@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, type XpAwardLite } from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, refreshNodeContextSummary, type XpAwardLite } from '@/lib/tree-engine'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 
@@ -979,9 +979,9 @@ Return ONLY JSON: {"recitable": true|false}`,
         // mis-attribution shape the anti-hallucination rule guards against.
         try {
           const count = await prisma.message.count({ where: { conversationId: convId } })
+          const { inBackground } = await import('@/lib/background')
           if (!isTrigger && count % 5 === 0) {
             const { extractInsightsBackground } = await import('@/lib/insight-extraction')
-            const { inBackground } = await import('@/lib/background')
             // waitUntil-wrapped: the stream closes right after this, and a
             // frozen lambda would silently starve the insight moat.
             // turnContent (message + attachment-analysis digest), never the
@@ -989,6 +989,20 @@ Return ONLY JSON: {"recitable": true|false}`,
             // the student's actual utterance. Session language rides along so
             // insights are written in the tree's language, not the UI's.
             inBackground(extractInsightsBackground(apiKey, turnContent || userRecord, persistContent, userId, tree.language ?? undefined))
+          }
+          // Keep THIS node's CONTEXT SUMMARY fresh so its descendants read a
+          // current, distilled digest (never raw messages) via branchCoverage —
+          // the per-node redundancy law without the token bloat. Cheap Haiku
+          // pass, fully backgrounded. Seed it on the intro (captures the
+          // syllabus at once), then refresh on a light cadence as real teaching
+          // accumulates. Skip other pure trigger turns (review/checkpoint
+          // auto-continues carry no new teaching worth re-summarizing for).
+          // The modulus MUST be odd: a free-form turn persists BOTH a user and
+          // an assistant message (+2, parity-preserving) and the intro seeds an
+          // odd count, so a run of pure Q&A keeps `count` odd — an even modulus
+          // would never fire there, leaving the summary stuck at the intro seed.
+          if (isIntro || (!isTrigger && count % 3 === 0)) {
+            inBackground(refreshNodeContextSummary(userId, id, nodeId, tree.language ?? undefined))
           }
         } catch { /* non-critical */ }
       }

@@ -90,6 +90,14 @@ model TreeNode {
   // Mastery is proven through Bob's in-chat checkpoint questions (MCQ +
   // short answer, AI-judged); the node flips to understood at the target.
   quizState   String?
+  // The node's CONTEXT SUMMARY — a continuously-updated, distilled digest of
+  // what THIS node's workspace proved/taught + its role toward the root
+  // problem. A cheap background pass keeps it fresh (regenerated after
+  // substantive chat and on verification). Descendants read their ancestors'
+  // summaries via branchCoverage() INSTEAD of re-deriving from raw messages
+  // every turn — the per-node redundancy law without the token bloat.
+  contextSummary   String?
+  contextSummaryAt DateTime?
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
