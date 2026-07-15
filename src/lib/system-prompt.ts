@@ -402,7 +402,7 @@ export const CHAT_MODES: ChatModeConfig[] = [
     description: 'Logistics & Curriculum changes',
     icon: '📋',
     provider: 'anthropic',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-5',
   },
 ]
 

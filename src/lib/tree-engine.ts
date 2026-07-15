@@ -16,6 +16,7 @@
 import prisma from '@/lib/prisma'
 import type { TreeNode } from '@prisma/client'
 import { getTeachingModel, getJudgeModel } from '@/lib/model-resolver'
+import { CHAT_MODELS } from '@/lib/chat-model-router'
 import { ensureUserRow } from '@/lib/ensure-user'
 import { clampText } from '@/lib/clamp'
 
@@ -1039,15 +1040,11 @@ export async function judgeCheckpointAnswer(
   if (!tree || !node) throw new Error('Node not found')
 
   const client = await anthropic()
-  const model = await getJudgeModel()
-  // Bounded so a slow/stalled judge call can never ride the full function
-  // duration (which stranded the client on "Judging…"); one retry rides out a
-  // transient 429/5xx/529 blip. Worst case ≈ 2 × 22s, well under maxDuration.
-  const result = await client.messages.create({
-    model,
+  const primaryModel = await getJudgeModel()
+  const judgeBody = {
     max_tokens: 700,
     messages: [{
-      role: 'user',
+      role: 'user' as const,
       content: `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
 
 NODE UNDER STUDY: "${node.title}" — ${node.summary}
@@ -1064,8 +1061,26 @@ ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
     }],
-  }, { timeout: 22000, maxRetries: 1 })
-  void recordUsage(result, userId, model, 'tree-verify')
+  }
+  // Bounded so a slow/stalled judge call can never ride the full function
+  // duration (which stranded the client on "Judging…"); one retry rides out a
+  // transient 429/5xx/529 blip. Worst case ≈ 2 × 22s, well under maxDuration.
+  const callOpts = { timeout: 22000, maxRetries: 1 }
+  // Judging must survive a stale/invalid RESOLVED model id (or a model-specific
+  // outage): try the resolved judge model, then fall back ONCE to the pinned
+  // Opus — the teaching tier, which is always kept current and demonstrably
+  // reachable. This is the guarantee that a bad Sonnet id can never again break
+  // every checkpoint while teaching keeps working.
+  let usedModel = primaryModel
+  let result
+  try {
+    result = await client.messages.create({ model: primaryModel, ...judgeBody }, callOpts)
+  } catch (err) {
+    if (primaryModel === CHAT_MODELS.opus) throw err
+    usedModel = CHAT_MODELS.opus
+    result = await client.messages.create({ model: usedModel, ...judgeBody }, callOpts)
+  }
+  void recordUsage(result, userId, usedModel, 'tree-verify')
   const parsed = extractJSON<{ score?: number; feedback?: string }>((result.content[0] as { text?: string })?.text ?? '')
   if (!parsed || typeof parsed.score !== 'number') throw new Error('Judging failed')
   const score = Math.max(0, Math.min(10, parsed.score))
