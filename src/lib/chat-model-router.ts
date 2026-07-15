@@ -34,9 +34,16 @@
  * verification, confidence/gap scoring): always HAIKU. Classification work.
  */
 
+// Pinned fallbacks — the model-resolver auto-adopts the newest Opus/Sonnet
+// from the catalog, but these are what every call uses when that fetch can't
+// resolve (cold start, slow/blocked catalog). They MUST be current, valid ids:
+// a stale pin here is silently fatal for whichever tier falls back to it — a
+// stale Sonnet ('claude-sonnet-4-6' when the live model was 'claude-sonnet-5')
+// made every checkpoint JUDGE call reject while teaching (valid Opus) kept
+// working, surfacing as the workspace "trouble connecting" on judging only.
 export const CHAT_MODELS = {
   opus: 'claude-opus-4-8',
-  sonnet: 'claude-sonnet-4-6',
+  sonnet: 'claude-sonnet-5',
   haiku: 'claude-haiku-4-5-20251001',
 } as const
 

@@ -26,7 +26,8 @@ export const MODEL_PRICING: Record<string, Price> = {
   // Anthropic
   'claude-opus-4-8':            { input: 15, output: 75, cacheRead: 1.5,  cacheWrite: 18.75 },
   'claude-opus-4-7':            { input: 15, output: 75, cacheRead: 1.5,  cacheWrite: 18.75 },
-  'claude-sonnet-4-6':          { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75 },
+  'claude-sonnet-5':            { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75 },
+  'claude-sonnet-4-6':          { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75 }, // legacy — keep for historical usage records
   'claude-haiku-4-5-20251001':  { input: 1,  output: 5,  cacheRead: 0.1,  cacheWrite: 1.25 },
   // Google Gemini (approximate)
   'gemini-3.1-pro-preview':     { input: 1.25, output: 5,   cacheRead: 0.3125, cacheWrite: 1.25 },
