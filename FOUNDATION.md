@@ -196,6 +196,34 @@ Implementation: the `[NODE_REMEDIATE]` client trigger (alongside `[NODE_CHECKPOI
 in the node chat route — the workspace fires it instead of the next-checkpoint
 trigger whenever the answer just judged was wrong, in `src/app/dashboard/workspace/page.tsx`.
 
+## Visual Confidence & Honest Redirect (law — a chat-wide directive)
+
+A bad diagram is worse than no diagram: it teaches the error. So every visual
+Bob produces is governed by an honesty loop, in all cases:
+
+- **Self-evaluation with a visible confidence bar.** Every generated diagram is
+  scored by the AI itself — does this image accurately and clearly deliver
+  exactly what was requested, well enough to teach from? The score ships to the
+  learner as a confidence bar under the image; wrong geometry, mislabeled
+  arrows, clutter, or missing elements pull it down hard.
+- **Below the threshold, research and redirect.** When the diagram can't
+  confidently answer the request (complex visuals: many interacting elements,
+  animation, interactivity, precise geometry), the system researches the best
+  REAL visual resource for exactly that need — an interactive simulation,
+  animation, or video from reliable sources (PhET, GeoGebra, Desmos, Falstad,
+  3Blue1Brown, Wikipedia animations…) — and leads with it; the weak generated
+  attempt is tucked behind a toggle instead of being taught from.
+- **The choice is always explicit.** The learner is told plainly that Bob
+  judged a generated diagram insufficient and deliberately chose the real
+  resource — never a silent swap. Bob also pre-judges at authoring time: a
+  request one static image cannot confidently deliver gets the resource link
+  directly, with the reasoning stated, instead of an image block at all.
+
+Implementation: `evaluateGeneratedVisual` + `recommendVisualResource`
+(`src/lib/gemini.ts`), scored and cached per image in `/api/image/generate`
+(threshold 60), rendered by `GeneratedVisual` (bar + redirect card); the
+VISUAL CONFIDENCE rule in the node-chat, copilot, and explainer prompts.
+
 ## Sessions
 
 Every tree is a self-contained **session**, onboarded at creation by a stepper of

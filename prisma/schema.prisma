@@ -230,6 +230,11 @@ model GeneratedImage {
   prompt     String
   dataUrl    String   // data:image/...;base64,...
   model      String?
+  // Visual-confidence law (FOUNDATION.md): Gemini's self-evaluation of whether
+  // this image confidently answers the request (0-100), and — when it doesn't —
+  // the researched redirect {name,url,why} to the best external visual resource.
+  confidence Int?
+  redirectJson String?
   createdAt  DateTime @default(now())
 }
 

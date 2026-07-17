@@ -106,6 +106,88 @@ export async function analyzeVideo(videoBase64: string, mimeType: string, contex
   return analyzeImage(videoBase64, context, mimeType)
 }
 
+/**
+ * Visual-confidence law (FOUNDATION.md): score whether a GENERATED diagram
+ * confidently answers the request it was drawn for. Harsh by design — wrong
+ * geometry, mislabeled arrows, clutter, or missing named elements must pull
+ * the score down, because an inaccurate diagram teaches the error. Returns
+ * null on any failure (the caller treats that as "unevaluated", never as
+ * confident).
+ */
+export async function evaluateGeneratedVisual(
+  imageBase64: string, mimeType: string, request: string, context: string,
+): Promise<{ confidence: number; issue: string } | null> {
+  const genAI = getClient()
+  if (!genAI) return null
+  try {
+    const model = genAI.getGenerativeModel({ model: GEMINI_MULTIMODAL_MODEL })
+    const result = await model.generateContent([
+      { text: `You are a strict reviewer of educational diagrams. This image was generated to satisfy the request below. Score 0-100: does it ACCURATELY and CLEARLY deliver exactly what was requested, well enough to teach from?
+
+REQUEST: ${request.slice(0, 500)}
+${context ? `LESSON CONTEXT: ${context.slice(0, 400)}` : ''}
+
+Score harshly. Deduct heavily for: incorrect geometry/physics/math, arrows or labels pointing at the wrong thing, garbled or misspelled labels, cluttered or ambiguous layout, missing elements the request explicitly named, or anything that would mislead a learner. A merely decorative or vaguely-related image scores below 40. Reserve 80+ for diagrams a textbook could print as-is.
+
+Return ONLY JSON: {"confidence": 0-100, "issue": "the single biggest flaw, one short phrase, in the same language as the request (empty string if none)"}` },
+      { inlineData: { mimeType, data: imageBase64 } },
+    ])
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: GEMINI_MULTIMODAL_MODEL, feature: 'image' })
+    }
+    const text = result.response.text().trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    const parsed = JSON.parse(text) as { confidence?: number; issue?: string }
+    if (typeof parsed.confidence !== 'number') return null
+    return {
+      confidence: Math.max(0, Math.min(100, Math.round(parsed.confidence))),
+      issue: String(parsed.issue ?? '').slice(0, 200),
+    }
+  } catch (err) {
+    console.error('Gemini visual evaluation error:', err)
+    return null
+  }
+}
+
+/**
+ * When a generated diagram can't confidently deliver the request, research the
+ * best REAL visual resource (interactive simulation, animation, video, visual
+ * article) and return it so the UI can redirect the learner — explicitly, per
+ * the visual-confidence law. Returns null on failure.
+ */
+export async function recommendVisualResource(
+  request: string, context: string,
+): Promise<{ name: string; url: string; why: string } | null> {
+  const genAI = getClient()
+  if (!genAI) return null
+  try {
+    const model = genAI.getGenerativeModel({ model: GEMINI_MULTIMODAL_MODEL })
+    const result = await model.generateContent(
+      `A learner needs to VISUALLY understand the following, and a generated static diagram was judged not good enough. Name the single BEST real, freely-accessible web resource for visually understanding exactly this — prefer interactive simulations and animations from well-known, reliable sources (PhET, GeoGebra, Desmos, Falstad, ophysics, 3Blue1Brown, Wikipedia's animated illustrations, university applets). The URL must be real and stable — if unsure of a deep link, give the site's search/landing URL that gets closest.
+
+WHAT THEY NEED TO SEE: ${request.slice(0, 500)}
+${context ? `LESSON CONTEXT: ${context.slice(0, 400)}` : ''}
+
+Return ONLY JSON: {"name": "resource name", "url": "https://...", "why": "one sentence on what it shows and why it beats a static diagram — in the same language as the request"}`,
+    )
+    {
+      const { recordGeminiUsage } = await import('@/lib/usage')
+      recordGeminiUsage(result.response.usageMetadata, { model: GEMINI_MULTIMODAL_MODEL, feature: 'image' })
+    }
+    const text = result.response.text().trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    const parsed = JSON.parse(text) as { name?: string; url?: string; why?: string }
+    if (!parsed.name || !parsed.url || !/^https?:\/\//.test(parsed.url)) return null
+    return {
+      name: String(parsed.name).slice(0, 120),
+      url: String(parsed.url).slice(0, 500),
+      why: String(parsed.why ?? '').slice(0, 300),
+    }
+  } catch (err) {
+    console.error('Gemini visual-resource recommendation error:', err)
+    return null
+  }
+}
+
 // Evaluate a multimodal student submission against pre-generated expectations
 export async function evaluateSubmission(
   submissionBase64: string | null,

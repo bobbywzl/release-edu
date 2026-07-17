@@ -63,10 +63,48 @@ export async function POST(req: NextRequest) {
     `Illustration to create: ${prompt.trim()}`
   const promptHash = createHash('sha256').update(fullPrompt).digest('hex')
 
+  // ── Visual-confidence law (FOUNDATION.md) ──
+  // Every generated visual is self-evaluated: does it CONFIDENTLY answer the
+  // request? The score ships to the UI as a confidence bar; below the
+  // threshold, the best REAL visual resource is researched and returned so
+  // the learner is explicitly redirected instead of taught from a bad diagram.
+  const CONFIDENCE_THRESHOLD = 60
+  const evaluate = async (dataUrl: string) => {
+    try {
+      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl)
+      if (!m) return { confidence: null as number | null, issue: '', redirect: null as { name: string; url: string; why: string } | null }
+      const { evaluateGeneratedVisual, recommendVisualResource } = await import('@/lib/gemini')
+      const ev = await evaluateGeneratedVisual(m[2], m[1], prompt.trim(), ctx)
+      if (!ev) return { confidence: null, issue: '', redirect: null }
+      const redirect = ev.confidence < CONFIDENCE_THRESHOLD
+        ? await recommendVisualResource(prompt.trim(), ctx)
+        : null
+      return { confidence: ev.confidence, issue: ev.issue, redirect }
+    } catch {
+      return { confidence: null, issue: '', redirect: null }
+    }
+  }
+
   // Durable cache — generate each unique concept image exactly once.
   try {
     const cached = await prisma.generatedImage.findUnique({ where: { promptHash } })
-    if (cached) return NextResponse.json({ image: cached.dataUrl, cached: true })
+    if (cached) {
+      // Legacy rows predate the confidence columns — evaluate once, backfill.
+      if (cached.confidence === null || cached.confidence === undefined) {
+        const { confidence, issue, redirect } = await evaluate(cached.dataUrl)
+        if (confidence !== null) {
+          await prisma.generatedImage.update({
+            where: { promptHash },
+            data: { confidence, redirectJson: redirect ? JSON.stringify(redirect) : null },
+          }).catch(() => null)
+          return NextResponse.json({ image: cached.dataUrl, cached: true, confidence, issue, redirect })
+        }
+        return NextResponse.json({ image: cached.dataUrl, cached: true })
+      }
+      let redirect: { name: string; url: string; why: string } | null = null
+      try { redirect = cached.redirectJson ? JSON.parse(cached.redirectJson) : null } catch { /* malformed */ }
+      return NextResponse.json({ image: cached.dataUrl, cached: true, confidence: cached.confidence, redirect })
+    }
   } catch { /* table may not be migrated yet — fall through and generate */ }
 
   const tried = new Set<string>()
@@ -102,13 +140,19 @@ export async function POST(req: NextRequest) {
       } catch { /* non-critical */ }
       const mime = imgPart.inlineData.mimeType || 'image/png'
       const dataUrl = `data:${mime};base64,${imgPart.inlineData.data}`
+      // Self-evaluate the fresh image (visual-confidence law) before storing,
+      // so the verdict + any redirect are cached alongside it forever.
+      const { confidence, issue, redirect } = await evaluate(dataUrl)
       // Best-effort durable store (ignore unique-races / missing-table).
       try {
         await prisma.generatedImage.create({
-          data: { promptHash, prompt: prompt.trim().slice(0, 1000), dataUrl, model },
+          data: {
+            promptHash, prompt: prompt.trim().slice(0, 1000), dataUrl, model,
+            confidence, redirectJson: redirect ? JSON.stringify(redirect) : null,
+          },
         })
       } catch { /* non-critical */ }
-      return NextResponse.json({ image: dataUrl, model })
+      return NextResponse.json({ image: dataUrl, model, confidence, issue, redirect })
     } catch {
       continue
     }
