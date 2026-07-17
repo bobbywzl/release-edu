@@ -47,6 +47,7 @@ interface TreeNodeData {
 interface TreeData {
   id: string
   title: string
+  displayTitle?: string | null
   framing: string | null
   status: string
   nodes: TreeNodeData[]
@@ -175,18 +176,22 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
       <div className="h-7 flex items-center justify-center">
         <span
           className={cn(
-            'rounded-full node-breathe transition-transform',
+            'rounded-full transition-transform',
             DOT_SIZE[n.kind] ?? DOT_SIZE.component,
+            // VERIFIED reads as SETTLED: solid fill, firm border, no glow, no
+            // breathing — done, at rest. Everything unfinished stays alive
+            // (glow + breathe): the living tips of the tree still calling for
+            // work. The contrast is the at-a-glance progress read.
             n.pending
-              ? 'bg-transparent border-2 border-dashed border-muted-foreground/70 shadow-none'
+              ? 'node-breathe bg-transparent border-2 border-dashed border-muted-foreground/70 shadow-none'
               : n.status === 'understood'
-                ? 'bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.6)]'
+                ? 'bg-emerald-500 border-2 border-emerald-300/70 shadow-none'
                 : n.status === 'learning'
-                  ? 'bg-amber-400 shadow-[0_0_14px_rgba(251,191,36,0.55)]'
-                  : DOT_FILL[n.kind] ?? DOT_FILL.component,
+                  ? 'node-breathe bg-amber-400 shadow-[0_0_14px_rgba(251,191,36,0.55)]'
+                  : cn('node-breathe', DOT_FILL[n.kind] ?? DOT_FILL.component),
             selected && 'scale-125 ring-2 ring-foreground/70 ring-offset-2 ring-offset-background',
           )}
-          style={{ animationDelay: breatheDelay, animationDuration: breatheDur }}
+          style={n.status === 'understood' && !n.pending ? undefined : { animationDelay: breatheDelay, animationDuration: breatheDur }}
         />
       </div>
 
@@ -826,7 +831,7 @@ function TreeCanvasInner() {
           <ArrowLeft className="w-4 h-4" />
         </Link>
         <Sprout className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-        <h1 className="text-sm font-bold text-foreground truncate flex-1">{tree.title}</h1>
+        <h1 title={tree.title} className="text-sm font-bold text-foreground truncate flex-1">{tree.displayTitle || tree.title}</h1>
         {/* View toggle */}
         <div className="flex rounded-lg border border-border overflow-hidden flex-shrink-0">
           <button

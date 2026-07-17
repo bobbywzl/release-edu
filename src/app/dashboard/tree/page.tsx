@@ -15,6 +15,7 @@ import { MarkdownRenderer } from '@/components/markdown-renderer'
 interface TreeSummary {
   id: string
   title: string
+  displayTitle: string | null
   framing: string | null
   status: string
   updatedAt: string
@@ -136,7 +137,7 @@ export default function TreePage() {
     setDigestBusy(false)
   }
   function openDigest(tr: TreeSummary) {
-    setDigestFor({ id: tr.id, title: tr.title })
+    setDigestFor({ id: tr.id, title: tr.displayTitle || tr.title })
     setDigestText(null)
     setDigestAt(null)
     void loadDigest(tr.id, false)
@@ -342,8 +343,8 @@ export default function TreePage() {
               >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className={cn('text-sm font-bold text-foreground transition-colors', consolidated ? 'group-hover:text-amber-400' : 'group-hover:text-primary')}>
-                      {tree.title}
+                    <p title={tree.title} className={cn('text-sm font-bold text-foreground transition-colors', consolidated ? 'group-hover:text-amber-400' : 'group-hover:text-primary')}>
+                      {tree.displayTitle || tree.title}
                       {consolidated && (
                         <span className="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-400 text-[10px] font-bold align-middle">
                           <Sparkles className="w-3 h-3" /> {t('tree.consolidated')}
