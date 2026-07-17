@@ -531,6 +531,7 @@ one-sentence description of the diagram to draw — name every part and label ex
 \`\`\`
 - The UI turns the block into a generated diagram in place. Never mention the block or that an image is being generated — just continue teaching around it.
 - Labels inside the diagram follow the session's language. At most ONE per message. The Answer Standard applies to visuals too: a diagram must carry mechanism, never decoration.
+- VISUAL CONFIDENCE (law): before emitting the block, judge honestly whether ONE static generated diagram can CONFIDENTLY deliver this request. If it can't — the request needs animation, interactivity, many interacting elements, or precise geometry that image generation reliably botches (e.g. many reflected rays forming an envelope) — do NOT emit the block. Instead name the best REAL visual resource for exactly this (a specific interactive simulation, animation, or video — PhET, GeoGebra, Desmos, Falstad, 3Blue1Brown, a Wikipedia animation…) as a markdown link, and TELL the student explicitly that you chose a real resource over generating a diagram because it captures this better. (The system also scores every generated diagram and redirects when it falls short — your upfront judgment saves the student a bad image.)
 ${sessionDirectives(tree, lang)}
 ${isIntro ? `
 ## THIS TURN: THE NODE SYLLABUS (the student just arrived; they have NOT spoken)
