@@ -176,7 +176,15 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
         await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(curQs) } })
       }
     } catch { /* best-effort re-arm */ }
-    return NextResponse.json({ error: 'Judging is unavailable right now.' }, { status: 502 })
+    // The 502 carries a machine-readable stage + a bounded detail string
+    // (model ids + upstream statuses, no secrets) — the client renders it
+    // under the retry so the NEXT report of this pins the real cause on
+    // sight instead of another round of guessing.
+    return NextResponse.json({
+      error: 'Judging is unavailable right now.',
+      code: 'judge-failed',
+      detail: String((err as Error)?.message ?? err).slice(0, 300),
+    }, { status: 502 })
   }
 
   // ── Tally the node's checkpoint state (pending consumed, review stamped) ──

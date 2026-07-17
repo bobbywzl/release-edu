@@ -1109,27 +1109,46 @@ ${sessionDirectives(tree, lang)}
 Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
     }],
   }
-  // Bounded so a slow/stalled judge call can never ride the full function
-  // duration (which stranded the client on "Judging…"); one retry rides out a
-  // transient 429/5xx/529 blip. Worst case ≈ 2 × 22s, well under maxDuration.
-  const callOpts = { timeout: 22000, maxRetries: 1 }
-  // Judging must survive a stale/invalid RESOLVED model id (or a model-specific
-  // outage): try the resolved judge model, then fall back ONCE to the pinned
-  // Opus — the teaching tier, which is always kept current and demonstrably
-  // reachable. This is the guarantee that a bad Sonnet id can never again break
-  // every checkpoint while teaching keeps working.
-  let usedModel = primaryModel
-  let result
-  try {
-    result = await client.messages.create({ model: primaryModel, ...judgeBody }, callOpts)
-  } catch (err) {
-    if (primaryModel === CHAT_MODELS.opus) throw err
-    usedModel = CHAT_MODELS.opus
-    result = await client.messages.create({ model: usedModel, ...judgeBody }, callOpts)
+  // Judging must survive a bad model id, a model-specific outage, AND the
+  // Vercel function-duration cap. A 3-model chain — resolved judge model →
+  // pinned Sonnet → pinned Opus (the teaching tier, demonstrably reachable
+  // whenever chat streams) — with TIGHT per-attempt timeouts and no SDK
+  // retries (the next model in the chain IS the retry). Worst case
+  // ≈ 12+12+20s, comfortably inside the route's maxDuration=60 so a slow
+  // upstream degrades into the next model instead of a killed function.
+  // Every attempt's failure is recorded and thrown in the error message, so
+  // the route's 502 (and the on-screen diagnostic) names the real cause.
+  const chain: Array<{ model: string; timeout: number }> = []
+  const seen = new Set<string>()
+  for (const m of [
+    { model: primaryModel, timeout: 12000 },
+    { model: CHAT_MODELS.sonnet, timeout: 12000 },
+    { model: CHAT_MODELS.opus, timeout: 20000 },
+  ]) {
+    if (!seen.has(m.model)) { seen.add(m.model); chain.push(m) }
+  }
+  const attemptErrors: string[] = []
+  let usedModel = ''
+  let result: Awaited<ReturnType<typeof client.messages.create>> | null = null
+  for (const step of chain) {
+    try {
+      result = await client.messages.create({ model: step.model, ...judgeBody }, { timeout: step.timeout, maxRetries: 0 })
+      usedModel = step.model
+      break
+    } catch (err) {
+      const status = (err as { status?: number })?.status
+      attemptErrors.push(`${step.model}: ${status ?? ''} ${(err as Error)?.name ?? ''} ${String((err as Error)?.message ?? err).slice(0, 120)}`.trim())
+    }
+  }
+  if (!result) {
+    throw new Error(`judge-models-failed [${attemptErrors.join(' | ')}]`)
   }
   void recordUsage(result, userId, usedModel, 'tree-verify')
-  const parsed = extractJSON<{ score?: number; feedback?: string }>((result.content[0] as { text?: string })?.text ?? '')
-  if (!parsed || typeof parsed.score !== 'number') throw new Error('Judging failed')
+  const rawText = (result.content.find(b => 'text' in b) as { text?: string } | undefined)?.text ?? ''
+  const parsed = extractJSON<{ score?: number; feedback?: string }>(rawText)
+  if (!parsed || typeof parsed.score !== 'number') {
+    throw new Error(`judge-unparseable [${usedModel}] ${rawText.slice(0, 120)}`)
+  }
   const score = Math.max(0, Math.min(10, parsed.score))
   // Sentence-safe clamp — the raw slice showed the student "…caught the bon"
   // at the exact moment of praise.
