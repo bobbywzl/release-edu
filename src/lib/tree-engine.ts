@@ -132,6 +132,48 @@ async function studentGrounding(userId: string): Promise<string> {
   }
 }
 
+/**
+ * Short display headline for a tree (Haiku) — what the tree LIST cards and
+ * page headers show instead of the raw, often-rambling problem statement the
+ * student typed at onboarding. Presentation only: `ProblemTree.title` stays
+ * verbatim and remains the ROOT PROBLEM in every prompt. Best-effort — any
+ * failure returns null and the UI falls back to the verbatim title.
+ */
+export async function generateTreeDisplayTitle(
+  userId: string, problem: string, lang?: string,
+): Promise<string | null> {
+  try {
+    const client = await anthropic()
+    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+    const model = pickBackgroundModel()
+    const result = await client.messages.create({
+      model,
+      max_tokens: 60,
+      messages: [{
+        role: 'user',
+        content: `A learner typed this problem they want to master (verbatim, may be rambling):
+"${problem.slice(0, 600)}"
+
+Write a SHORT, specific title for it — 3 to 7 words, no quotes, no trailing period, title-case where natural. It must capture the CONCRETE goal (keep domain terms like QFT; "Plump, Sweet Backyard Strawberries" beats "Learning About Strawberries").
+${lang === 'zh' ? 'Respond in Simplified Chinese (简体中文).' : 'Respond in English.'}
+Return ONLY the title text.`,
+      }],
+    }, { timeout: 10000, maxRetries: 1 })
+    try {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model, feature: 'title' })
+    } catch { /* non-critical */ }
+    const text = ((result.content[0] as { text?: string })?.text ?? '')
+      .trim().replace(/^["'“”]+|["'“”.。]+$/g, '').trim()
+    // Sanity bounds: a degenerate echo (empty or the whole ramble) is worse
+    // than the fallback.
+    if (!text || text.length < 2 || text.length > 80) return null
+    return text
+  } catch {
+    return null // fall back to the verbatim problem statement
+  }
+}
+
 // ── Seeding ──────────────────────────────────────────────────────────────
 
 interface SeedNode { title: string; summary: string }
@@ -197,10 +239,15 @@ Return ONLY JSON:
   // FK target exists (first-action users have no row yet).
   await ensureUserRow(userId)
 
+  // Short display headline (Haiku) — the card/header title. Best-effort: a
+  // failure just means the UI falls back to the verbatim problem statement.
+  const displayTitle = await generateTreeDisplayTitle(userId, problem, session.language ?? undefined)
+
   const tree = await prisma.problemTree.create({
     data: {
       userId,
       title: clampText(problem, 300),
+      displayTitle,
       framing: seed.framing?.slice(0, 2000) ?? null,
       language: session.language,
       difficulty: session.difficulty,

@@ -34,7 +34,7 @@ interface NodeData {
   explainer: string | null; status: string; pending: boolean; annotations: string | null; notes: string | null
   quizState: string | null; progressLog: string | null
 }
-interface TreeData { id: string; title: string; framing: string | null; nodes: NodeData[] }
+interface TreeData { id: string; title: string; displayTitle?: string | null; framing: string | null; nodes: NodeData[] }
 interface NodeFileRow { id: string; name: string; type?: string | null }
 
 interface QuizPayload {
@@ -710,7 +710,7 @@ function WorkspaceInner() {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-foreground truncate">{node?.title ?? '…'}</p>
-          <p className="text-[11px] text-muted-foreground truncate">{tree?.title}</p>
+          <p title={tree?.title} className="text-[11px] text-muted-foreground truncate">{tree?.displayTitle || tree?.title}</p>
         </div>
         {node?.status === 'understood' ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 flex-shrink-0">

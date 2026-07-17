@@ -9,7 +9,11 @@ export const maxDuration = 120
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
-import { seedTree } from '@/lib/tree-engine'
+import { seedTree, generateTreeDisplayTitle } from '@/lib/tree-engine'
+
+// Per-instance guard so a burst of list GETs doesn't fire duplicate Haiku
+// backfills for the same tree while the first write is still in flight.
+const titleBackfillInflight = new Set<string>()
 
 export async function GET() {
   const userId = await getUserId()
@@ -18,6 +22,28 @@ export async function GET() {
     orderBy: { updatedAt: 'desc' },
     include: { nodes: { select: { id: true, status: true, pending: true, parentId: true } } },
   }).catch(() => [])
+
+  // Lazy backfill: trees created before displayTitle existed get a Haiku
+  // headline in the background (≤3 per request, non-blocking) — the next
+  // list load shows it. New trees get theirs at seed time.
+  try {
+    const missing = trees.filter(t => !t.displayTitle && !titleBackfillInflight.has(t.id)).slice(0, 3)
+    if (missing.length > 0) {
+      const { inBackground } = await import('@/lib/background')
+      for (const t of missing) {
+        titleBackfillInflight.add(t.id)
+        inBackground((async () => {
+          try {
+            const dt = await generateTreeDisplayTitle(userId, t.title, t.language ?? undefined)
+            if (dt) await prisma.problemTree.update({ where: { id: t.id }, data: { displayTitle: dt } })
+          } finally {
+            titleBackfillInflight.delete(t.id)
+          }
+        })())
+      }
+    }
+  } catch { /* non-critical — cards fall back to the verbatim title */ }
+
   return NextResponse.json({
     trees: trees.map(t => {
       // The root (the problem statement) is not a masterable node — progress
@@ -26,6 +52,7 @@ export async function GET() {
       return {
         id: t.id,
         title: t.title,
+        displayTitle: t.displayTitle,
         framing: t.framing,
         status: t.status,
         createdAt: t.createdAt,
