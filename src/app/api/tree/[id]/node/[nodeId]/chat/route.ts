@@ -93,7 +93,7 @@ Assess and return ONLY JSON:
  "gapDepth": "none|partial|deep",
  "streakWrong": <prior+1 if this message shows confusion/an incorrect idea, else 0>,
  "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)",
- "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers: {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
+ "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers AND that is NECESSARY for the root goal (goal-necessity law: if mastering everything else would leave a hole the goal cannot close without this, suggest it; merely related/interesting fields get null): {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
  "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
  "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>,
  "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}
