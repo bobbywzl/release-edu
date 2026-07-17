@@ -311,17 +311,24 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   } catch { /* non-critical */ }
 
   // ── Mastery: the in-chat tally IS the verification ──
-  let verified = false
-  let treeCompleted = false
   // Coverage-based: EVERY syllabus facet proven (or the static fallback for
   // contract-less nodes) + the own-words requirement — see masteryMet().
+  // CONTRACT TRUTH: `verified` reports the coverage state itself, NOT the
+  // success of the side-effect batch. If markNodeVerified hiccups (XP,
+  // insight write), the student still SEES verified — and the tree-GET
+  // reconciliation repairs the status column on the next read, so chat and
+  // workspace can never durably disagree.
+  let verified = false
+  let treeCompleted = false
   if (!isVerifiedNode && masteryMet(tally)) {
+    verified = true
     try {
       const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
-      verified = true
       treeCompleted = r.treeCompleted
       xp.push(...r.xp)
-    } catch { /* non-critical */ }
+    } catch (err) {
+      console.error('[tree] markNodeVerified failed (status will reconcile on next tree read):', err)
+    }
   }
 
   // ── Persist the exchange so Bob's next turn sees the outcome ──

@@ -9,13 +9,33 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { getTreeWithNodes } from '@/lib/tree-engine'
-import { sanitizeQuizStateForClient } from '@/lib/mastery'
+import { sanitizeQuizStateForClient, parseQuizState, masteryMet } from '@/lib/mastery'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const userId = await getUserId()
   const tree = await getTreeWithNodes(userId, id)
   if (!tree) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // ── VERIFICATION RECONCILIATION (dead-lock consistency) ──
+  // The coverage tally in quizState is the CONTRACT truth of verification;
+  // the status column is its projection. If a verify-time side effect ever
+  // failed between the two writes, a node could sit with every syllabus facet
+  // proven but status stuck unverified — chat celebrating "Verified" while
+  // the workspace shows otherwise. Repair that drift HERE, on every read, so
+  // the two can never disagree for longer than one load. One-directional by
+  // design: coverage-met promotes; nothing ever demotes.
+  for (const n of tree.nodes) {
+    if (n.pending || n.parentId === null || n.status === 'understood') continue
+    try {
+      if (masteryMet(parseQuizState(n.quizState))) {
+        await prisma.treeNode.update({ where: { id: n.id }, data: { status: 'understood' } })
+        n.status = 'understood'
+        console.warn('[tree] reconciled stranded verification', { nodeId: n.id })
+      }
+    } catch { /* repair is best-effort; next read retries */ }
+  }
+
   // Answer-key protection (mastery.ts invariant): the live checkpoint's
   // correctIndex/explanation/rubric live in node.quizState and must NEVER
   // reach the browser — sanitize every node's quizState before it ships.

@@ -651,6 +651,17 @@ function WorkspaceInner() {
       const alreadyVerified = !!body.alreadyVerified || !!body.review || node?.status === 'understood'
       setQuizResult({ correct: wasCorrect, verified, correctIndex: typeof body.correctIndex === 'number' ? body.correctIndex : undefined })
       setQuizError(false)
+      // DEAD-LOCK MATCH with the chat verdict: flip the local node the moment
+      // the server says verified (no waiting on a refetch), then refetch
+      // immediately anyway so the coverage checklist shows the final tally —
+      // the same server state Bob's messages are grounded in.
+      if (verified) {
+        setTree(prev => prev ? {
+          ...prev,
+          nodes: prev.nodes.map(n => (n.id === answeredNode ? { ...n, status: 'understood' } : n)),
+        } : prev)
+      }
+      void loadTree()
       if (quizTimerRef.current) clearTimeout(quizTimerRef.current)
       quizTimerRef.current = setTimeout(async () => {
         quizTimerRef.current = null
@@ -717,42 +728,30 @@ function WorkspaceInner() {
           <p title={tree?.title} className="text-[11px] text-muted-foreground truncate">{tree?.displayTitle || tree?.title}</p>
         </div>
         {node?.status === 'understood' ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 flex-shrink-0">
+          /* THE verified signature — same state the chat's verdicts report
+             (node.status, reconciled server-side against the coverage tally),
+             so the two can never durably disagree. */
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/50 bg-emerald-500/15 text-emerald-300 text-xs font-semibold flex-shrink-0">
             <ShieldCheck className="w-4 h-4" /> {t('tree.verified')}
           </span>
         ) : (
-          /* Mastery pips: ONE PIP PER SYLLABUS FACET (the node's verification
-             contract — the count is dynamic, driven by what the syllabus
-             promised; static 3 only for contract-less nodes). The last pip
-             stays visually reserved while the own-words short answer is
-             missing, so a full meter never lies about verification. */
+          /* Compact coverage counter (the dot pips are gone — the full
+             syllabus checklist lives in the Verification card in the side
+             panel, one line per promised point). */
           (() => {
             const qs = parseQuizState(node?.quizState)
             const target = masteryTarget(qs)
-            const rawFilled = masteryFilled(qs)
-            const needShort = qs.shortCorrect < MASTERY_MIN_SHORT
-            const filled = needShort ? Math.min(rawFilled, target - MASTERY_MIN_SHORT) : Math.min(rawFilled, target)
+            const filled = Math.min(masteryFilled(qs), target)
             return (
-              <div className="flex items-center gap-2 flex-shrink-0" title={qs.facets?.length
-                ? `${t('workspace.masteryHint').replace('{n}', String(target))}\n${qs.facets.map(f => `${f.done ? '✅' : '⬜'} ${f.name}`).join('\n')}`
-                : t('workspace.masteryHint').replace('{n}', String(target))}>
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: target }).map((_, i) => {
-                    const isShortPip = i >= target - MASTERY_MIN_SHORT
-                    return (
-                      <span
-                        key={i}
-                        className={cn(
-                          'w-2 h-2 rounded-full transition-colors',
-                          i < filled ? 'bg-emerald-400' : isShortPip && needShort ? 'bg-border ring-1 ring-emerald-400/40' : 'bg-border',
-                        )}
-                      />
-                    )
-                  })}
-                </div>
-                {rawFilled >= target - MASTERY_MIN_SHORT && needShort && (
-                  <span className="text-[10px] text-amber-400/90 hidden sm:inline">{t('workspace.needShort')}</span>
-                )}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span
+                  className="text-[11px] tabular-nums text-muted-foreground"
+                  title={qs.facets?.length
+                    ? qs.facets.map(f => `${f.done ? '✅' : '⬜'} ${f.name}`).join('\n')
+                    : t('workspace.masteryHint').replace('{n}', String(target))}
+                >
+                  {t('workspace.coverageCount').replace('{a}', String(filled)).replace('{b}', String(target))}
+                </span>
                 <button
                   onClick={() => streamFromBob(t('workspace.quizMeMessage'), true)}
                   disabled={streaming}
@@ -1058,6 +1057,62 @@ function WorkspaceInner() {
         {showNotes && (
           <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl bg-card lg:static lg:z-auto lg:w-96 lg:max-w-none lg:shadow-none lg:bg-card/40 flex-shrink-0 border-l border-border overflow-y-auto">
             <div className="p-4 space-y-4">
+              {/* VERIFICATION — the workspace's authoritative status card,
+                  rendered from the SAME server state (node.status + the
+                  syllabus coverage tally) that grounds Bob's chat verdicts:
+                  every promised syllabus point with its proven/unproven mark,
+                  or the solid Verified banner once all are proven. */}
+              {(() => {
+                const qs = parseQuizState(node?.quizState)
+                const isVerifiedNode = node?.status === 'understood'
+                const ownWordsDone = qs.shortCorrect >= MASTERY_MIN_SHORT
+                return (
+                  <div className={cn(
+                    'rounded-xl border p-3',
+                    isVerifiedNode ? 'border-emerald-400/50 bg-emerald-500/10' : 'border-border bg-background/50',
+                  )}>
+                    {isVerifiedNode ? (
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm font-bold text-emerald-300">{t('tree.verified')}</p>
+                          <p className="text-[11px] text-emerald-200/80">{t('workspace.verifiedBanner')}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" /> {t('workspace.coverageTitle')}
+                          <span className="ml-auto font-normal normal-case tabular-nums text-muted-foreground">
+                            {t('workspace.coverageCount')
+                              .replace('{a}', String(Math.min(masteryFilled(qs), masteryTarget(qs))))
+                              .replace('{b}', String(masteryTarget(qs)))}
+                          </span>
+                        </p>
+                        {qs.facets?.length ? (
+                          <ul className="space-y-1">
+                            {qs.facets.map((f, i) => (
+                              <li key={i} className="flex items-start gap-1.5 text-[12px] leading-snug">
+                                <span className="flex-shrink-0">{f.done ? '✅' : '⬜'}</span>
+                                <span className={f.done ? 'text-foreground/80' : 'text-muted-foreground'}>{f.name}</span>
+                              </li>
+                            ))}
+                            <li className="flex items-start gap-1.5 text-[12px] leading-snug">
+                              <span className="flex-shrink-0">{ownWordsDone ? '✅' : '⬜'}</span>
+                              <span className={ownWordsDone ? 'text-foreground/80' : 'text-muted-foreground'}>{t('workspace.ownWords')}</span>
+                            </li>
+                          </ul>
+                        ) : (
+                          <p className="text-[12px] text-muted-foreground">
+                            {t('workspace.masteryHint').replace('{n}', String(masteryTarget(qs)))}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
