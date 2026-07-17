@@ -175,6 +175,15 @@ bottleneck, keep asking). On wrong → the very next turn is a full explainer of
 precisely that gap (`[NODE_REMEDIATE]` trigger) — never a one-line correction, and
 never a checkpoint riding the same turn (let it land before re-probing).
 
+Companion law — **Goal-Necessity & Plan-First Growth** (FOUNDATION.md): the tree
+exists to thoroughly explain a concept/product or solve the root problem — every
+node must be ABSOLUTELY NECESSARY for that goal (necessity test: would the goal
+have a hole without it? merely related/interesting nodes are rejected), and the
+AI deeply analyzes the goal and forms a plan BEFORE laying out any nodes (the
+seed prompt runs an explicit PLAN pass first). Wire `GOAL_NECESSITY`
+(`src/lib/tree-engine.ts`) into any new node-producing prompt — seeding,
+expansion, copilot, discovery.
+
 ## The Differentiator Principle (assessment ideology — still law)
 
 Every verification question must separate a student who MEMORIZED content from one who

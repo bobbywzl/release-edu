@@ -58,6 +58,12 @@ export const ANSWER_STANDARD = `## THE ANSWER STANDARD (every answer must pass B
 // never a rerun. Injected wherever ancestor coverage is shown to the model.
 export const NO_REDUNDANCY = `RULE — PER-NODE REDUNDANCY AVOIDANCE (law): this node teaches ONLY its own NEW ground. Material the branch below already covered is BUILT ON, never re-taught — acknowledge it in one clause ("you already verified how X works at '<node>' — building on that…") and go straight to what is new here. Re-explaining an ancestor's material is a failed syllabus and a failed answer. The boundary holds upward too: material owned by a child or sibling node is pointed to, not absorbed.`
 
+// Goal-Necessity & Plan-First Growth (law — canonical wording in
+// FOUNDATION.md): the discipline for EVERY prompt that lays out nodes
+// (seed, grow-box expansion, copilot, discovery). Analyze the goal first,
+// then emit only load-bearing nodes.
+export const GOAL_NECESSITY = `RULE — GOAL-NECESSITY & PLAN-FIRST GROWTH (law): the tree exists to thoroughly explain the concept/product or solve the problem at the ROOT — nothing else. Before naming ANY node, first think through what achieving that goal ACTUALLY requires (the irreducible pillars an expert would name, calibrated to this session's purpose and depth) — and only then lay out nodes, each traceable to a requirement in that analysis. NECESSITY TEST for every candidate node: if the learner mastered everything else except this node, would the goal have a hole in it? If not — merely related, interesting, adjacent, "good background" — the node does NOT belong. Nodes are load-bearing, never decorative; fewer essential nodes always beat more; a tree shaped like the topic's table of contents instead of the goal's requirements is a failed tree.`
+
 /**
  * Every tree is a self-contained SESSION with its own language, target
  * difficulty, and the student's stated background for this problem —
@@ -205,7 +211,7 @@ export async function seedTree(
   const model = await getTeachingModel()
   const result = await client.messages.create({
     model,
-    max_tokens: 3000,
+    max_tokens: 3500,
     messages: [{
       role: 'user',
       content: `You are Bob, an expert mentor. A student wants to master ONE specific problem. Design the SEED of a learning tree for it.
@@ -216,6 +222,12 @@ ${grounding}
 
 The tree model: the problem is the ROOT. Base branches are the CANDIDATE SOLUTIONS or FOUNDING CONCEPTS that answer it (real, distinct approaches or conceptual pillars an expert would name — 1 to 3; use 1 only when the problem has a single canonical resolution). Generate ONLY the root and these first branches — NOTHING deeper. The whole point of this product is that deeper nodes are pain points the student DISCOVERS through their own questions while working; the tree must never grow ahead of their curiosity.
 
+${GOAL_NECESSITY}
+
+WORK IN TWO PASSES, in this one reply:
+PASS 1 — PLAN (prose, a short paragraph under the heading "PLAN:"): analyze the goal deeply before naming any node. What does achieving THIS goal actually require — what would an expert name as its irreducible pillars? What does this student's stated purpose/background/depth change about that? Which tempting branches fail the necessity test and are deliberately excluded? This analysis is working thought, never shown to the student.
+PASS 2 — THE SEED, as JSON in a \`\`\`json fence. Every branch must be traceable to a requirement named in your plan.
+
 Every node needs:
 - "title": 2-6 words, the concept's name
 - "summary": 1-2 sentences, a simplified plain-language description of what this is and why it matters to the problem (this appears ON the node in a logic diagram)
@@ -224,8 +236,7 @@ Also write:
 - "framing": one tight paragraph restating the problem precisely — what mastery of it means, what the end state looks like
 - "rootSummary": 1-2 sentence summary for the root node itself
 
-
-Return ONLY JSON:
+JSON shape:
 {"framing": "...", "rootSummary": "...", "solutions": [{"title": "...", "summary": "..."}]}`,
     }],
   })
@@ -691,6 +702,8 @@ TARGET NODE they are growing from: "${node.title}" — ${node.summary}
 EVERY TURN you do three things: (1) JUDGE how specific the ask is, (2) PROPOSE the current-best ghost set, (3) stay CURIOUS if it's still underspecified.
 
 RULES:
+- ${GOAL_NECESSITY}
+- PLAN BEFORE PROPOSING (every turn): before naming nodes, silently work out what closing THIS student's stated gap actually requires in service of the root goal — then propose only nodes traceable to that requirement.
 - SPECIFICITY JUDGMENT (autonomous, every turn): do you know enough to cut this branch precisely — WHAT exactly they don't understand (which concept, decision, or step), WHERE the gap sits (the idea itself vs. applying it vs. tools/practice), and at what DEPTH their session purpose needs it? Decide for yourself; never ask the student whether their question was specific enough.
 - ALWAYS PROPOSE, even underspecified: return your best 1-4 proposals under the MOST LIKELY reading — the ghost set is your WORKING HYPOTHESIS made visible, and the student watches it sharpen as the dialog converges. Usually 1-2 nodes; 3-4 ONLY when the ask genuinely spans that many distinct concepts. Each proposal is a distinct pain point / concept not already in the tree, RELEVANT to the root problem at the depth this session needs, with an INFORMATIVE summary (what it is + why it unlocks the ask). kind: "component" (conceptual part) or "leaf" (specific technical knowledge / concrete pain-point resolution).
 - CURIOUS QUESTIONING: while the ask is underspecified, END the reply with ONE sharp question aimed at the biggest fork that would CHANGE the ghost set — name the fork explicitly ("Is it the chemistry of sweetness you're after, or when to water?"), never generic ("tell me more", "can you be more specific"). Keep asking across turns, one fork per turn, until the ask is specific enough — but every question RIDES ON a fresh proposal set; a question never replaces proposals.
@@ -736,6 +749,7 @@ CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code
       const forced = await client.messages.create({
         model, max_tokens: 2500,
         system: `You grow a problem-mastery learning tree. Based on the dialog, you MUST return 1-4 child-node proposals for the target node — your single best reading of what the student needs; no questions, no refusals.
+${GOAL_NECESSITY}
 
 PROBLEM (root): "${tree.title}"
 TARGET NODE: "${node.title}" — ${node.summary}
@@ -899,6 +913,8 @@ The UI renders it as a generated image in place. Never mention the block. At mos
    The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
 
 RULES:
+- ${GOAL_NECESSITY}
+- PLAN BEFORE PROPOSING: before returning proposals or reshape actions, silently work out what the root goal (through the session purpose) actually requires — every proposal traceable to that requirement, every delete/move justified by it.
 - CURIOUS SPECIFICITY (like the grow box): judge each ask yourself; when underspecified, still act under the most likely reading AND end with ONE sharp fork question that would change what you propose. Never a bare "tell me more".
 - EVERYTHING is PERMISSION-BASED: proposals, purpose changes, and reshape actions are suggestions until tapped — never claim you already changed anything; say what the chips will do when approved.
 - On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept). Actions don't accumulate either — re-emit any still-relevant ones.
