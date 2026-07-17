@@ -115,6 +115,11 @@ function WorkspaceInner() {
   const [quizConf, setQuizConf] = useState<'sure' | 'unsure' | null>(null)
   const [quizBusy, setQuizBusy] = useState(false)
   const [quizError, setQuizError] = useState(false)
+  // The failure's identity, shown small under the connect error: either the
+  // HTTP status + server stage/detail (reached the server), or the
+  // blocked-before-server note (network / browser extension). Turns every
+  // future occurrence into a self-diagnosing screenshot.
+  const [quizErrorDetail, setQuizErrorDetail] = useState<string | null>(null)
   // correctIndex arrives from the server on submit — the answer key never
   // ships with the card itself.
   const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
@@ -605,6 +610,7 @@ function WorkspaceInner() {
     if (answer === null || answer === '') return
     setQuizBusy(true)
     setQuizError(false) // clear any prior "connect error" so a retry starts clean
+    setQuizErrorDetail(null)
     // Hard client-side ceiling: the server bounds judging to well under this,
     // so if the request hasn't resolved by now it never will — abort it into
     // the retryable error state rather than leaving the spinner on "Judging…"
@@ -631,7 +637,7 @@ function WorkspaceInner() {
           // consumed by the answer) — arm it so it can't strand invisibly.
           if (nodeIdRef.current === answeredNode && d?.pending && d.pending.question !== activeQuiz?.question) {
             setActiveQuiz(d.pending as QuizPayload)
-            setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+            setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setQuizErrorDetail(null)
           }
         } catch { /* transient */ }
       }
@@ -643,7 +649,13 @@ function WorkspaceInner() {
         void resyncChat()
         return
       }
-      if (!res.ok || !body) throw new Error('quiz error')
+      if (!res.ok || !body) {
+        // HTTP failure that REACHED the server — carry its identity so the
+        // error line on screen names the actual cause (stage code + detail
+        // from the route) instead of a generic "trouble connecting".
+        setQuizErrorDetail(`HTTP ${res.status}${body?.code ? ` · ${body.code}` : ''}${body?.detail ? ` · ${String(body.detail).slice(0, 180)}` : ''}`)
+        throw new Error('quiz error')
+      }
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
       const verified = !!body.verified
       const wasCorrect = !!body.correct
@@ -675,10 +687,16 @@ function WorkspaceInner() {
           else if (!alreadyVerified) void streamFromBob('[NODE_CHECKPOINT]', false)
         }
       }, verified ? 2200 : 1500)
-    } catch {
+    } catch (err) {
       // Transient (judge unavailable / network / client timeout) — surface it
       // so the button doesn't silently revert from "Judging…" to "Submit"; the
       // card stays armed and the server re-arms the pending, so retry is safe.
+      // A rejection that is NOT our own HTTP throw means the request never
+      // got a response — network drop, sleep/wake, or a browser extension
+      // (ad-blockers match "quiz" URLs) killing it before the server.
+      if ((err as Error)?.message !== 'quiz error') {
+        setQuizErrorDetail(t('workspace.connectBlocked'))
+      }
       setQuizError(true)
     } finally {
       clearTimeout(timeout)
@@ -927,7 +945,12 @@ function WorkspaceInner() {
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    {quizError && <p className="text-[11px] text-amber-400">{t('workspace.connectError')}</p>}
+                    {quizError && (
+                      <div className="space-y-0.5">
+                        <p className="text-[11px] text-amber-400">{t('workspace.connectError')}</p>
+                        {quizErrorDetail && <p className="text-[10px] font-mono text-amber-400/70 break-all">{quizErrorDetail}</p>}
+                      </div>
+                    )}
                     <button
                       onClick={submitQuiz}
                       disabled={quizBusy || (activeQuiz.kind === 'mcq' ? quizSel === null : !quizText.trim())}
