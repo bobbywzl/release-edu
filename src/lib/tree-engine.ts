@@ -940,10 +940,12 @@ Return ONLY JSON:
   const turnMessages = [...history, { role: 'user' as const, content: message.slice(0, 2000) }]
 
   let parsed: CopilotParsed | null = null
+  let firstText = ''
   {
     const result = await client.messages.create({ model, max_tokens: 3500, system, messages: turnMessages })
     void recordUsage(result, userId, model, 'tree-copilot')
-    parsed = parseTurn(textOf(result))
+    firstText = textOf(result)
+    parsed = parseTurn(firstText)
   }
   if (!parsed) {
     try {
@@ -954,7 +956,17 @@ Return ONLY JSON:
       })
       void recordUsage(result, userId, model, 'tree-copilot')
       parsed = parseTurn(textOf(result))
-    } catch { /* degrade to the localized fallback below */ }
+    } catch { /* degrade to the prose tolerance below */ }
+  }
+  // PROSE TOLERANCE: a conversational answer with no JSON wrapper (a greeting,
+  // a clarification) is a perfectly VALID turn — reply-only, no proposals.
+  // Showing it beats the canned "didn't generate" line, which was surfacing on
+  // every small-talk message and truncated reply.
+  if (!parsed) {
+    const prose = firstText.trim().replace(/^```[a-z]*\n?|\n?```$/g, '').trim()
+    if (prose && !prose.startsWith('{') && !prose.includes('"reply"')) {
+      parsed = { reply: prose.slice(0, 4000) }
+    }
   }
 
   const zh = (tree.language ?? lang) === 'zh'

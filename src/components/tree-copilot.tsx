@@ -290,9 +290,9 @@ export function TreeCopilot({ tree, onChanged, fit }: {
             {/* The cloud — only the latest exchanges, translucent, so ghost
                 nodes forming on the canvas stay in view behind them. */}
             {(thread.length > 0 || busy) && (
-              <div className="space-y-1.5 max-h-[30vh] overflow-y-auto pointer-events-auto pr-1">
+              <div className="space-y-1.5 max-h-[30vh] overflow-y-auto pointer-events-auto pr-1 [scrollbar-gutter:stable]">
                 {thread.slice(-3).map((m, i) => (
-                  <div key={`${thread.length}-${i}`} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                  <div key={thread.length - Math.min(3, thread.length) + i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                     <div className={cn(
                       'rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-lg backdrop-blur-md',
                       m.role === 'user'
@@ -417,7 +417,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
               </div>
 
               {/* Thread */}
-              <div className="flex-1 overflow-y-auto py-4 space-y-3.5">
+              <div className="flex-1 overflow-y-auto py-4 space-y-3.5 [scrollbar-gutter:stable]">
                 {thread.length === 0 && (
                   <p className="text-sm text-muted-foreground leading-relaxed px-1 py-3">{t('tree.copilotHint')}</p>
                 )}
