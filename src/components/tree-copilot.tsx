@@ -8,15 +8,21 @@
  * input (file / camera photo / video / voice note via the shared capture
  * row) and generated visuals (Bob's ```image blocks).
  *
- * Shell: a single floating bubble (Spotlight-style — just the orb) that
- * expands into a FULLSCREEN conversation when talked to; Esc or ✕ collapses
- * it back to the bubble.
+ * Shell (two modes):
+ * - AMBIENT (default): a Spotlight-style pill floating bottom-center with the
+ *   dim invitation "Ask me here to customise this tree for you"; the last few
+ *   exchanges float above it as translucent cloud bubbles, so the student
+ *   converses WHILE watching ghost nodes form and chips land on the canvas.
+ *   Reshape/purpose chips render in the cloud too (ghost approve/reject lives
+ *   on the canvas nodes themselves).
+ * - FULL: the expand button opens the complete fullscreen conversation
+ *   (multimodal input, full history); Esc or ✕ returns to ambient.
  */
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
-  Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2,
+  Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2, Maximize2,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel } from '@/components/multimodal-input'
@@ -60,9 +66,10 @@ export function TreeCopilot({ tree, onChanged, fit }: {
   useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [thread, busy, open])
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 250) }, [open])
 
-  // Rehydrate the persisted thread on first open.
+  // Rehydrate the persisted thread on MOUNT — the ambient cloud shows the
+  // most recent exchanges immediately, not only after the full view opens.
   useEffect(() => {
-    if (!open || loaded) return
+    if (loaded) return
     setLoaded(true)
     fetch(`/api/tree/${tree.id}/copilot`, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
@@ -74,7 +81,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         }
       })
       .catch(() => { /* fresh thread */ })
-  }, [open, loaded, tree.id])
+  }, [loaded, tree.id])
 
   async function send() {
     const msg = input.trim()
@@ -216,22 +223,131 @@ export function TreeCopilot({ tree, onChanged, fit }: {
 
   return (
     <>
-      {/* The bubble — a single floating orb, Spotlight-style */}
+      {/* AMBIENT MODE — the Spotlight pill + cloud of recent bubbles.
+          pointer-events pass through the empty column; only the bubbles and
+          the pill catch clicks, so the canvas stays fully interactive. */}
       <AnimatePresence>
         {!open && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.6 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.6 }}
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 14 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            onClick={() => setOpen(true)}
-            className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/25 ring-1 ring-primary/50 flex items-center justify-center hover:scale-105 transition-transform"
-            title={t('tree.copilotTitle')}
-            aria-label={t('tree.copilotTitle')}
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-xl px-4 flex flex-col gap-2 pointer-events-none"
           >
-            <Bot className="w-6 h-6" />
-            {recording && <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse" />}
-          </motion.button>
+            {/* The cloud — only the latest exchanges, translucent, so ghost
+                nodes forming on the canvas stay in view behind them. */}
+            {(thread.length > 0 || busy) && (
+              <div className="space-y-1.5 max-h-[38vh] overflow-y-auto pointer-events-auto pr-1">
+                {thread.slice(-3).map((m, i) => (
+                  <div key={`${thread.length}-${i}`} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                    <div className={cn(
+                      'rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-lg backdrop-blur-md',
+                      m.role === 'user'
+                        ? 'max-w-[75%] bg-primary/85 text-primary-foreground rounded-br-sm whitespace-pre-wrap'
+                        : 'max-w-[88%] bg-card/85 border border-border/60 text-foreground rounded-bl-sm',
+                    )}>
+                      {m.role === 'user' ? m.content : <MarkdownRenderer content={m.content} imageContext={`${tree.title}${tree.framing ? ` — ${tree.framing}` : ''}`} />}
+                    </div>
+                  </div>
+                ))}
+                {busy && (
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs px-1">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Bob…
+                  </div>
+                )}
+                {/* Ghosts land as dashed nodes ON the canvas (approve there);
+                    a one-line note keeps the cloud aware without duplicating. */}
+                {ghosts.length > 0 && !busy && (
+                  <p className="text-[11px] text-emerald-300/90 flex items-center gap-1.5 px-1">
+                    <Sprout className="w-3 h-3" /> {t('tree.proposedN').replace('{n}', String(ghosts.length))} — {t('tree.awaitingApproval')}
+                  </p>
+                )}
+                {/* Reshape chips — these exist ONLY here, so they must be
+                    actionable from the ambient cloud. */}
+                {actions.length > 0 && !busy && actions.map((a, i) => (
+                  <div key={`amb-${a.nodeId}-${i}`} className="rounded-xl border border-primary/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg">
+                    <div className="flex items-start gap-2">
+                      <span className="mt-0.5"><ActionIcon type={a.type} /></span>
+                      <p className="flex-1 text-[11px] font-bold text-foreground leading-snug">{actionDesc(a)}{a.type === 'edit' && a.newTitle ? ` → ${a.newTitle}` : ''}</p>
+                    </div>
+                    <div className="flex gap-1.5 mt-1.5">
+                      <button
+                        onClick={() => applyAction(a, i)}
+                        disabled={actionBusy !== null}
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-full border text-[11px] font-medium px-2.5 py-1 transition-colors disabled:opacity-50',
+                          a.type === 'delete'
+                            ? 'bg-red-500/15 border-red-400/40 text-red-300 hover:bg-red-500/25'
+                            : 'bg-primary/15 border-primary/40 text-primary hover:bg-primary/25',
+                        )}
+                      >
+                        {actionBusy === i ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t('tree.copilotApply')}
+                      </button>
+                      <button
+                        onClick={() => setActions(list => list.filter((_, j) => j !== i))}
+                        disabled={actionBusy !== null}
+                        className="inline-flex items-center justify-center rounded-full border border-border text-muted-foreground text-[11px] px-2.5 py-1 hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {/* Purpose refinement chip — ambient too. */}
+                {purposeProposal && !busy && (
+                  <div className="rounded-xl border border-emerald-400/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg">
+                    <p className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">{t('tree.copilotPurposeTitle')}</p>
+                    <p className="text-[12px] text-foreground leading-snug mt-0.5">{purposeProposal}</p>
+                    <div className="flex gap-1.5 mt-1.5">
+                      <button
+                        onClick={applyPurpose}
+                        disabled={purposeBusy}
+                        className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-medium px-2.5 py-1 hover:bg-emerald-500/30 transition-colors disabled:opacity-50"
+                      >
+                        {purposeBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t('tree.copilotPurposeApply')}
+                      </button>
+                      <button onClick={() => setPurposeProposal(null)} className="rounded-full border border-border text-muted-foreground text-[11px] px-2.5 py-1 hover:text-foreground hover:bg-accent transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {note && <p className={cn('text-[11px] px-1', note.tone === 'warn' ? 'text-amber-400' : 'text-emerald-300')}>{note.text}</p>}
+              </div>
+            )}
+
+            {/* The pill — Spotlight for the tree. Dim invitation until used. */}
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/70 bg-card/85 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5">
+              <Bot className="w-5 h-5 text-primary flex-shrink-0" />
+              <input
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+                }}
+                placeholder={t('tree.copilotAsk')}
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none py-1.5"
+              />
+              {recording && <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
+              <button
+                onClick={send}
+                disabled={busy || !input.trim()}
+                className="w-9 h-9 flex-shrink-0 rounded-full bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                aria-label={t('tree.copilotTitle')}
+              >
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={() => setOpen(true)}
+                className="w-9 h-9 flex-shrink-0 rounded-full border border-border/70 bg-background/60 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                title={t('tree.copilotExpand')}
+                aria-label={t('tree.copilotExpand')}
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

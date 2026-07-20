@@ -44,6 +44,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const tree = await getTreeWithNodes(userId, id)
   const node = tree?.nodes.find(n => n.id === nodeId)
   if (!tree || !node) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  // The root has no workspace — nothing to quiz.
+  if (node.parentId === null) return NextResponse.json({ error: 'The root node has no workspace.' }, { status: 400 })
 
   // INTEGRITY: judge ONLY against the live server-stored pending checkpoint,
   // and only when it matches the submitted card. Each checkpoint is answered

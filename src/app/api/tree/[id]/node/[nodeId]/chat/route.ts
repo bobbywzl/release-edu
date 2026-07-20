@@ -176,6 +176,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const tree = await getTreeWithNodes(userId, id)
   const node = tree?.nodes.find(n => n.id === nodeId)
   if (!tree || !node) return new Response('Not found', { status: 404 })
+  // THE ROOT HAS NO WORKSPACE (law): it is the problem statement itself,
+  // edited only through the Tree Copilot — never chatted on.
+  if (node.parentId === null) return new Response('The root node has no workspace.', { status: 400 })
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return new Response('Not configured', { status: 503 })
