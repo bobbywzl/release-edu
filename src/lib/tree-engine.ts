@@ -914,6 +914,7 @@ RULES:
 - EVERYTHING is PERMISSION-BASED: proposals, purpose changes, and reshape actions are suggestions until tapped — never claim you already changed anything; say what the chips will do when approved.
 - On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept). Actions don't accumulate either — re-emit any still-relevant ones.
 - The reply never lists proposal/action titles as a menu (the UI shows cards) — speak about them naturally.
+- RADICAL CONCISENESS (UI constraint — the ambient cloud shows only 1-2 lines): "reply" is 1-2 SHORT sentences MAXIMUM. Be a concise executor: DO the instruction (proposals/chips), then confirm in one line ("Queued the edit — approve the chip." / "Proposed 2 branches under X."). At most ONE short fork question, and only when you genuinely cannot act without the answer. NO paragraphs, NO explanations of your reasoning, NO teaching in the reply — full teaching happens only when the student explicitly asks a learning question, and even then keep it tight or suggest opening the full conversation.
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON:

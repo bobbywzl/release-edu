@@ -36,7 +36,9 @@ interface GhostChip { id: string; title: string; summary: string }
 export function TreeCopilot({ tree, onChanged, fit }: {
   tree: CopilotTree
   onChanged: () => Promise<void> | void
-  fit: () => void
+  /** Re-fit the canvas; occludeTopPx = viewport pixels (from the canvas top)
+   *  covered by the ambient cloud, so the tree re-centers BELOW it. */
+  fit: (occludeTopPx?: number) => void
 }) {
   const { t, language } = useLanguage()
   const [open, setOpen] = useState(false)
@@ -62,6 +64,20 @@ export function TreeCopilot({ tree, onChanged, fit }: {
   } = useAttachments()
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // REACTIVE VIEW ADJUSTER (law): the copilot must never block the tree or a
+  // freshly-popped ghost. After every ambient turn/chip the canvas re-fits
+  // into the band BELOW the cloud — measured live, so a tall reply pushes the
+  // tree further down and a cleared cloud gives the space back.
+  const ambientRef = useRef<HTMLDivElement>(null)
+  const fitAvoidingCloud = () => {
+    try {
+      const canvasTop = (document.querySelector('.react-flow') as HTMLElement | null)?.getBoundingClientRect().top ?? 0
+      const bottom = ambientRef.current?.getBoundingClientRect().bottom ?? 0
+      fit(Math.max(0, bottom - canvasTop + 10))
+    } catch {
+      fit(0)
+    }
+  }
 
   useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [thread, busy, open])
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 250) }, [open])
@@ -116,7 +132,11 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         setPurposeProposal(body.purposeUpdate.trim())
       }
       await onChanged()
-      if (proposals.length > 0) setTimeout(fit, 150)
+      // Reactive adjust on EVERY turn (not only proposals): the cloud just
+      // grew by a reply, so the visible band changed. Skipped in full view
+      // (the canvas is behind the dialog there).
+      if (!open) setTimeout(fitAvoidingCloud, 200)
+      else if (proposals.length > 0) setTimeout(() => fit(0), 150)
     } catch {
       setThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
     } finally {
@@ -138,7 +158,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
       if (res.ok || (res.status >= 400 && res.status < 500)) {
         setGhosts(g => g.filter(x => x.id !== ghostId))
         await onChanged()
-        if (action === 'approve') setTimeout(fit, 150)
+        if (action === 'approve') setTimeout(open ? () => fit(0) : fitAvoidingCloud, 150)
       } else {
         setNote({ text: t('tree.actionFailed'), tone: 'warn' })
       }
@@ -170,7 +190,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
         setActions(list => list.filter((_, i) => i !== idx))
         setNote({ text: t('tree.copilotApplied'), tone: 'ok' })
         await onChanged()
-        setTimeout(fit, 150)
+        setTimeout(open ? () => fit(0) : fitAvoidingCloud, 150)
       } else if (res.status >= 400 && res.status < 500) {
         // Terminal: the chip's snapshot no longer matches the live tree
         // (target deleted by an earlier chip, cycle, root guard) — retire it
@@ -233,19 +253,51 @@ export function TreeCopilot({ tree, onChanged, fit }: {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 14 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-xl px-4 flex flex-col gap-2 pointer-events-none"
+            ref={ambientRef}
+            className="fixed top-16 left-1/2 -translate-x-1/2 z-40 w-full max-w-xl px-4 flex flex-col gap-2 pointer-events-none"
           >
+            {/* The pill — Spotlight for the tree. Dim invitation until used. */}
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5">
+              <Bot className="w-5 h-5 text-primary flex-shrink-0" />
+              <input
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+                }}
+                placeholder={t('tree.copilotAsk')}
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none py-1.5"
+              />
+              {recording && <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
+              <button
+                onClick={send}
+                disabled={busy || !input.trim()}
+                className="w-9 h-9 flex-shrink-0 rounded-full bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+                aria-label={t('tree.copilotTitle')}
+              >
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={() => setOpen(true)}
+                className="w-9 h-9 flex-shrink-0 rounded-full border border-border/70 bg-background/60 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                title={t('tree.copilotExpand')}
+                aria-label={t('tree.copilotExpand')}
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            </div>
+
             {/* The cloud — only the latest exchanges, translucent, so ghost
                 nodes forming on the canvas stay in view behind them. */}
             {(thread.length > 0 || busy) && (
-              <div className="space-y-1.5 max-h-[38vh] overflow-y-auto pointer-events-auto pr-1">
+              <div className="space-y-1.5 max-h-[30vh] overflow-y-auto pointer-events-auto pr-1">
                 {thread.slice(-3).map((m, i) => (
                   <div key={`${thread.length}-${i}`} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                     <div className={cn(
                       'rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-lg backdrop-blur-md',
                       m.role === 'user'
-                        ? 'max-w-[75%] bg-primary/85 text-primary-foreground rounded-br-sm whitespace-pre-wrap'
-                        : 'max-w-[88%] bg-card/85 border border-border/60 text-foreground rounded-bl-sm',
+                        ? 'max-w-[75%] bg-primary/70 text-primary-foreground rounded-br-sm whitespace-pre-wrap'
+                        : 'max-w-[88%] bg-card/60 border border-border/40 text-foreground/95 rounded-bl-sm [&_p]:my-0.5 max-h-28 overflow-hidden',
                     )}>
                       {m.role === 'user' ? m.content : <MarkdownRenderer content={m.content} imageContext={`${tree.title}${tree.framing ? ` — ${tree.framing}` : ''}`} />}
                     </div>
@@ -317,36 +369,6 @@ export function TreeCopilot({ tree, onChanged, fit }: {
               </div>
             )}
 
-            {/* The pill — Spotlight for the tree. Dim invitation until used. */}
-            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/70 bg-card/85 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5">
-              <Bot className="w-5 h-5 text-primary flex-shrink-0" />
-              <input
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
-                }}
-                placeholder={t('tree.copilotAsk')}
-                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none py-1.5"
-              />
-              {recording && <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
-              <button
-                onClick={send}
-                disabled={busy || !input.trim()}
-                className="w-9 h-9 flex-shrink-0 rounded-full bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
-                aria-label={t('tree.copilotTitle')}
-              >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              </button>
-              <button
-                onClick={() => setOpen(true)}
-                className="w-9 h-9 flex-shrink-0 rounded-full border border-border/70 bg-background/60 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                title={t('tree.copilotExpand')}
-                aria-label={t('tree.copilotExpand')}
-              >
-                <Maximize2 className="w-4 h-4" />
-              </button>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
