@@ -954,7 +954,31 @@ function TreeCanvasInner() {
       <TreeCopilot
         tree={tree}
         onChanged={load}
-        fit={() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }}
+        // REACTIVE VIEW ADJUSTER (law: the copilot must never block the tree
+        // or a ghost popping up): after each copilot turn the canvas re-fits
+        // into the region BELOW the ambient cloud. Exact viewport math: fit
+        // the whole canvas first, then scale by k = (H - occlude)/H and
+        // translate so the content sits centered in the unobstructed band.
+        fit={(occludeTopPx = 0) => {
+          try {
+            flow.fitView({ padding: 0.15, duration: 350 })
+            if (occludeTopPx > 0) {
+              setTimeout(() => {
+                try {
+                  const el = document.querySelector('.react-flow') as HTMLElement | null
+                  const H = el?.clientHeight ?? window.innerHeight
+                  const W = el?.clientWidth ?? window.innerWidth
+                  const k = Math.max(0.45, (H - occludeTopPx) / H)
+                  const vp = flow.getViewport()
+                  flow.setViewport(
+                    { x: vp.x * k + (W * (1 - k)) / 2, y: vp.y * k + occludeTopPx, zoom: vp.zoom * k },
+                    { duration: 250 },
+                  )
+                } catch { /* non-critical */ }
+              }, 380)
+            }
+          } catch { /* non-critical */ }
+        }}
       />
     </div>
   )
