@@ -22,7 +22,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import {
-  ArrowLeft, Check, X, Sprout, MessageSquare, ShieldCheck, Loader2, GitBranch,
+  ArrowLeft, Check, X, Sprout, MessageSquare, ShieldCheck, Loader2, Bot,
   Search, ChevronDown, ChevronRight, Trash2, Plus, FileText, Flag, List, Network,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
@@ -353,12 +353,17 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
 
                 {isOpen && (
                   <div className="border-t border-border px-4 py-3 space-y-4 bg-background/40">
-                    <Link
-                      href={`/dashboard/workspace?tree=${tree.id}&node=${node.id}`}
-                      className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5" /> {t('tree.openWorkspace')}
-                    </Link>
+                    {node.parentId === null ? (
+                      /* The root has no workspace — edits go through the Copilot. */
+                      <p className="text-[11px] text-muted-foreground">{t('tree.rootViaCopilot')}</p>
+                    ) : (
+                      <Link
+                        href={`/dashboard/workspace?tree=${tree.id}&node=${node.id}`}
+                        className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" /> {t('tree.openWorkspace')}
+                      </Link>
+                    )}
 
                     {/* Project progress flags */}
                     {progress.length > 0 && (
@@ -485,13 +490,9 @@ function TreeCanvasInner() {
   const [tree, setTree] = useState<TreeData | null>(null)
   const [view, setView] = useState<'graph' | 'list'>('graph')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [growQuestion, setGrowQuestion] = useState('')
-  const [growing, setGrowing] = useState(false)
-  const [growNote, setGrowNote] = useState<string | null>(null)
-  // The grow-box conversation thread + the ids of THIS dialog's still-pending
-  // ghosts (follow-up turns replace exactly these, nothing else).
-  const [growThread, setGrowThread] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
-  const [growGhostIds, setGrowGhostIds] = useState<string[]>([])
+  // Panel-level failure note (approve/reject/add-child) — growth conversations
+  // themselves live ONLY in the Tree Copilot now.
+  const [panelNote, setPanelNote] = useState<string | null>(null)
   const [addingChild, setAddingChild] = useState(false)
   const [childTitle, setChildTitle] = useState('')
   const [childSummary, setChildSummary] = useState('')
@@ -511,24 +512,8 @@ function TreeCanvasInner() {
     } catch { /* transient */ }
   }, [params.id, router])
   useEffect(() => { load() }, [load])
-  // Grow dialogs are KEYED PER NODE: clicking a freshly proposed ghost to
-  // inspect it (a natural gesture) must not destroy the dialog — the thread
-  // and its replace-set are stashed and restored when the node is re-selected.
-  const growStateRef = useRef<Map<string, { thread: Array<{ role: 'user' | 'assistant'; content: string }>; ghostIds: string[] }>>(new Map())
-  const prevSelectedRef = useRef<string | null>(null)
-  useEffect(() => {
-    const prev = prevSelectedRef.current
-    if (prev && prev !== selectedId && (growThread.length > 0 || growGhostIds.length > 0)) {
-      growStateRef.current.set(prev, { thread: growThread, ghostIds: growGhostIds })
-    }
-    prevSelectedRef.current = selectedId
-    const saved = selectedId ? growStateRef.current.get(selectedId) : undefined
-    setGrowNote(null)
-    setGrowQuestion('')
-    setGrowThread(saved?.thread ?? [])
-    setGrowGhostIds(saved?.ghostIds ?? [])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId])
+  // Clear the panel note when the selection changes.
+  useEffect(() => { setPanelNote(null) }, [selectedId])
 
   const act = useCallback(async (nodeId: string, action: 'approve' | 'reject') => {
     const res = await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
@@ -538,9 +523,7 @@ function TreeCanvasInner() {
     }).catch(() => null)
     // Surface failure instead of a ghost silently vanishing on reload — a
     // 404 means the proposal was already replaced/handled elsewhere.
-    if (!res || !res.ok) setGrowNote(t('tree.actionFailed'))
-    // Either way this ghost has left the dialog's replace-set.
-    setGrowGhostIds(ids => ids.filter(i => i !== nodeId))
+    if (!res || !res.ok) setPanelNote(t('tree.actionFailed'))
     load()
   }, [params.id, load, t])
 
@@ -725,61 +708,6 @@ function TreeCanvasInner() {
   const understood = tree?.nodes.filter(n => !n.pending && n.parentId !== null && n.status === 'understood').length ?? 0
   const total = tree?.nodes.filter(n => !n.pending && n.parentId !== null).length ?? 0
 
-  // ── Grow-this-branch as a CONVERSATION ──
-  // Each send is one dialog turn: Bob replies in the thread and (re)proposes
-  // this dialog's ghost set — follow-ups replace the dialog's still-pending
-  // ghosts (by id, never touching ghosts from other questions). Approving a
-  // ghost locks it in (no longer pending → survives refinement).
-  async function grow() {
-    const msg = growQuestion.trim()
-    if (!selected || !msg || growing) return
-    setGrowing(true)
-    setGrowNote(null)
-    const thread = [...growThread, { role: 'user' as const, content: msg }]
-    setGrowThread(thread)
-    setGrowQuestion('')
-    try {
-      const res = await fetch(`/api/tree/${params.id}/expand`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nodeId: selected.id,
-          question: msg,
-          lang: language,
-          history: thread.slice(0, -1).slice(-8),
-          replaceIds: growGhostIds,
-        }),
-      })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setGrowThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
-        return
-      }
-      const proposals: Array<{ id: string }> = Array.isArray(body.proposals) ? body.proposals : []
-      // An empty reply on an OK response (proxy returned junk) must not render
-      // a silent bubble — that's the dead-end this box exists to eliminate.
-      const reply = typeof body.reply === 'string' && body.reply.trim() ? body.reply.trim()
-        : (typeof body.clarify === 'string' && body.clarify.trim() ? body.clarify.trim() : t('tree.proposeFailed'))
-      setGrowThread(t2 => [...t2, { role: 'assistant', content: reply }])
-      // A conversational turn (no proposals) KEEPS the previous ghost set —
-      // the server kept them too, so the replace-set must survive.
-      if (proposals.length > 0) {
-        setGrowGhostIds(proposals.map(p => p.id).filter(Boolean))
-        setGrowNote(t('tree.proposedN').replace('{n}', String(proposals.length)))
-      }
-      // Always resync: the server may have replaced ghosts even on turns the
-      // canvas didn't expect, and stale dashed nodes 404 on approve.
-      await load()
-      if (proposals.length > 0) {
-        setTimeout(() => { try { flow.fitView({ padding: 0.2, duration: 600 }) } catch { /* non-critical */ } }, 150)
-      }
-    } catch {
-      setGrowThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
-    } finally {
-      setGrowing(false)
-    }
-  }
-
   async function addChild() {
     if (!selected || !childTitle.trim() || addingChild) return
     setAddingChild(true)
@@ -792,7 +720,7 @@ function TreeCanvasInner() {
       if (!res || !res.ok) {
         // Keep the typed title/summary for retry — clearing on failure
         // silently loses the student's content.
-        setGrowNote(t('tree.actionFailed'))
+        setPanelNote(t('tree.actionFailed'))
         return
       }
       setChildTitle('')
@@ -927,6 +855,17 @@ function TreeCanvasInner() {
 
               {!selected.pending && (
                 <>
+                  {selected.parentId === null ? (
+                    /* THE ROOT HAS NO WORKSPACE — it IS the problem statement.
+                       Its title/framing are edited through the Tree Copilot
+                       (approval-gated edit chips), never worked on directly. */
+                    <div className="border border-primary/30 bg-primary/[0.06] rounded-xl p-3">
+                      <p className="text-xs text-foreground/90 leading-relaxed flex items-start gap-1.5">
+                        <Bot className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
+                        <span>{t('tree.rootViaCopilot')}</span>
+                      </p>
+                    </div>
+                  ) : (
                   <button
                     onClick={() => {
                       try {
@@ -939,11 +878,13 @@ function TreeCanvasInner() {
                     <MessageSquare className="w-4 h-4" />
                     {t('tree.openWorkspace')}
                   </button>
+                  )}
                   {selected.status === 'understood' && (
                     <p className="text-xs text-emerald-400 flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5" /> {t('tree.verified')}
                     </p>
                   )}
+                  {panelNote && <p className="text-[11px] text-amber-400">{panelNote}</p>}
 
                   {/* Project progress flags */}
                   {selectedProgress.length > 0 && (
@@ -958,62 +899,6 @@ function TreeCanvasInner() {
                       </div>
                     </div>
                   )}
-
-                  {/* Grow: a CONVERSATION with Bob — each message proposes /
-                      reconfigures ghost nodes, and the thread never dead-ends */}
-                  <div className="border border-border rounded-xl p-3 space-y-2">
-                    <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                      <GitBranch className="w-3.5 h-3.5 text-emerald-400" />
-                      {t('tree.growBranch')}
-                    </p>
-                    {growThread.length === 0 && (
-                      <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.growHint')}</p>
-                    )}
-                    {growThread.length > 0 && (
-                      <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
-                        {growThread.map((m2, i2) => (
-                          <div key={i2} className={cn('flex', m2.role === 'user' ? 'justify-end' : 'justify-start')}>
-                            <div className={cn(
-                              'rounded-lg px-2.5 py-1.5 text-[11px] leading-snug max-w-[90%]',
-                              m2.role === 'user'
-                                ? 'bg-primary/20 text-foreground rounded-br-sm'
-                                : 'bg-background border border-border text-foreground/90 rounded-bl-sm',
-                            )}>
-                              {m2.content}
-                            </div>
-                          </div>
-                        ))}
-                        {growing && (
-                          <div className="flex justify-start">
-                            <div className="rounded-lg rounded-bl-sm px-2.5 py-1.5 bg-background border border-border">
-                              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {growNote && (
-                      <p className="text-[11px] text-emerald-300 leading-snug">{growNote}</p>
-                    )}
-                    <div className="flex gap-1.5">
-                      <textarea
-                        value={growQuestion}
-                        onChange={e => setGrowQuestion(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); grow() } }}
-                        placeholder={growThread.length === 0 ? t('tree.growPlaceholder') : t('tree.growReplyPlaceholder')}
-                        rows={2}
-                        className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
-                      />
-                      <button
-                        onClick={grow}
-                        disabled={!growQuestion.trim() || growing}
-                        title={t('tree.propose')}
-                        className="self-end inline-flex items-center justify-center rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 p-2.5 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
-                      >
-                        {growing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sprout className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
 
                   {/* Manual add child */}
                   <div className="border border-border rounded-xl p-3 space-y-2">

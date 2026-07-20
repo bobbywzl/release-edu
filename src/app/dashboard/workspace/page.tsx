@@ -10,7 +10,7 @@
  * checkpoint cards (MCQ / short answer). Correct answers earn XP and count
  * toward the node's verification — there is no separate test screen.
  */
-import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
@@ -126,17 +126,6 @@ function WorkspaceInner() {
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
-  // Grow-branch box (also available here, not just on the canvas).
-  const [growQ, setGrowQ] = useState('')
-  const [growBusy, setGrowBusy] = useState(false)
-  // The grow-box conversation thread. Ghost CHIPS are derived from the tree
-  // itself (every pending child of this node), so proposals from a previous
-  // visit rehydrate here instead of being reachable only via the canvas.
-  // dialogGhostIds tracks ONLY the ghosts created by THIS dialog's turns —
-  // the replace-set for refinements; other dialogs' ghosts are never replaced.
-  const [growThread, setGrowThread] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
-  const [dialogGhostIds, setDialogGhostIds] = useState<string[]>([])
-  const [ghostBusy, setGhostBusy] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -161,15 +150,14 @@ function WorkspaceInner() {
 
   const node = tree?.nodes.find(n => n.id === nodeId) ?? null
 
-  // Ghost chips: ALL pending proposals under this node, straight from the
-  // tree — survives reloads and node switches (loadTree refreshes them after
-  // every grow turn and approve/dismiss).
-  const growGhosts = useMemo(
-    () => (tree?.nodes ?? [])
-      .filter(n => n.pending && n.parentId === nodeId)
-      .map(n => ({ id: n.id, title: n.title, summary: n.summary ?? '' })),
-    [tree, nodeId],
-  )
+  // THE ROOT HAS NO WORKSPACE (law): it IS the problem statement, edited only
+  // through the Tree Copilot. Any root deep-link bounces back to the tree.
+  useEffect(() => {
+    if (node && node.parentId === null && treeId) {
+      router.replace(`/dashboard/tree/${treeId}`)
+    }
+  }, [node, treeId, router])
+
 
   // The node's build log (real-world progress Bob detected in chat) —
   // newest first for the runbook card. Tolerates malformed JSON.
@@ -250,7 +238,7 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setGrowQ(''); setGrowThread([]); setDialogGhostIds([]); setGhostBusy(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
@@ -513,75 +501,6 @@ function WorkspaceInner() {
       }
     } catch { /* keep the card armed for retry */ } finally {
       setSuggestionBusy(false)
-    }
-  }
-
-  // One turn of the grow conversation: Bob replies in the thread and
-  // (re)proposes this dialog's ghosts — follow-ups replace the previous
-  // still-pending set by id (approved ones survive).
-  async function growFromWorkspace() {
-    const msg = growQ.trim()
-    if (!msg || growBusy || !treeId || !nodeId) return
-    setGrowBusy(true)
-    const thread = [...growThread, { role: 'user' as const, content: msg }]
-    setGrowThread(thread)
-    setGrowQ('')
-    try {
-      const res = await fetch(`/api/tree/${treeId}/expand`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nodeId,
-          question: msg,
-          lang: language,
-          history: thread.slice(0, -1).slice(-8),
-          // Replace ONLY the ghosts this dialog created — rehydrated chips
-          // from earlier visits/dialogs are approve/dismiss-only.
-          replaceIds: dialogGhostIds,
-        }),
-      })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setGrowThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
-        return
-      }
-      // Never render a silent empty bubble on an OK-but-junk body.
-      const reply = typeof body.reply === 'string' && body.reply.trim() ? body.reply.trim()
-        : (typeof body.clarify === 'string' && body.clarify.trim() ? body.clarify.trim() : t('tree.proposeFailed'))
-      setGrowThread(t2 => [...t2, { role: 'assistant', content: reply }])
-      const proposals = Array.isArray(body.proposals) ? body.proposals : []
-      // A conversational turn (no proposals) keeps the previous set — the
-      // server kept those ghosts too.
-      if (proposals.length > 0) {
-        setDialogGhostIds(proposals.map((p: { id?: string }) => p?.id).filter(Boolean) as string[])
-      }
-      loadTree()
-    } catch {
-      setGrowThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
-    } finally {
-      setGrowBusy(false)
-    }
-  }
-
-  // Approve/dismiss a proposed ghost inline. Approve = it joins the tree
-  // (permission granted); dismiss = deleted. 4xx is TERMINAL (the ghost was
-  // already handled/replaced elsewhere) — refresh so the chip retires instead
-  // of becoming an immortal button; only network/5xx keep it armed for retry.
-  async function actOnGhost(ghostId: string, action: 'approve' | 'reject') {
-    if (ghostBusy || !treeId) return
-    setGhostBusy(ghostId)
-    try {
-      const res = await fetch(`/api/tree/${treeId}/node/${ghostId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      })
-      if (res.ok || (res.status >= 400 && res.status < 500)) {
-        setDialogGhostIds(ids => ids.filter(i => i !== ghostId))
-        loadTree()
-      }
-    } catch { /* keep the chip for retry */ } finally {
-      setGhostBusy(null)
     }
   }
 
@@ -1154,85 +1073,6 @@ function WorkspaceInner() {
                     {explainerLoading ? t('workspace.explainerLoading') : t('workspace.generateExplainer')}
                   </button>
                 )}
-              </div>
-
-              {/* Grow this branch — a conversation with Bob; proposed ghosts
-                  are approvable RIGHT HERE (no canvas trip needed) */}
-              <div className="border border-emerald-400/30 rounded-xl p-3 space-y-2 bg-emerald-500/[0.04]">
-                <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <Sprout className="w-3.5 h-3.5 text-emerald-400" /> {t('tree.growBranch')}
-                </p>
-                {growThread.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.growHint')}</p>
-                )}
-                {growThread.length > 0 && (
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
-                    {growThread.map((m2, i2) => (
-                      <div key={i2} className={cn('flex', m2.role === 'user' ? 'justify-end' : 'justify-start')}>
-                        <div className={cn(
-                          'rounded-lg px-2.5 py-1.5 text-[11px] leading-snug max-w-[90%]',
-                          m2.role === 'user'
-                            ? 'bg-primary/20 text-foreground rounded-br-sm'
-                            : 'bg-background border border-border text-foreground/90 rounded-bl-sm',
-                        )}>
-                          {m2.content}
-                        </div>
-                      </div>
-                    ))}
-                    {growBusy && (
-                      <div className="flex justify-start">
-                        <div className="rounded-lg rounded-bl-sm px-2.5 py-1.5 bg-background border border-border">
-                          <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {/* This dialog's proposed ghosts — approve or dismiss inline */}
-                {growGhosts.length > 0 && (
-                  <div className="space-y-1.5">
-                    {growGhosts.map(g => (
-                      <div key={g.id} className="rounded-lg border border-dashed border-emerald-400/40 bg-background/60 px-2.5 py-2">
-                        <p className="text-[11px] font-bold text-foreground leading-snug">{g.title}</p>
-                        {g.summary && <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{g.summary}</p>}
-                        <div className="flex gap-1.5 mt-1.5">
-                          <button
-                            onClick={() => actOnGhost(g.id, 'approve')}
-                            disabled={ghostBusy === g.id}
-                            className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-medium px-2.5 py-0.5 hover:bg-emerald-500/30 transition-colors disabled:opacity-50"
-                          >
-                            {ghostBusy === g.id ? <Loader2 className="w-3 h-3 animate-spin" /> : '✓'} {t('tree.addToTree')}
-                          </button>
-                          <button
-                            onClick={() => actOnGhost(g.id, 'reject')}
-                            disabled={ghostBusy === g.id}
-                            className="inline-flex items-center justify-center rounded-full bg-red-500/15 border border-red-400/30 text-red-300 text-[10px] px-2 py-0.5 hover:bg-red-500/25 transition-colors disabled:opacity-50"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex gap-1.5">
-                  <textarea
-                    value={growQ}
-                    onChange={e => setGrowQ(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); growFromWorkspace() } }}
-                    placeholder={growThread.length === 0 ? t('tree.growPlaceholder') : t('tree.growReplyPlaceholder')}
-                    rows={2}
-                    className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
-                  <button
-                    onClick={growFromWorkspace}
-                    disabled={!growQ.trim() || growBusy}
-                    title={t('tree.propose')}
-                    className="self-end inline-flex items-center justify-center rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 p-2.5 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
-                  >
-                    {growBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sprout className="w-4 h-4" />}
-                  </button>
-                </div>
               </div>
 
               {/* Tabs: Notes (editable) · Annotations · Files · Build log — all retained per node */}
