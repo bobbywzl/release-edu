@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { NO_THINKING } from '@/lib/chat-model-router'
 
 /**
  * Weekly cron: analyze thumbs-down feedback + failed sessions, propose prompt improvements.
@@ -90,6 +91,7 @@ Output valid JSON only:
     const result = await client.messages.create({
       model: 'claude-opus-4-8',
       max_tokens: 1024,
+      ...NO_THINKING,
       messages: [{ role: 'user', content: analysisPrompt }],
     })
 

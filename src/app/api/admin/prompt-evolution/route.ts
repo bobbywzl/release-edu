@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
+import { NO_THINKING } from '@/lib/chat-model-router'
 
 async function isAdmin(): Promise<boolean> {
   const cookieStore = await cookies()
@@ -128,6 +129,7 @@ Rules: Never propose changes based on fewer than 3 examples. Never suggest remov
     const result = await client.messages.create({
       model: 'claude-opus-4-8',
       max_tokens: 1500,
+      ...NO_THINKING,
       messages: [{ role: 'user', content: analysisPrompt }],
     })
 

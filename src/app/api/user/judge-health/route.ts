@@ -12,7 +12,7 @@ export const maxDuration = 45
 import { NextResponse } from 'next/server'
 import { getUserId } from '@/lib/get-user-id'
 import { getJudgeModel } from '@/lib/model-resolver'
-import { CHAT_MODELS } from '@/lib/chat-model-router'
+import { CHAT_MODELS, NO_THINKING } from '@/lib/chat-model-router'
 
 export async function GET() {
   const userId = await getUserId()
@@ -31,6 +31,7 @@ export async function GET() {
       const res = await client.messages.create({
         model,
         max_tokens: 8,
+        ...NO_THINKING,
         messages: [{ role: 'user', content: 'Reply with exactly: ok' }],
       }, { timeout: 12000, maxRetries: 0 })
       try {

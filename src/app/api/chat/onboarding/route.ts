@@ -7,6 +7,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'
+import { NO_THINKING } from '@/lib/chat-model-router'
 
 const ONBOARDING_SYSTEM_PROMPT = `You are Bob, the mentor behind Release EDU's problem-mastery trees.
 
@@ -255,6 +256,7 @@ export async function POST(req: NextRequest) {
               const response = await client.messages.stream({
                 model,
                 max_tokens: 1024,
+                ...NO_THINKING,
                 system: ONBOARDING_SYSTEM_PROMPT + learnerContext,
                 messages,
               })

@@ -254,7 +254,13 @@ export function TreeCopilot({ tree, onChanged, fit }: {
             exit={{ opacity: 0, y: 14 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
             ref={ambientRef}
-            className="fixed top-16 left-1/2 -translate-x-1/2 z-40 w-full max-w-xl px-4 flex flex-col gap-2 pointer-events-none"
+            // Centering law: never center a motion element with translate-x —
+            // framer-motion owns `transform` inline (it animates y here), so a
+            // Tailwind -translate-x-1/2 is clobbered whenever framer writes the
+            // property and restored when it clears it, and the whole overlay
+            // (pill + input) visibly jumps half its width left and right.
+            // inset-x-0 + mx-auto centers by margins, which framer never touches.
+            className="fixed top-16 inset-x-0 mx-auto z-40 w-full max-w-xl px-4 flex flex-col gap-2 pointer-events-none"
           >
             {/* The pill — Spotlight for the tree. Dim invitation until used. */}
             <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5">
