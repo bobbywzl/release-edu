@@ -254,7 +254,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
             exit={{ opacity: 0, y: 14 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
             ref={ambientRef}
-            className="fixed top-16 left-1/2 -translate-x-1/2 z-40 w-full max-w-xl px-4 flex flex-col gap-2 pointer-events-none"
+            className="fixed top-16 left-4 lg:left-20 right-4 z-40 max-w-xl flex flex-col gap-2 pointer-events-none"
           >
             {/* The pill — Spotlight for the tree. Dim invitation until used. */}
             <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5">
@@ -289,8 +289,12 @@ export function TreeCopilot({ tree, onChanged, fit }: {
 
             {/* The cloud — only the latest exchanges, translucent, so ghost
                 nodes forming on the canvas stay in view behind them. */}
+            {/* Scrollbar HIDDEN, not gutter-reserved: a bar popping in and
+                out as bubbles stream shifts the right-aligned user bubbles
+                sideways. The 3-bubble peek needs no visible bar — trackpad
+                scrolling still works, and the full view has a real one. */}
             {(thread.length > 0 || busy) && (
-              <div className="space-y-1.5 max-h-[30vh] overflow-y-auto pointer-events-auto pr-1 [scrollbar-gutter:stable]">
+              <div className="space-y-1.5 max-h-[30vh] overflow-y-auto pointer-events-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {thread.slice(-3).map((m, i) => (
                   <div key={thread.length - Math.min(3, thread.length) + i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                     <div className={cn(
