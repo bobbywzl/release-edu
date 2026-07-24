@@ -109,7 +109,11 @@ Each session carries its own language / difficulty / personal background / PURPO
   daily goal, streaks, badges, sounds (`src/lib/sfx.ts`). Checkpoint answers pay
   `quiz_correct` / `quiz_attempt` / tiered `combo_bonus`; showing up pays via
   `updateStreak` (daily streak + first session), fired by `/api/xp/checkin` from
-  `DailyCheckin` in the dashboard layout. Streak day boundaries use the USER's
+  `DailyCheckin` in the dashboard layout. STREAK ACCELERATOR
+  (`src/lib/streak-accel.ts`, client-safe, shared by engine + panel): daily
+  streak XP ramps 10 → 25 → 50 on days 1/2/3 and holds the day-3 max, plus a
+  `week_streak` +500 XP boost every 7th consecutive day — streak payouts are
+  EXACT (exempt from the global streak multiplier). Streak day boundaries use the USER's
   timezone (`StudentProfile.lastCheckinDay`, compare-and-set so parallel tabs can't
   double-award); all XP writes are atomic increments. `getRank(level)` returns the
   learning-journey rank (`RankInfo`: tier/division/color/emblem/vfx,
