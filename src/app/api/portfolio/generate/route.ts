@@ -4,6 +4,7 @@ export const maxDuration = 300
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserId } from '@/lib/get-user-id'
 import prisma from '@/lib/prisma'
+import { NO_THINKING } from '@/lib/chat-model-router'
 
 // Portfolios generated before the Tree pivot carry Release EDU data. The
 // version stamp lets readers treat anything older as absent — a Tree EDU
@@ -165,6 +166,7 @@ ${nodeLines}`
   const result = await client.messages.create({
     model: 'claude-opus-4-8',
     max_tokens: 4000,
+    ...NO_THINKING,
     messages: [{
       role: 'user',
       content: `Generate a RIGOROUSLY HONEST student portfolio/résumé for university and employer review, from Tree EDU problem-mastery sessions.

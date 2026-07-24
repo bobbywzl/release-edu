@@ -47,6 +47,21 @@ export const CHAT_MODELS = {
   haiku: 'claude-haiku-4-5-20251001',
 } as const
 
+/**
+ * Current Opus/Sonnet models run ADAPTIVE THINKING BY DEFAULT — and the
+ * auto-adopting resolver rolled them out with no deploy. Every prompt in this
+ * app was designed for non-thinking models: JSON-only outputs under tight
+ * max_tokens budgets, "silently work out…" plan-first instructions, and
+ * content[0]-is-the-text reads. On a thinking-default model the hidden
+ * thinking spends from the SAME max_tokens (truncating the JSON/prose before
+ * it completes) and content[0] can be a thinking block — so structured calls
+ * fail their parse on every turn (the copilot's "That one didn't generate"
+ * loop). Spread this into EVERY Opus/Sonnet messages.create/stream call to
+ * pin the designed behavior. Haiku calls don't need it (no default thinking,
+ * harmless if added).
+ */
+export const NO_THINKING = { thinking: { type: 'disabled' as const } }
+
 // Tags the client embeds in the message body to signal session lifecycle
 // events. The chat route's lessonPhase prompt checks for these — we mirror
 // the same checks to route the right model BEFORE Bob writes a token.

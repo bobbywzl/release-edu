@@ -26,6 +26,7 @@ import { dbStore } from '@/lib/db-store'
 import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, refreshNodeContextSummary, type XpAwardLite } from '@/lib/tree-engine'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
+import { NO_THINKING } from '@/lib/chat-model-router'
 
 interface Reflection {
   state: string          // one-line read of where the student is
@@ -633,6 +634,7 @@ Close with ONE short, conversational, inviting question checking they're followi
         const response = client.messages.stream({
           model,
           max_tokens: 2000,
+          ...NO_THINKING,
           system: systemPrompt,
           messages: [...history, { role: 'user' as const, content: msgText || '(see the attachments above)' }],
         })
@@ -805,6 +807,7 @@ or
             const res = await authorClient.messages.create({
               model: authorModel,
               max_tokens: 700,
+              ...NO_THINKING,
               messages: [{ role: 'user', content: prompt }],
             })
             try {

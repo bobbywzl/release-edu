@@ -254,6 +254,11 @@ export function TreeCopilot({ tree, onChanged, fit }: {
             exit={{ opacity: 0, y: 14 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
             ref={ambientRef}
+            // Positioning law: anchor with insets/margins ONLY — never a
+            // Tailwind translate on a motion element (framer owns `transform`
+            // inline while animating y, so a CSS translate gets clobbered and
+            // restored, visibly jumping the overlay). Anchored TOP-LEFT of the
+            // canvas: left-20 clears the collapsed nav rail on desktop.
             className="fixed top-16 left-4 lg:left-20 right-4 z-40 max-w-xl flex flex-col gap-2 pointer-events-none"
           >
             {/* The pill — Spotlight for the tree. Dim invitation until used. */}

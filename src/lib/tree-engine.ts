@@ -16,7 +16,7 @@
 import prisma from '@/lib/prisma'
 import type { TreeNode } from '@prisma/client'
 import { getTeachingModel, getJudgeModel } from '@/lib/model-resolver'
-import { CHAT_MODELS } from '@/lib/chat-model-router'
+import { CHAT_MODELS, NO_THINKING } from '@/lib/chat-model-router'
 import { ensureUserRow } from '@/lib/ensure-user'
 import { clampText } from '@/lib/clamp'
 
@@ -121,6 +121,19 @@ function extractJSON<T>(text: string): T | null {
   return null
 }
 
+/**
+ * All text blocks of a response, joined. Never index content[0] directly:
+ * on a thinking-capable model the first block can be a thinking block, and
+ * a content[0].text read silently returns '' — the "generation failed"
+ * failure mode with no trace.
+ */
+function responseText(result: { content: Array<{ type?: string; text?: string }> }): string {
+  return result.content
+    .filter(b => b.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text as string)
+    .join('\n')
+}
+
 /** Student grounding for calibrated output (level, interests, memory). */
 async function studentGrounding(userId: string): Promise<string> {
   try {
@@ -212,6 +225,7 @@ export async function seedTree(
   const result = await client.messages.create({
     model,
     max_tokens: 3500,
+    ...NO_THINKING,
     messages: [{
       role: 'user',
       content: `You are Bob, an expert mentor. A student wants to master ONE specific problem. Design the SEED of a learning tree for it.
@@ -242,7 +256,7 @@ JSON shape:
   })
 
   void recordUsage(result, userId, model, 'tree-seed')
-  const text = (result.content[0] as { text?: string })?.text ?? ''
+  const text = responseText(result)
   const seed = extractJSON<SeedResult>(text)
   if (!seed?.solutions?.length) throw new Error('Seed generation failed')
 
@@ -723,7 +737,7 @@ Return ONLY JSON:
   // Pass 1: the conversational turn.
   let parsed: GrowParsed | null = null
   {
-    const result = await client.messages.create({ model, max_tokens: 3000, system, messages: turnMessages })
+    const result = await client.messages.create({ model, max_tokens: 3000, ...NO_THINKING, system, messages: turnMessages })
     void recordUsage(result, userId, model, 'tree-expand')
     parsed = parseGrow(textOf(result))
   }
@@ -732,7 +746,7 @@ Return ONLY JSON:
   if (!parsed) {
     try {
       const result = await client.messages.create({
-        model, max_tokens: 3000,
+        model, max_tokens: 3000, ...NO_THINKING,
         system: `${system}
 
 CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.`,
@@ -747,7 +761,7 @@ CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code
   if (!parsed || ((parsed.proposals ?? []).length === 0 && mustPropose)) {
     try {
       const forced = await client.messages.create({
-        model, max_tokens: 2500,
+        model, max_tokens: 2500, ...NO_THINKING,
         system: `You grow a problem-mastery learning tree. Based on the dialog, you MUST return 1-4 child-node proposals for the target node — your single best reading of what the student needs; no questions, no refusals.
 ${GOAL_NECESSITY}
 
@@ -942,7 +956,7 @@ Return ONLY JSON:
   let parsed: CopilotParsed | null = null
   let firstText = ''
   {
-    const result = await client.messages.create({ model, max_tokens: 3500, system, messages: turnMessages })
+    const result = await client.messages.create({ model, max_tokens: 3500, ...NO_THINKING, system, messages: turnMessages })
     void recordUsage(result, userId, model, 'tree-copilot')
     firstText = textOf(result)
     parsed = parseTurn(firstText)
@@ -950,7 +964,7 @@ Return ONLY JSON:
   if (!parsed) {
     try {
       const result = await client.messages.create({
-        model, max_tokens: 3500,
+        model, max_tokens: 3500, ...NO_THINKING,
         system: `${system}\n\nCRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.`,
         messages: turnMessages,
       })
@@ -1052,6 +1066,7 @@ export async function generateExplainer(userId: string, treeId: string, nodeId: 
   const result = await client.messages.create({
     model,
     max_tokens: 2500,
+    ...NO_THINKING,
     messages: [{
       role: 'user',
       content: `You are Bob, an expert mentor. Write the comprehensive PAIN-POINT EXPLAINER for one node of a problem-mastery tree — the piece a beginner reads to genuinely understand this point.
@@ -1087,7 +1102,7 @@ ${sessionDirectives(tree, lang)}`,
   })
 
   void recordUsage(result, userId, model, 'tree-explainer')
-  const explainer = (result.content[0] as { text?: string })?.text?.trim() ?? ''
+  const explainer = responseText(result).trim()
   if (explainer) {
     await prisma.treeNode.update({ where: { id: nodeId }, data: { explainer } })
   }
@@ -1124,6 +1139,7 @@ export async function judgeCheckpointAnswer(
   const primaryModel = await getJudgeModel()
   const judgeBody = {
     max_tokens: 700,
+    ...NO_THINKING,
     messages: [{
       role: 'user' as const,
       content: `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
@@ -1315,6 +1331,7 @@ export async function generateTreeDigest(userId: string, treeId: string, lang?: 
   const result = await client.messages.create({
     model,
     max_tokens: 1600,
+    ...NO_THINKING,
     messages: [{
       role: 'user',
       content: `Write the TREE DIGEST — a dense, copy-ready status report of one problem-mastery session, for the learner to read or paste to their team.
@@ -1347,7 +1364,7 @@ ${sessionDirectives(tree, lang)}`,
     }],
   })
   void recordUsage(result, userId, model, 'tree-digest')
-  const digest = (result.content[0] as { text?: string })?.text?.trim() ?? ''
+  const digest = responseText(result).trim()
   if (!digest) throw new Error('Digest generation failed')
 
   const digestAt = new Date()
