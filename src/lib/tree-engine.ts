@@ -17,6 +17,7 @@ import prisma from '@/lib/prisma'
 import type { TreeNode } from '@prisma/client'
 import { getTeachingModel, getJudgeModel } from '@/lib/model-resolver'
 import { CHAT_MODELS, NO_THINKING } from '@/lib/chat-model-router'
+import { buildContextCatalog, fetchRequestedContext, type ContextRequestNode, type RecalledRef } from '@/lib/tree-context'
 import { ensureUserRow } from '@/lib/ensure-user'
 import { clampText } from '@/lib/clamp'
 
@@ -852,6 +853,8 @@ export interface CopilotResult {
   purposeUpdate?: string | null
   /** Edit/move/delete chips — approval-gated tree reshaping. */
   actions: CopilotAction[]
+  /** Stored context the copilot recalled this turn (transparency line). */
+  recalled?: RecalledRef[]
 }
 
 /**
@@ -883,6 +886,10 @@ export async function copilotTurn(
   const indexList = real.map((n, i) =>
     `[#${i}] "${n.title}" (${n.parentId === null ? 'ROOT' : n.status})${n.summary ? ` — ${n.summary.slice(0, 100)}` : ''}`).join('\n')
 
+  // The token-light inventory of everything stored for this tree (counts and
+  // names only — content arrives ONLY via an explicit contextRequest recall).
+  const catalog = await buildContextCatalog(userId, treeId, real)
+
   const history = (opts.history ?? []).slice(-10).map(h => ({
     role: h.role === 'assistant' ? 'assistant' as const : 'user' as const,
     content: String(h.content ?? '').slice(0, 1500),
@@ -903,6 +910,9 @@ ${tree.framing ? `FRAMING: ${tree.framing}` : ''}
 SESSION PURPOSE: ${tree.purpose ? `"${tree.purpose}"` : '(not yet stated — surfacing it is one of your jobs)'}
 CURRENT TREE (numeric handles for proposing):
 ${indexList}
+
+STORED WORK CATALOG (the student's history you can RECALL on demand — counts only, you do NOT see any of this content until you request it; nodes not listed have no stored work yet):
+${catalog || '(no stored work yet beyond the tree itself)'}
 ${attachBlock}
 
 YOUR FUNCTIONS (all in one box):
@@ -920,6 +930,9 @@ The UI renders it as a generated image in place. Never mention the block. At mos
    {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
    {"op":"delete","node":<handle>} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
    The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
+7. RECALL STORED CONTEXT (on demand — the catalog above is your index): you do NOT automatically see the student's per-node work. Available kinds per node: "chat" (workspace conversation: node digest + rolling summary + recent messages), "notes" (their editable notes), "files" (attached evidence incl. analyzed images/audio/PDFs), "highlights" (passages they marked in chat), "annotations" (their notes on the explainer), "progress" (project-progress log), "syllabus" (verification/facet state), "explainer" (the stored full explainer). "tree" as the node value = files shared in THIS copilot.
+   WHEN to recall: (a) the student asks about their own history/work/files/notes/conversations ("what did I discuss…", "based on my notes/files…", "summarize what I've learned"), or (b) you STRONGLY judge stored context would materially change your answer or proposals (e.g. proposing branches that a workspace may already have covered, or tailoring to evidence they attached earlier). Recall costs the student tokens — NEVER recall for greetings, small talk, or anything answerable from the tree structure and catalog alone.
+   HOW: instead of a final reply, return ONLY {"contextRequest": {"nodes": [{"node": <handle or "tree">, "kinds": ["chat", …]}], "why": "one short line"}} — max 6 nodes, and only kinds the catalog actually lists for that node. The content arrives immediately and you answer in the SAME turn; you get ONE recall per turn, so request everything you need at once.
 
 RULES:
 - ${GOAL_NECESSITY}
@@ -931,20 +944,25 @@ RULES:
 - RADICAL CONCISENESS (UI constraint — the ambient cloud shows only 1-2 lines): "reply" is 1-2 SHORT sentences MAXIMUM. Be a concise executor: DO the instruction (proposals/chips), then confirm in one line ("Queued the edit — approve the chip." / "Proposed 2 branches under X."). At most ONE short fork question, and only when you genuinely cannot act without the answer. NO paragraphs, NO explanations of your reasoning, NO teaching in the reply — full teaching happens only when the student explicitly asks a learning question, and even then keep it tight or suggest opening the full conversation.
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON:
-{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete","node":0,"title":"…","summary":"…","newParent":0}]}`
+Return ONLY JSON — either a normal turn:
+{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete","node":0,"title":"…","summary":"…","newParent":0}]}
+OR a recall request first (function 7):
+{"contextRequest": {"nodes": [{"node": 0, "kinds": ["chat","files"]}], "why": "…"}}`
 
   type CopilotParsed = {
     reply?: string
     proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string }>
     purposeUpdate?: string | null
     actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number }>
+    contextRequest?: { nodes?: ContextRequestNode[]; why?: string }
   }
   const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
     r.content.filter(b => b.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
   const parseTurn = (text: string): CopilotParsed | null => {
     const obj = extractJSON<CopilotParsed>(text)
-    return obj && (typeof obj.reply === 'string' || Array.isArray(obj.proposals)) ? obj : null
+    if (!obj) return null
+    if (Array.isArray(obj.contextRequest?.nodes) && obj.contextRequest!.nodes!.length > 0) return obj
+    return typeof obj.reply === 'string' || Array.isArray(obj.proposals) ? obj : null
   }
   const turnMessages = [...history, { role: 'user' as const, content: message.slice(0, 2000) }]
 
@@ -979,6 +997,51 @@ Return ONLY JSON:
   }
 
   const zh = (tree.language ?? lang) === 'zh'
+
+  // ── ON-DEMAND CONTEXT RECALL (function 7) — ONE round per turn ──
+  // The model asked to read stored work before answering. Fetch exactly the
+  // requested blocks (digest-first, clamped) and run the SAME turn again with
+  // the content in front of it. A second contextRequest is not honored — the
+  // recalled block explicitly says so, and we strip it defensively.
+  let recalled: RecalledRef[] = []
+  if (parsed?.contextRequest && Array.isArray(parsed.contextRequest.nodes) && parsed.contextRequest.nodes.length > 0) {
+    const fetched = await fetchRequestedContext(userId, treeId, real, parsed.contextRequest.nodes)
+    if (fetched.block) {
+      recalled = fetched.recalled
+      const system2 = `${system}
+
+## RECALLED STORED CONTEXT (you requested this — it is now in front of you)
+${fetched.block}
+
+Answer the student NOW, grounded in the content above; quote or reference it concretely. contextRequest is NOT available on this pass. A synthesis the student explicitly asked for may run up to ~5 short sentences despite the conciseness rule.`
+      let secondText = ''
+      parsed = null
+      try {
+        const result = await client.messages.create({ model, max_tokens: 3500, ...NO_THINKING, system: system2, messages: turnMessages })
+        void recordUsage(result, userId, model, 'tree-copilot')
+        secondText = textOf(result)
+        parsed = parseTurn(secondText)
+      } catch { /* prose tolerance below */ }
+      if (parsed?.contextRequest) {
+        // Defensive: a repeat request is dropped; keep whatever reply it carried.
+        parsed = typeof parsed.reply === 'string' && parsed.reply.trim() ? { ...parsed, contextRequest: undefined } : null
+      }
+      if (!parsed) {
+        const prose = secondText.trim().replace(/^```[a-z]*\n?|\n?```$/g, '').trim()
+        if (prose && !prose.startsWith('{') && !prose.includes('"reply"')) {
+          parsed = { reply: prose.slice(0, 4000) }
+        }
+      }
+    } else {
+      // Catalog promised nothing / fetch failed — answer honestly instead of
+      // hallucinating recalled content.
+      parsed = {
+        reply: zh
+          ? '那些节点还没有可调取的记录——先在节点工作区里学习或添加笔记/文件，我就能引用它们了。'
+          : "There's no stored work on those nodes yet — once you chat, take notes, or attach files in a node's workspace, I can pull it in.",
+      }
+    }
+  }
   const rawProposals = (parsed?.proposals ?? []).filter(p => p && typeof p.title === 'string' && p.title.trim()).slice(0, 6)
 
   // Replace this dialog's previous unapproved ghosts ONLY when the new turn
@@ -1039,7 +1102,7 @@ Return ONLY JSON:
     }
   }
 
-  return { reply, proposals: created, purposeUpdate, actions }
+  return { reply, proposals: created, purposeUpdate, actions, recalled }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────

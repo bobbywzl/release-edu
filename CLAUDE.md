@@ -100,7 +100,16 @@ Each session carries its own language / difficulty / personal background / PURPO
   `PATCH /api/tree/[id]` `set_purpose`, multimodal input — file/camera/video
   capture inputs + MediaRecorder voice → Gemini `analyzeImage` analysis, stored
   as `LinkedFile` workType `tree` — and generated visuals via ```image blocks;
-  thread persisted as Conversation context `tree-copilot:<treeId>`).
+  thread persisted as Conversation context `tree-copilot:<treeId>`). COPILOT
+  CONTEXT RECALL (`src/lib/tree-context.ts`): every turn carries a token-light
+  STORED WORK CATALOG (counts/names per node: workspace chats, notes, files +
+  analyses, highlights, explainer annotations, progress logs, syllabus state,
+  explainers, digests); the model recalls actual content ON DEMAND via a
+  `contextRequest` JSON (only when the student asks about their history or
+  recall would materially change the answer — never for small talk), served
+  digest-first (contextSummary + rolling conversation summary + last messages,
+  clamped, 14k-char budget), ONE recall round per turn, surfaced to the
+  student as a `tree.recalledNote` line.
 - `src/app/dashboard/workspace/page.tsx` — per-node work area: Bob chat,
   explainer, editable notes, highlight-based annotations, file evidence.
 - `src/lib/insight-memory.ts` + `src/lib/insight-extraction.ts` — the personalization
