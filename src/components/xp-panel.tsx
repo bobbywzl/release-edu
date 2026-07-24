@@ -14,9 +14,10 @@
  * Data: GET /api/xp/summary (also lazily awards new badges → celebration).
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Flame, ChevronRight, X, Star, Volume2, VolumeX } from 'lucide-react'
+import { Flame, ChevronRight, X, Star, Volume2, VolumeX, Zap, Gift } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLanguage } from '@/lib/i18n'
+import { streakDayXp, daysToWeekBoost, WEEK_STREAK_XP } from '@/lib/streak-accel'
 import { emitBadgeEvents, subscribeXpChange, type BadgeEvent } from '@/components/xp-toast'
 import { sfxEnabled, setSfxEnabled } from '@/lib/sfx'
 
@@ -146,6 +147,10 @@ export function XpPanel() {
   const goalMet = data.xpToday >= data.dailyGoal
   const earned = data.badges.filter(b => b.earned)
   const streakAtRisk = !data.activeToday && data.streak > 0
+  // Accelerator display: the streak day the rate applies to — today's if the
+  // day is already saved, otherwise the day the next check-in will reach.
+  const accelDay = Math.max(1, data.activeToday ? data.streak : data.streak + 1)
+  const accelRate = streakDayXp(accelDay)
 
   return (
     <>
@@ -205,6 +210,23 @@ export function XpPanel() {
                 <p className="text-xs text-muted-foreground">{t('xp.streakSafe')}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">{t('xp.streakStart')}</p>
+              )}
+              {/* XP accelerator: current (or next) daily rate — day 3+ is the
+                  max — and the countdown to the 500 XP full-week boost. */}
+              {data.streak > 0 && (
+                <p className="text-[11px] text-yellow-400 flex items-center gap-1 mt-0.5">
+                  <Zap className="w-3 h-3 flex-shrink-0" />
+                  <span>
+                    {t('xp.accelRate').replace('{n}', String(accelRate))}
+                    {accelDay >= 3 && <span className="text-yellow-400/70"> · {t('xp.accelMax')}</span>}
+                  </span>
+                </p>
+              )}
+              {data.streak > 0 && data.activeToday && (
+                <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <Gift className="w-3 h-3 flex-shrink-0" />
+                  <span>{t('xp.weekBoostIn').replace('{xp}', String(WEEK_STREAK_XP)).replace('{n}', String(daysToWeekBoost(data.streak)))}</span>
+                </p>
               )}
             </div>
           </div>

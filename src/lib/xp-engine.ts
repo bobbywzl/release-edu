@@ -16,7 +16,9 @@
  * │ Quiz correct answer      │ 15        │ × difficulty (short=1, mcq=0.8)│
  * │ Capstone problem passed  │ 200       │ × score/100                    │
  * │ Track completed          │ 500       │ flat bonus                     │
- * │ Daily login streak       │ 10–50     │ scales with streak length      │
+ * │ Daily login streak       │ 10/25/50  │ ACCELERATOR: ramps day 1→2→3;  │
+ * │                          │           │ day 3+ holds the maximum rate  │
+ * │ Full-week streak boost   │ 500       │ every 7th consecutive day      │
  * │ First session of the day │ 25        │ flat                           │
  * │ Quality conversation     │ 5         │ per meaningful exchange (cap 50)│
  * │ Highlight/annotation     │ 3         │ per highlight (cap 30/day)     │
@@ -36,6 +38,7 @@
  */
 
 import prisma from '@/lib/prisma'
+import { streakDayXp, WEEK_STREAK_XP, WEEK_LENGTH } from '@/lib/streak-accel'
 
 // ── XP Award Types ──
 
@@ -45,6 +48,7 @@ export type XpSource =
   | 'capstone_passed'
   | 'track_completed'
   | 'daily_streak'
+  | 'week_streak'
   | 'first_session'
   | 'conversation'
   | 'highlight'
@@ -105,6 +109,9 @@ const XP_TABLE: Record<XpSource, { base: number; label: string }> = {
   capstone_passed:     { base: 200, label: 'Capstone Passed' },
   track_completed:     { base: 500, label: 'Track Completed' },
   daily_streak:        { base: 10,  label: 'Daily Streak' },
+  // Full-week boost: the special 500 XP crescendo of the streak accelerator,
+  // paid on every 7th consecutive day of learning (7, 14, 21, …).
+  week_streak:         { base: WEEK_STREAK_XP, label: 'Full Week Streak' },
   first_session:       { base: 25,  label: 'First Session Today' },
   conversation:        { base: 5,   label: 'Learning Exchange' },
   highlight:           { base: 3,   label: 'Annotation' },
@@ -265,11 +272,14 @@ export function calculateXp(
       xp *= (opts.sessionScore ?? 70) / 100
       break
     case 'daily_streak': {
-      // Scales: 10 at day 1, up to 50 at day 30+
+      // XP ACCELERATOR: the show-up reward ramps day 1 → day 2 → day 3
+      // (10 / 25 / 50) and holds the day-3 MAXIMUM from then on — coming
+      // back tomorrow is always visibly worth more than restarting at day 1.
       const days = opts.streakDays ?? streak
-      xp = Math.min(50, 10 + Math.floor(days / 3) * 5)
+      xp = streakDayXp(Math.max(1, days))
       break
     }
+    case 'week_streak':
     case 'conversation':
     case 'highlight':
     case 'first_session':
@@ -303,8 +313,12 @@ export function calculateXp(
     }
   }
 
-  // Apply streak multiplier to all sources
-  xp *= getStreakMultiplier(streak)
+  // Apply streak multiplier to all sources EXCEPT the streak payouts
+  // themselves: the accelerator's posted amounts (10/25/50 and the 500
+  // week boost) are paid EXACTLY — legibility beats a hidden multiplier.
+  if (source !== 'daily_streak' && source !== 'week_streak') {
+    xp *= getStreakMultiplier(streak)
+  }
 
   return Math.round(xp)
 }
@@ -375,7 +389,7 @@ async function bumpDailyXp(userId: string, amount: number): Promise<void> {
 // ring is documented as "reachable in one honest lesson session", so it must
 // close on LEARNING, not on merely opening the app (otherwise a loyal user's
 // streak XP alone fills it by ~day 12 and the loop stops asking them to learn).
-const SHOWUP_SOURCES = new Set<XpSource>(['daily_streak', 'first_session'])
+const SHOWUP_SOURCES = new Set<XpSource>(['daily_streak', 'week_streak', 'first_session'])
 
 // ── Award XP (writes to DB) ──
 
@@ -573,6 +587,13 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
   if (streakAward) awards.push(streakAward)
   const firstSession = await tryAward('first_session', { streak: newStreak })
   if (firstSession) awards.push(firstSession)
+  // FULL-WEEK BOOST: every 7th consecutive day pays the special 500 XP —
+  // pushed last so the toast sequence ends on the crescendo. newStreak only
+  // ever advances by 1, so a multiple of 7 can never be skipped over.
+  if (newStreak > 0 && newStreak % WEEK_LENGTH === 0) {
+    const weekly = await tryAward('week_streak', { streak: newStreak })
+    if (weekly) awards.push(weekly)
+  }
 
   return { streak: newStreak, awards }
 }

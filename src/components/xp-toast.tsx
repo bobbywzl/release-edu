@@ -351,7 +351,7 @@ function XpToastBanner({ event, onDone }: { event: XpEvent; onDone: () => void }
   }, [onDone])
 
   const isPerseverance = event.source === 'perseverance' || event.label.includes('Perseverance')
-  const icon = event.source === 'track_completed' || event.label.includes('Track') ? Trophy :
+  const icon = event.source === 'track_completed' || event.source === 'week_streak' || event.label.includes('Track') ? Trophy :
                event.source === 'chapter_completed' || event.label.includes('Chapter') ? Star :
                event.source === 'daily_streak' || event.label.includes('Streak') ? TrendingUp :
                isPerseverance ? Heart : Zap
