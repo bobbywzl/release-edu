@@ -126,6 +126,13 @@ export function TreeCopilot({ tree, onChanged, fit }: {
           .map((p: { id: string; title?: string; summary?: string }) => ({ id: p.id, title: p.title ?? '', summary: p.summary ?? '' })))
         setNote({ text: t('tree.proposedN').replace('{n}', String(proposals.length)), tone: 'ok' })
       }
+      // Transparency: when Bob pulled stored work (conversations/notes/files…)
+      // to ground this answer, say so — a dim line, never a surprise.
+      const recalledRefs = Array.isArray(body.recalled) ? (body.recalled as Array<{ node?: string }>) : []
+      if (recalledRefs.length > 0 && proposals.length === 0) {
+        const names = recalledRefs.map(r => r.node).filter(Boolean).slice(0, 4).join(', ')
+        if (names) setNote({ text: t('tree.recalledNote').replace('{list}', names), tone: 'ok' })
+      }
       // Reshape chips are per-turn: the latest turn's set is the live one.
       setActions(Array.isArray(body.actions) ? (body.actions as CopilotAction[]) : [])
       if (typeof body.purposeUpdate === 'string' && body.purposeUpdate.trim()) {
