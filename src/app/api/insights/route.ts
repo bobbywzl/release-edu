@@ -23,6 +23,9 @@ export async function GET() {
       importance: i.importance,
       timesObserved: i.timesObserved,
       source: i.source,
+      // Reinforcement stamp — powers the dashboard's weekly "what Bob
+      // figured out about you this week" digest card.
+      lastConfirmedAt: i.lastConfirmedAt,
     })),
   })
 }

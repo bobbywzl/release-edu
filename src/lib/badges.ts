@@ -17,6 +17,7 @@
  * dashboard, unlock celebrations, and the portfolio/résumé.
  */
 import prisma from '@/lib/prisma'
+import { parseQuizState } from '@/lib/mastery'
 
 export type BadgeTier = 'bronze' | 'silver' | 'gold' | 'legendary'
 
@@ -43,6 +44,19 @@ export interface BadgeStats {
   // mastered problem trees.
   nodesVerified: number
   treesCompleted: number
+  // ── Purpose-native metrics (what Tree EDU actually values) ──
+  /** Own-words short answers judged correct — transfer, not recitation. */
+  ownWordsCorrect: number
+  /** Answers marked "sure" that WERE right — calibrated self-knowledge. */
+  confidentCorrect: number
+  /** Verified nodes the student came back to and re-proved (reviewedAt). */
+  reviewedNodes: number
+  /** Non-seed nodes — grown from the student's own questions/asks/hands. */
+  selfGrownNodes: number
+  /** Active insights in Bob's constellation about this learner. */
+  insightCount: number
+  /** Files attached as learning evidence (tree + node scope). */
+  filesAttached: number
 }
 
 export const BADGES: BadgeDef[] = [
@@ -112,6 +126,49 @@ export const BADGES: BadgeDef[] = [
     name: { en: 'Forest Sovereign',  zh: '森林之主' },
     desc: { en: 'Mastered 3 entire problem trees',              zh: '完整掌握 3 棵问题树' } },
 
+  // ── True understanding (own-words transfer — the Differentiator law) ──
+  { id: 'own_words_5',  tier: 'silver', icon: '🗣️', metric: 'ownWordsCorrect', target: 5,
+    name: { en: 'In Your Own Words',  zh: '自陈真知' },
+    desc: { en: 'Explained 5 concepts correctly in your own words',   zh: '用自己的话正确解释 5 个概念' } },
+  { id: 'own_words_25', tier: 'gold',   icon: '🎙️', metric: 'ownWordsCorrect', target: 25,
+    name: { en: 'Voice of Understanding', zh: '理解之声' },
+    desc: { en: 'Explained 25 concepts correctly in your own words',  zh: '用自己的话正确解释 25 个概念' } },
+
+  // ── Calibration (knowing what you know) ──
+  { id: 'calib_10', tier: 'silver', icon: '🧭', metric: 'confidentCorrect', target: 10,
+    name: { en: 'Well-Calibrated', zh: '自知之明' },
+    desc: { en: '10 checkpoint answers both confident and correct',   zh: '10 次自信且正确的检查题回答' } },
+  { id: 'calib_50', tier: 'gold',   icon: '🎯', metric: 'confidentCorrect', target: 50,
+    name: { en: 'True Compass',    zh: '真知罗盘' },
+    desc: { en: '50 checkpoint answers both confident and correct',   zh: '50 次自信且正确的检查题回答' } },
+
+  // ── Retention (coming back to re-prove mastery) ──
+  { id: 'review_5',  tier: 'silver', icon: '🌾', metric: 'reviewedNodes', target: 5,
+    name: { en: 'Gardener',            zh: '园丁' },
+    desc: { en: 'Revisited and re-proved 5 verified nodes',           zh: '复习并再次验证 5 个节点' } },
+  { id: 'review_20', tier: 'gold',   icon: '🏵️', metric: 'reviewedNodes', target: 20,
+    name: { en: 'Keeper of the Grove', zh: '林园守护者' },
+    desc: { en: 'Revisited and re-proved 20 verified nodes',          zh: '复习并再次验证 20 个节点' } },
+
+  // ── Question-driven growth (the tree grows from THEIR curiosity) ──
+  { id: 'grown_3',  tier: 'bronze',    icon: '🌿', metric: 'selfGrownNodes', target: 3,
+    name: { en: 'Curious Mind',            zh: '好奇心' },
+    desc: { en: 'Grew 3 tree nodes from your own questions',          zh: '由你自己的提问长出 3 个节点' } },
+  { id: 'grown_10', tier: 'silver',    icon: '🌳', metric: 'selfGrownNodes', target: 10,
+    name: { en: 'Question Gardener',       zh: '提问园丁' },
+    desc: { en: 'Grew 10 tree nodes from your own questions',         zh: '由你自己的提问长出 10 个节点' } },
+  { id: 'grown_25', tier: 'legendary', icon: '🌲', metric: 'selfGrownNodes', target: 25,
+    name: { en: 'Architect of Curiosity',  zh: '好奇心建筑师' },
+    desc: { en: 'Grew 25 tree nodes from your own questions',         zh: '由你自己的提问长出 25 个节点' } },
+
+  // ── Self-knowledge & evidence ──
+  { id: 'insight_10', tier: 'silver', icon: '🔭', metric: 'insightCount', target: 10,
+    name: { en: 'Self-Knowledge',     zh: '自我认知' },
+    desc: { en: "Bob's constellation holds 10 insights about how you learn", zh: 'Bob 的星图已积累 10 条关于你的学习洞察' } },
+  { id: 'evidence_5', tier: 'bronze', icon: '📎', metric: 'filesAttached', target: 5,
+    name: { en: 'Evidence Collector', zh: '证据收集者' },
+    desc: { en: 'Attached 5 files as real learning evidence',         zh: '上传 5 份真实学习证据文件' } },
+
   // ── Dedication (lifetime XP) ──
   { id: 'xp_1000',  tier: 'bronze', icon: '⚡', metric: 'xp', target: 1000,
     name: { en: 'Rising Star',       zh: '新星' },
@@ -146,9 +203,31 @@ async function countMasteredTrees(userId: string): Promise<number> {
   }
 }
 
+/** One pass over the user's branch-node quiz states: own-words correct,
+ *  confident-correct, and reviewed-node tallies (all durable counters). */
+async function quizStateTallies(userId: string): Promise<{ ownWordsCorrect: number; confidentCorrect: number; reviewedNodes: number }> {
+  try {
+    const rows = await prisma.treeNode.findMany({
+      where: { tree: { userId }, pending: false, parentId: { not: null }, quizState: { not: null } },
+      select: { quizState: true },
+      take: 2000,
+    })
+    let ownWordsCorrect = 0, confidentCorrect = 0, reviewedNodes = 0
+    for (const r of rows) {
+      const qs = parseQuizState(r.quizState)
+      ownWordsCorrect += qs.shortCorrect
+      confidentCorrect += qs.sureRight
+      if (qs.reviewedAt) reviewedNodes += 1
+    }
+    return { ownWordsCorrect, confidentCorrect, reviewedNodes }
+  } catch {
+    return { ownWordsCorrect: 0, confidentCorrect: 0, reviewedNodes: 0 }
+  }
+}
+
 /** Gather the durable stats every badge criterion reads from. */
 export async function getBadgeStats(userId: string): Promise<BadgeStats> {
-  const [profile, chaptersCompleted, tracksCompleted, projectsCompleted, nodesVerified, treesCompleted] = await Promise.all([
+  const [profile, chaptersCompleted, tracksCompleted, projectsCompleted, nodesVerified, treesCompleted, tallies, selfGrownNodes, insightCount, filesAttached] = await Promise.all([
     prisma.studentProfile.findUnique({
       where: { userId },
       select: { xp: true, streak: true, longestStreak: true },
@@ -161,6 +240,12 @@ export async function getBadgeStats(userId: string): Promise<BadgeStats> {
     // badges count only genuinely checkpoint-verified branches.
     prisma.treeNode.count({ where: { tree: { userId }, pending: false, parentId: { not: null }, status: 'understood' } }).catch(() => 0),
     countMasteredTrees(userId),
+    quizStateTallies(userId),
+    // Non-seed = born from the student's own questions/asks/hands (schema-lag
+    // safe: origin is null on pre-column nodes, which simply don't count).
+    prisma.treeNode.count({ where: { tree: { userId }, pending: false, origin: { in: ['copilot', 'question', 'manual'] } } }).catch(() => 0),
+    prisma.insight.count({ where: { userId, status: 'active' } }).catch(() => 0),
+    prisma.linkedFile.count({ where: { userId, workType: { in: ['tree', 'tree-node'] } } }).catch(() => 0),
   ])
   return {
     // Schema-lag safe: before longestStreak is pushed, fall back to streak.
@@ -171,6 +256,10 @@ export async function getBadgeStats(userId: string): Promise<BadgeStats> {
     xp: profile?.xp ?? 0,
     nodesVerified,
     treesCompleted,
+    ...tallies,
+    selfGrownNodes,
+    insightCount,
+    filesAttached,
   }
 }
 

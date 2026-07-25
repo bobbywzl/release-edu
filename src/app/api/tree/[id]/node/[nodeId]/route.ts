@@ -58,7 +58,7 @@ export async function PATCH(
         data: {
           treeId: id, parentId: nodeId, kind: 'component',
           title: title.slice(0, 120), summary: (body.summary ?? '').trim().slice(0, 500),
-          pending: false, order: siblings,
+          pending: false, order: siblings, origin: 'manual',
         },
       })
       return NextResponse.json({ ok: true, node: created })

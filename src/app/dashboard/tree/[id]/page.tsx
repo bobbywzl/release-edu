@@ -42,6 +42,10 @@ interface TreeNodeData {
   notes: string | null
   annotations: string | null
   progressLog: string | null
+  // IKEA-effect attribution: 'seed' | 'copilot' | 'question' | 'manual'
+  // (null on nodes predating the column).
+  origin?: string | null
+  createdAt?: string
 }
 
 interface TreeData {
@@ -776,10 +780,18 @@ function TreeCanvasInner() {
           </button>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <div className="w-28 h-1.5 rounded-full bg-muted overflow-hidden">
-            <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: total ? `${(understood / total) * 100}%` : '0%' }} />
-          </div>
-          <span className="text-[11px] text-muted-foreground tabular-nums">{understood}/{total}</span>
+          {/* Goal gradient: no zero bar — the meter appears with the first
+              verified node instead of announcing "you haven't started". */}
+          {understood > 0 ? (
+            <>
+              <div className="w-28 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: total ? `${(understood / total) * 100}%` : '0%' }} />
+              </div>
+              <span className="text-[11px] text-muted-foreground tabular-nums">{understood}/{total}</span>
+            </>
+          ) : (
+            <span className="text-[11px] text-muted-foreground tabular-nums">{total > 0 ? t('tree.nodesReady').replace('{n}', String(total)) : ''}</span>
+          )}
         </div>
       </div>
 
@@ -884,6 +896,15 @@ function TreeCanvasInner() {
                       <ShieldCheck className="w-3.5 h-3.5" /> {t('tree.verified')}
                     </p>
                   )}
+                  {/* IKEA-effect attribution: this node exists because THEY
+                      asked/added — the tree is a record of their curiosity. */}
+                  {(selected.origin === 'copilot' || selected.origin === 'question' || selected.origin === 'manual') && (
+                    <p className="text-[11px] text-emerald-300/80 flex items-center gap-1.5">
+                      <Sprout className="w-3 h-3 flex-shrink-0" />
+                      {t(selected.origin === 'manual' ? 'tree.grewManual' : 'tree.grewFromYou')}
+                      {selected.createdAt ? ` · ${new Date(selected.createdAt).toLocaleDateString()}` : ''}
+                    </p>
+                  )}
                   {panelNote && <p className="text-[11px] text-amber-400">{panelNote}</p>}
 
                   {/* Project progress flags */}
@@ -954,6 +975,7 @@ function TreeCanvasInner() {
       <TreeCopilot
         tree={tree}
         onChanged={load}
+        stats={{ verified: understood, total }}
         // REACTIVE VIEW ADJUSTER (law: the copilot must never block the tree
         // or a ghost popping up): after each copilot turn the canvas re-fits
         // into the region BELOW the ambient cloud. Exact viewport math: fit

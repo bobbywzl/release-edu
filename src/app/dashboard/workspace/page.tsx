@@ -663,6 +663,9 @@ function WorkspaceInner() {
             const filled = Math.min(masteryFilled(qs), target)
             return (
               <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Goal gradient: the counter appears with the FIRST proven
+                    point — never announce "0 of n" before the student starts. */}
+                {filled > 0 && (
                 <span
                   className="text-[11px] tabular-nums text-muted-foreground"
                   title={qs.facets?.length
@@ -671,6 +674,7 @@ function WorkspaceInner() {
                 >
                   {t('workspace.coverageCount').replace('{a}', String(filled)).replace('{b}', String(target))}
                 </span>
+                )}
                 <button
                   onClick={() => streamFromBob(t('workspace.quizMeMessage'), true)}
                   disabled={streaming}
@@ -1002,11 +1006,15 @@ function WorkspaceInner() {
                       <div className="space-y-1.5">
                         <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
                           <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" /> {t('workspace.coverageTitle')}
-                          <span className="ml-auto font-normal normal-case tabular-nums text-muted-foreground">
-                            {t('workspace.coverageCount')
-                              .replace('{a}', String(Math.min(masteryFilled(qs), masteryTarget(qs))))
-                              .replace('{b}', String(masteryTarget(qs)))}
-                          </span>
+                          {/* No zero counter (goal gradient): the tally shows
+                              up with the first proven point. */}
+                          {masteryFilled(qs) > 0 && (
+                            <span className="ml-auto font-normal normal-case tabular-nums text-muted-foreground">
+                              {t('workspace.coverageCount')
+                                .replace('{a}', String(Math.min(masteryFilled(qs), masteryTarget(qs))))
+                                .replace('{b}', String(masteryTarget(qs)))}
+                            </span>
+                          )}
                         </p>
                         {qs.facets?.length ? (
                           <ul className="space-y-1">

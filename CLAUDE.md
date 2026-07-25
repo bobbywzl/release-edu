@@ -213,7 +213,7 @@ question. Implementation: the CHECKPOINT QUESTIONS section of the node chat prom
   stay in `prisma/schema.prisma` because the build runs `prisma db push` against the
   shared production database — dropping them is a deliberate, separate migration
   decision. Never build new features on them.
-- Active models: ProblemTree, TreeNode (status/pending/notes/annotations/progressLog/quizState),
+- Active models: ProblemTree, TreeNode (status/pending/notes/annotations/progressLog/quizState/origin — origin = seed|copilot|question|manual, the IKEA-effect attribution),
   Conversation (workspace chats use `context = "tree-node:<nodeId>"`), Message,
   MessageHighlight (annotations), LinkedFile (`workType = "tree-node"`), Insight,
   UserBadge, UsageEvent, StudentProfile, PortfolioCache.
