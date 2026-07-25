@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { ChevronRight, Sprout, CheckCircle2, Brain, ChevronDown } from 'lucide-react'
+import { ChevronRight, Sprout, CheckCircle2, Brain, ChevronDown, Telescope } from 'lucide-react'
 import { useStudentData } from '@/lib/student-data'
 import { useLanguage } from '@/lib/i18n'
 import { XpPanel } from '@/components/xp-panel'
@@ -30,7 +30,7 @@ export default function DashboardPage() {
   const { data, loading } = useStudentData()
   const { t } = useLanguage()
   const [trees, setTrees] = useState<TreeSummary[] | null>(null)
-  const [insights, setInsights] = useState<Array<{ id: string; type: string; content: string; timesObserved: number }>>([])
+  const [insights, setInsights] = useState<Array<{ id: string; type: string; content: string; timesObserved: number; lastConfirmedAt?: string }>>([])
   const [showInsights, setShowInsights] = useState(false)
 
   useEffect(() => {
@@ -48,6 +48,13 @@ export default function DashboardPage() {
   const greeting = hour < 12 ? t('dashboard.goodMorning') : hour < 18 ? t('dashboard.goodAfternoon') : t('dashboard.goodEvening')
   const firstName = data.student.name?.split(' ')[0] || ''
   const showSkeletonHeader = loading && !firstName
+
+  // RECIPROCITY: the weekly digest — what Bob figured out about this learner
+  // in the trailing 7 days (new or reinforced insights). Bob gives first.
+  const weekAgo = Date.now() - 7 * 86_400_000
+  const weeklyInsights = insights
+    .filter(i => i.lastConfirmedAt && new Date(i.lastConfirmedAt).getTime() >= weekAgo)
+    .slice(0, 3)
 
   const activeTrees = trees?.filter(tr => tr.status !== 'archived') ?? []
   const completedTrees = trees?.filter(tr => tr.status === 'completed') ?? []
@@ -82,6 +89,27 @@ export default function DashboardPage() {
       <motion.div variants={fadeUp}>
         <XpPanel />
       </motion.div>
+
+      {/* Bob's week with you — the digest of fresh learner insights */}
+      {weeklyInsights.length > 0 && (
+        <motion.div variants={fadeUp}>
+          <div className="border border-primary/25 bg-primary/[0.05] rounded-xl p-4 space-y-2">
+            <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Telescope className="w-4 h-4 text-primary" />
+              {t('dashboard.weeklyDigest')}
+            </p>
+            <div className="space-y-1.5">
+              {weeklyInsights.map(i => (
+                <div key={i.id} className="flex items-start gap-2 text-xs">
+                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium uppercase tracking-wide">{t(`insight.type.${i.type}`, i.type)}</span>
+                  <span className="text-foreground/85 leading-snug">{i.content}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground">{t('dashboard.weeklyDigestSub')}</p>
+          </div>
+        </motion.div>
+      )}
 
       {/* Stats row */}
       <motion.div variants={fadeUp} className="grid grid-cols-3 gap-4">
@@ -137,12 +165,16 @@ export default function DashboardPage() {
                     {tree.status === 'completed' && <CheckCircle2 className="inline w-3.5 h-3.5 text-emerald-400 ml-1.5 -mt-0.5" />}
                   </p>
                   <span className="text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
-                    {tree.understoodCount}/{tree.nodeCount} {t('dashboard.nodes')}
+                    {tree.understoodCount > 0 ? `${tree.understoodCount}/${tree.nodeCount}` : tree.nodeCount} {t('dashboard.nodes')}
                   </span>
                 </div>
-                <div className="mt-2.5 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div className={`h-full rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
-                </div>
+                {/* Goal gradient: no zero bars — the meter appears with the
+                    first verified node. */}
+                {tree.understoodCount > 0 && (
+                  <div className="mt-2.5 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
               </div>
             </Link>
           )

@@ -194,6 +194,49 @@ Return ONLY the title text.`,
   }
 }
 
+/**
+ * SMART DEFAULTS for the session onboarding's PURPOSE step: three tappable
+ * candidate purposes drafted from the just-typed problem (Haiku, fired in the
+ * background while the student answers the next question). The client shows
+ * localized canned chips until these arrive; a null return keeps the canned
+ * set — never blocks the stepper.
+ */
+export async function suggestPurposeIdeas(
+  userId: string, problem: string, lang?: string,
+): Promise<string[] | null> {
+  try {
+    const client = await anthropic()
+    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+    const model = pickBackgroundModel()
+    const result = await client.messages.create({
+      model,
+      max_tokens: 220,
+      messages: [{
+        role: 'user',
+        content: `A learner wants to master this problem:
+"${problem.slice(0, 600)}"
+
+Draft the 3 MOST LIKELY reasons someone states this problem — what they would DO with mastery (the session's purpose). Each: one concrete sentence ≤ 14 words, first person ("I want to…" implied, so start with the verb phrase, e.g. "Grow sweeter strawberries in my own backyard this season"). Distinct intents: e.g. apply/build, deeply understand the mechanism, prepare for something specific.
+${lang === 'zh' ? 'Respond in Simplified Chinese (简体中文).' : 'Respond in English.'}
+Return ONLY JSON: ["…","…","…"]`,
+      }],
+    }, { timeout: 10000, maxRetries: 1 })
+    try {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model, feature: 'onboarding' })
+    } catch { /* non-critical */ }
+    const text = (result.content[0] as { text?: string })?.text ?? ''
+    const ideas = extractJSON<string[]>(text)
+    const clean = (Array.isArray(ideas) ? ideas : [])
+      .filter(x => typeof x === 'string' && x.trim().length >= 4)
+      .map(x => x.trim().slice(0, 140))
+      .slice(0, 3)
+    return clean.length === 3 ? clean : null
+  } catch {
+    return null
+  }
+}
+
 // ── Seeding ──────────────────────────────────────────────────────────────
 
 interface SeedNode { title: string; summary: string }
@@ -287,7 +330,7 @@ JSON shape:
       // Word-boundary clamp — the raw slice cut the problem mid-sentence
       // ("…I need to figure out") right on the canvas root node.
       title: clampText(tree.title, 120), summary: seed.rootSummary ?? seed.framing ?? '',
-      order: 0,
+      order: 0, origin: 'seed',
     },
   })
   // Seed stops at the solution branches — every deeper node is a pain point
@@ -297,7 +340,7 @@ JSON shape:
     await prisma.treeNode.create({
       data: {
         treeId: tree.id, parentId: root.id, kind: 'solution',
-        title: sol.title.slice(0, 120), summary: sol.summary ?? '', order: s,
+        title: sol.title.slice(0, 120), summary: sol.summary ?? '', order: s, origin: 'seed',
       },
     })
   }
@@ -814,7 +857,7 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
         treeId, parentId: nodeId,
         kind: p.kind === 'leaf' ? 'leaf' : 'component',
         title: p.title.slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
-        pending: true, order: existing + i,
+        pending: true, order: existing + i, origin: 'question',
       },
     }))
   }
@@ -1068,7 +1111,7 @@ Answer the student NOW, grounded in the content above; quote or reference it con
         treeId, parentId: parent.id,
         kind: p.kind === 'leaf' ? 'leaf' : 'component',
         title: (p.title as string).slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
-        pending: true, order: siblings,
+        pending: true, order: siblings, origin: 'copilot',
       },
     }))
   }

@@ -33,12 +33,14 @@ import type { CopilotAction } from '@/lib/tree-engine'
 interface CopilotTree { id: string; title: string; framing: string | null }
 interface GhostChip { id: string; title: string; summary: string }
 
-export function TreeCopilot({ tree, onChanged, fit }: {
+export function TreeCopilot({ tree, onChanged, fit, stats }: {
   tree: CopilotTree
   onChanged: () => Promise<void> | void
   /** Re-fit the canvas; occludeTopPx = viewport pixels (from the canvas top)
    *  covered by the ambient cloud, so the tree re-centers BELOW it. */
   fit: (occludeTopPx?: number) => void
+  /** Verified/total branch counts — picks which suggestion chips fit now. */
+  stats?: { verified: number; total: number }
 }) {
   const { t, language } = useLanguage()
   const [open, setOpen] = useState(false)
@@ -79,6 +81,15 @@ export function TreeCopilot({ tree, onChanged, fit }: {
     }
   }
 
+  // SMART DEFAULTS for the empty copilot: three curated one-tap asks picked
+  // by tree state — a blank input is a decision, a chip is a scan-and-tap.
+  const verified = stats?.verified ?? 0
+  const chipList = Array.from(new Set([
+    t('tree.chipGaps'),
+    verified >= 2 ? t('tree.chipSummarize') : t('tree.chipFirst'),
+    verified > 0 && verified < (stats?.total ?? 0) ? t('tree.chipNext') : t('tree.chipShape'),
+  ])).slice(0, 3)
+
   useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [thread, busy, open])
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 250) }, [open])
 
@@ -99,8 +110,8 @@ export function TreeCopilot({ tree, onChanged, fit }: {
       .catch(() => { /* fresh thread */ })
   }, [loaded, tree.id])
 
-  async function send() {
-    const msg = input.trim()
+  async function send(preset?: string) {
+    const msg = (preset ?? input).trim()
     if ((!msg && attachments.length === 0) || busy) return
     setBusy(true); setNote(null)
     const payload = attachments
@@ -282,7 +293,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
               />
               {recording && <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
               <button
-                onClick={send}
+                onClick={() => send()}
                 disabled={busy || !input.trim()}
                 className="w-9 h-9 flex-shrink-0 rounded-full bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
                 aria-label={t('tree.copilotTitle')}
@@ -301,6 +312,21 @@ export function TreeCopilot({ tree, onChanged, fit }: {
 
             {/* The cloud — only the latest exchanges, translucent, so ghost
                 nodes forming on the canvas stay in view behind them. */}
+            {/* Empty-state suggestion chips — tap to ask, no typing needed. */}
+            {thread.length === 0 && !busy && (
+              <div className="flex flex-wrap gap-1.5 pointer-events-auto">
+                {chipList.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => send(c)}
+                    className="px-3 py-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/70 shadow-lg transition-colors"
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Scrollbar HIDDEN, not gutter-reserved: a bar popping in and
                 out as bubbles stream shifts the right-aligned user bubbles
                 sideways. The 3-bubble peek needs no visible bar — trackpad
@@ -435,7 +461,20 @@ export function TreeCopilot({ tree, onChanged, fit }: {
               {/* Thread */}
               <div className="flex-1 overflow-y-auto py-4 space-y-3.5 [scrollbar-gutter:stable]">
                 {thread.length === 0 && (
-                  <p className="text-sm text-muted-foreground leading-relaxed px-1 py-3">{t('tree.copilotHint')}</p>
+                  <div className="px-1 py-3 space-y-3">
+                    <p className="text-sm text-muted-foreground leading-relaxed">{t('tree.copilotHint')}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {chipList.map(c => (
+                        <button
+                          key={c}
+                          onClick={() => send(c)}
+                          className="px-3 py-2 rounded-xl border border-border text-[13px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
                 {thread.map((m, i) => (
                   <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
@@ -573,7 +612,7 @@ export function TreeCopilot({ tree, onChanged, fit }: {
                     className="flex-1 bg-background border border-border rounded-2xl px-4 py-3 text-[15px] text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all h-12 min-h-[48px] max-h-[140px]"
                   />
                   <button
-                    onClick={send}
+                    onClick={() => send()}
                     disabled={busy || (!input.trim() && attachments.length === 0)}
                     className="w-11 h-11 flex-shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
                   >

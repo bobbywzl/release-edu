@@ -81,6 +81,11 @@ model TreeNode {
   // AI-proposed nodes await the student's explicit permission before joining
   // the tree. pending=true renders as a ghost node with approve/reject.
   pending     Boolean  @default(false)
+  // Where this node came from — the IKEA-effect attribution. 'seed' = planted
+  // by the initial tree generation; 'copilot' = grown from the student's ask
+  // in the Tree Copilot; 'question' = grown from their workspace questions;
+  // 'manual' = added by hand. Null on nodes that predate the column.
+  origin      String?
   // JSON array of user annotations on the explainer: [{text, createdAt}]
   annotations String?
   // The student's own editable freeform notes for this node (markdown)

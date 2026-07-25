@@ -151,6 +151,11 @@ export function XpPanel() {
   // day is already saved, otherwise the day the next check-in will reach.
   const accelDay = Math.max(1, data.activeToday ? data.streak : data.streak + 1)
   const accelRate = streakDayXp(accelDay)
+  // Goal-gradient spotlight: the single unearned badge the student is
+  // CLOSEST to finishing (only ones already in motion — never a zero bar).
+  const nextBadge = data.badges
+    .filter(b => !b.earned && b.current > 0)
+    .sort((a, b) => b.current / b.target - a.current / a.target)[0] ?? null
 
   return (
     <>
@@ -205,7 +210,19 @@ export function XpPanel() {
                 {data.streak} <span className="font-medium text-muted-foreground">{t('xp.streakDays')}</span>
               </p>
               {streakAtRisk ? (
-                <p className="text-xs text-orange-400">{t('xp.streakAtRisk')}</p>
+                // Loss aversion, honestly: name the REAL stakes — the
+                // accelerator rate that resets and the week boost in reach.
+                <p className="text-xs text-orange-400">
+                  {t('xp.streakLossWarn')
+                    .replace('{days}', String(data.streak))
+                    .replace('{rate}', String(streakDayXp(Math.max(1, data.streak))))
+                    .replace('{base}', String(streakDayXp(1)))}
+                  {daysToWeekBoost(data.streak) <= 2 && (
+                    <> {t('xp.streakLossWeek')
+                      .replace('{n}', String(daysToWeekBoost(data.streak)))
+                      .replace('{xp}', String(WEEK_STREAK_XP))}</>
+                  )}
+                </p>
               ) : data.activeToday ? (
                 <p className="text-xs text-muted-foreground">{t('xp.streakSafe')}</p>
               ) : (
@@ -241,6 +258,28 @@ export function XpPanel() {
             {sfxOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </button>
         </div>
+
+        {/* Next-badge spotlight — the nearest finish line, always in sight */}
+        {nextBadge && (
+          <button
+            type="button"
+            onClick={() => setShowBadges(true)}
+            className="mt-4 w-full flex items-center gap-2.5 rounded-lg border border-border/60 bg-background/40 px-3 py-2 hover:bg-accent/50 transition-colors text-left"
+          >
+            <span className={cn('w-8 h-8 rounded-full border flex items-center justify-center text-base flex-shrink-0', TIER_COLORS[nextBadge.tier])}>
+              {nextBadge.icon}
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-foreground truncate">
+                {t('xp.nextBadge')}: {nextBadge.name[lang]}
+                <span className="font-medium text-muted-foreground"> · {nextBadge.current}/{nextBadge.target}</span>
+              </p>
+              <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div className="h-full rounded-full bg-primary/70" style={{ width: `${Math.round((nextBadge.current / nextBadge.target) * 100)}%` }} />
+              </div>
+            </div>
+          </button>
+        )}
 
         {/* Badge strip */}
         <button
