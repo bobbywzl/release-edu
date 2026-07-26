@@ -46,6 +46,7 @@ interface TreeNodeData {
   // (null on nodes predating the column).
   origin?: string | null
   createdAt?: string
+  updatedAt?: string
 }
 
 interface TreeData {
@@ -209,7 +210,10 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
       </div>
 
       {n.pending && (
-        <div className="flex gap-1.5 mt-1.5">
+        /* Effort anchor (contrast effect): a ghost is a ~15-minute add, not
+           an unbounded commitment — approving reads as a small step. */
+        <div className="flex items-center gap-1.5 mt-1.5">
+          <span className="text-[9px] text-muted-foreground/80">≈15 min</span>
           <button
             onClick={e => { e.stopPropagation(); data.onApprove(n.id) }}
             className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-medium px-2.5 py-0.5 hover:bg-emerald-500/30 transition-colors"
@@ -779,6 +783,24 @@ function TreeCanvasInner() {
             <List className="w-3.5 h-3.5" /> {t('tree.viewList')}
           </button>
         </div>
+        {/* Memory-decay nudge (honest loss aversion): a verified node
+            untouched for 7+ days is genuinely fading — retrieval decays.
+            One tap opens its workspace in review mode. */}
+        {(() => {
+          const fading = (tree?.nodes ?? [])
+            .filter(n => !n.pending && n.parentId !== null && n.status === 'understood' && n.updatedAt
+              && Date.now() - new Date(n.updatedAt).getTime() > 7 * 86_400_000)
+            .sort((a, b) => new Date(a.updatedAt!).getTime() - new Date(b.updatedAt!).getTime())[0]
+          return fading && tree ? (
+            <button
+              onClick={() => router.push(`/dashboard/workspace?tree=${tree.id}&node=${fading.id}&review=1`)}
+              className="hidden md:inline-flex items-center gap-1.5 max-w-[260px] px-2.5 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 text-amber-300 text-[11px] font-medium hover:bg-amber-500/20 transition-colors"
+              title={t('tree.fadingHint')}
+            >
+              <span className="truncate">{t('tree.fadingNudge').replace('{title}', fading.title)}</span>
+            </button>
+          ) : null
+        })()}
         <div className="flex items-center gap-2 flex-shrink-0">
           {/* Goal gradient: no zero bar — the meter appears with the first
               verified node instead of announcing "you haven't started". */}

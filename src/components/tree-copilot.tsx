@@ -135,7 +135,12 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
         setGhosts(proposals
           .filter((p: { id?: string }) => p?.id)
           .map((p: { id: string; title?: string; summary?: string }) => ({ id: p.id, title: p.title ?? '', summary: p.summary ?? '' })))
-        setNote({ text: t('tree.proposedN').replace('{n}', String(proposals.length)), tone: 'ok' })
+        // Effort anchor: n proposals ≈ n×15 min of new ground — a concrete,
+        // small-feeling add next to the work already banked in the tree.
+        setNote({
+          text: `${t('tree.proposedN').replace('{n}', String(proposals.length))} · ${t('tree.estAdd').replace('{m}', String(proposals.length * 15))}`,
+          tone: 'ok',
+        })
       }
       // Transparency: when Bob pulled stored work (conversations/notes/files…)
       // to ground this answer, say so — a dim line, never a surprise.

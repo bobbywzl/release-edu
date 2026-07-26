@@ -58,6 +58,9 @@ model ProblemTree {
   // Session onboarding depth: WHY the student wants to master this problem
   // (what they'll do with it) — drives relevance of every branch and answer.
   purpose     String?
+  // The learner's chosen canvas accent (endowment: they mark the tree as
+  // theirs at creation). One of the preset swatch hexes; null = default.
+  accentColor String?
   // Cached tree digest (markdown) + generation stamp — regenerated on demand.
   digest      String?
   digestAt    DateTime?

@@ -59,6 +59,9 @@ export async function GET() {
         updatedAt: t.updatedAt,
         nodeCount: real.length,
         understoodCount: real.filter(n => n.status === 'understood').length,
+        // Goal-gradient head start + endowment accent for the cards.
+        hasPurpose: !!(t.purpose && t.purpose.trim()),
+        accentColor: t.accentColor ?? null,
       }
     }),
   })
@@ -74,7 +77,10 @@ export async function POST(req: NextRequest) {
   }
   try {
     const treeId = await seedTree(userId, problem.trim(), { lang, difficulty, personalContext, purpose })
-    return NextResponse.json({ id: treeId }, { status: 201 })
+    // The "make it yours" screen needs the Haiku headline as its editable
+    // default — return it so the client never re-fetches mid-celebration.
+    const created = await prisma.problemTree.findUnique({ where: { id: treeId }, select: { displayTitle: true } }).catch(() => null)
+    return NextResponse.json({ id: treeId, displayTitle: created?.displayTitle ?? null }, { status: 201 })
   } catch (err) {
     console.error('[tree] seed failed:', err)
     return NextResponse.json({ error: 'Could not grow the tree right now. Try again in a moment.' }, { status: 502 })
