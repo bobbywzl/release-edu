@@ -32,6 +32,19 @@ export default function DashboardPage() {
   const [trees, setTrees] = useState<TreeSummary[] | null>(null)
   const [insights, setInsights] = useState<Array<{ id: string; type: string; content: string; timesObserved: number; lastConfirmedAt?: string }>>([])
   const [showInsights, setShowInsights] = useState(false)
+  // ENDOWMENT: the constellation count animates up — stars they EARNED
+  // accumulating in front of them, not a static stat.
+  const [starCount, setStarCount] = useState(0)
+  useEffect(() => {
+    const target = insights.length
+    if (target <= 0) { setStarCount(0); return }
+    let i = 0
+    const timer = setInterval(() => {
+      i += Math.max(1, Math.ceil(target / 20))
+      if (i >= target) { setStarCount(target); clearInterval(timer) } else setStarCount(i)
+    }, 40)
+    return () => clearInterval(timer)
+  }, [insights.length])
 
   useEffect(() => {
     fetch('/api/tree', { cache: 'no-store' })
@@ -190,8 +203,8 @@ export default function DashboardPage() {
             className="w-full border border-border/50 rounded-lg p-4 hover:border-border transition-colors flex items-center gap-2 text-left"
           >
             <Brain className="w-4 h-4 text-primary flex-shrink-0" />
-            <span className="text-sm font-semibold text-foreground flex-1">{t('dashboard.bobKnows')}</span>
-            <span className="text-[11px] text-muted-foreground">{insights.length} {t('dashboard.insightsCount')}</span>
+            <span className="text-sm font-semibold text-foreground flex-1">{t('dashboard.constellation')}</span>
+            <span className="text-[11px] text-muted-foreground tabular-nums">⭐ {starCount} {t('dashboard.starsEarned')}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showInsights ? 'rotate-180' : ''}`} />
           </button>
           {showInsights && (

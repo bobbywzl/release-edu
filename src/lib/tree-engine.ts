@@ -195,6 +195,43 @@ Return ONLY the title text.`,
 }
 
 /**
+ * RECIPROCITY GIFT for the session onboarding: the moment the problem is
+ * typed — before a single further question is answered — Bob hands back a
+ * genuinely useful 2-3 sentence first read ("what mastering this actually
+ * involves"). Haiku, background-fired, never blocks the stepper.
+ */
+export async function firstProblemRead(
+  userId: string, problem: string, lang?: string,
+): Promise<string | null> {
+  try {
+    const client = await anthropic()
+    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+    const model = pickBackgroundModel()
+    const result = await client.messages.create({
+      model,
+      max_tokens: 260,
+      messages: [{
+        role: 'user',
+        content: `You are Bob, an expert mentor. A learner just told you the problem they want to master:
+"${problem.slice(0, 600)}"
+
+Give them an IMMEDIATELY useful first read — 2-3 sentences: what mastering this actually involves (the real crux or the 2-3 load-bearing pieces), concrete and specific to THIS problem, no generic study advice, no questions back. This is a gift of insight before setup even finishes.
+${lang === 'zh' ? 'Respond in Simplified Chinese (简体中文).' : 'Respond in English.'}
+Return ONLY the 2-3 sentences.`,
+      }],
+    }, { timeout: 12000, maxRetries: 1 })
+    try {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId, model, feature: 'onboarding' })
+    } catch { /* non-critical */ }
+    const text = ((result.content[0] as { text?: string })?.text ?? '').trim()
+    return text.length >= 20 ? text.slice(0, 700) : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * SMART DEFAULTS for the session onboarding's PURPOSE step: three tappable
  * candidate purposes drafted from the just-typed problem (Haiku, fired in the
  * background while the student answers the next question). The client shows

@@ -122,6 +122,57 @@ export default function LoginPage() {
             </div>
           </motion.div>
 
+          {/* RECIPROCITY: a real tree shown BEFORE anything is asked — a
+              hand-picked, read-only showcase (static content, no user data,
+              no demo accounts). Visitors receive real teaching first. */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="rounded-xl border border-border bg-card p-4 space-y-3"
+          >
+            <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <TreeLogo className="w-3.5 h-3.5 text-emerald-400" /> A real tree, grown from one question
+            </p>
+            {/* Static mini-tree: root question at the bottom, branches up.
+                Solid emerald = verified through checkpoints; glowing = still
+                growing. Pure SVG/CSS — nothing fetched. */}
+            <div className="relative h-44 select-none" aria-hidden>
+              <svg className="absolute inset-0 w-full h-full" viewBox="0 0 360 176" fill="none">
+                <path d="M180 158 C 150 128, 110 112, 92 78" stroke="hsl(var(--primary))" strokeWidth="3.5" strokeLinecap="round" opacity="0.55" />
+                <path d="M180 158 C 210 126, 246 114, 262 80" stroke="hsl(var(--primary))" strokeWidth="3.5" strokeLinecap="round" opacity="0.55" />
+                <path d="M92 78 C 84 54, 66 44, 58 26" stroke="hsl(var(--primary))" strokeWidth="2" strokeLinecap="round" opacity="0.45" />
+                <path d="M92 78 C 104 56, 122 46, 134 30" stroke="hsl(var(--primary))" strokeWidth="2" strokeLinecap="round" opacity="0.45" />
+                <path d="M262 80 C 272 58, 288 48, 298 30" stroke="hsl(var(--primary))" strokeWidth="2" strokeLinecap="round" opacity="0.45" />
+              </svg>
+              {[
+                { x: '50%', y: 158, label: 'Sweet backyard strawberries', dot: 'w-5 h-5 bg-primary shadow-[0_0_14px_hsl(var(--primary)/0.5)]', done: false },
+                { x: '25%', y: 78, label: 'The plant itself', dot: 'w-4 h-4 bg-emerald-500 border-2 border-emerald-300/70', done: true },
+                { x: '73%', y: 80, label: 'Soil, water & nutrients', dot: 'w-4 h-4 bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,0.5)] animate-pulse', done: false },
+                { x: '16%', y: 26, label: 'Genes set the ceiling', dot: 'w-3 h-3 bg-emerald-500 border-2 border-emerald-300/70', done: true },
+                { x: '37%', y: 30, label: 'June- vs everbearing', dot: 'w-3 h-3 bg-sky-400 shadow-[0_0_9px_rgba(56,189,248,0.5)] animate-pulse', done: false },
+                { x: '83%', y: 30, label: 'N-P-K: the big three', dot: 'w-3 h-3 bg-teal-300 shadow-[0_0_9px_rgba(94,234,212,0.5)] animate-pulse', done: false },
+              ].map(n => (
+                <div key={n.label} className="absolute -translate-x-1/2 flex flex-col items-center" style={{ left: n.x, top: n.y - 8 }}>
+                  <span className={`rounded-full ${n.dot}`} />
+                  <span className={`mt-1 text-[9px] leading-tight text-center max-w-[90px] ${n.done ? 'text-emerald-300' : 'text-muted-foreground'}`}>
+                    {n.label}{n.done ? ' ✓' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/50 px-3 py-2">
+              <p className="text-[10px] font-semibold text-foreground mb-0.5">From this tree&apos;s workspace — &ldquo;Genes set the ceiling&rdquo;</p>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Sweetness has a genetic ceiling: the variety fixes the potential sugar (Brix), and growing
+                conditions decide how close you get. That&apos;s why picking the cultivar comes before any fertilizer…
+              </p>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Solid green = understanding <span className="text-emerald-300">verified through checkpoints</span> — glowing buds are still growing. Your tree starts with your problem.
+            </p>
+          </motion.div>
+
           {/* Preview-deployment notice: Google OAuth needs this branch's
               callback authorized once. */}
           {IS_PREVIEW && (

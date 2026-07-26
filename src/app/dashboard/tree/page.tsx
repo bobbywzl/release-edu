@@ -21,6 +21,8 @@ interface TreeSummary {
   updatedAt: string
   nodeCount: number
   understoodCount: number
+  hasPurpose?: boolean
+  accentColor?: string | null
 }
 
 export default function TreePage() {
@@ -65,9 +67,34 @@ export default function TreePage() {
   // End-of-onboarding construction indicator (the Release-EDU-style build
   // screen): staged progress while the seed request runs.
   const [buildStage, setBuildStage] = useState(0)
+  // RECIPROCITY gift: Bob's 2-3 sentence read on the problem, fetched the
+  // moment it's typed — value delivered before setup even finishes.
+  const [firstRead, setFirstRead] = useState<string | null>(null)
+  // ENDOWMENT: the "make it yours" moment after construction — editable
+  // title (Haiku headline as the smart default) + accent swatch.
+  const ACCENTS = ['#34D399', '#38BDF8', '#A78BFA', '#FBBF24', '#FB7185', '#2DD4BF']
+  const [readyTree, setReadyTree] = useState<{ id: string; title: string } | null>(null)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [accentPick, setAccentPick] = useState<string | null>(null)
+  const [opening, setOpening] = useState(false)
+
+  async function openReadyTree() {
+    if (!readyTree || opening) return
+    setOpening(true)
+    const finalTitle = titleDraft.trim().slice(0, 80)
+    // Persist the personalization only when they actually changed something.
+    if ((finalTitle && finalTitle !== readyTree.title) || accentPick) {
+      await fetch(`/api/tree/${readyTree.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_meta', displayTitle: finalTitle || undefined, accentColor: accentPick || undefined }),
+      }).catch(() => { /* cosmetic — never blocks entry */ })
+    }
+    router.push(`/dashboard/tree/${readyTree.id}`)
+  }
 
   async function openOnboard() {
-    setShowOnboard(true); setStep(0); setError(null); setConfirms([]); setBuildStage(0)
+    setShowOnboard(true); setStep(0); setError(null); setConfirms([]); setBuildStage(0); setFirstRead(null); setReadyTree(null); setAccentPick(null); setOpening(false)
     if (defaultsLoaded.current) return
     defaultsLoaded.current = true
     try {
@@ -101,6 +128,16 @@ export default function TreePage() {
         .then(r => (r.ok ? r.json() : null))
         .then(d => { if (Array.isArray(d?.ideas) && d.ideas.length === 3) setPurposeIdeas(d.ideas) })
         .catch(() => { /* canned chips stand */ })
+      // Reciprocity: Bob's first read on the problem — a real gift of insight
+      // that lands as a bubble while the remaining questions are answered.
+      fetch('/api/tree/first-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ problem: problem.trim(), lang: sessLang }),
+      })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (typeof d?.read === 'string' && d.read.trim()) setFirstRead(d.read.trim()) })
+        .catch(() => { /* gift is optional */ })
     }
     if (s === 2) {
       setConfirms(c => [...c, purpose.trim()
@@ -148,7 +185,14 @@ export default function TreePage() {
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'failed')
-      router.push(`/dashboard/tree/${body.id}`)
+      // ENDOWMENT: before opening, one optional beat of ownership — name it,
+      // mark it. The Haiku headline is the editable smart default.
+      const headline = typeof body.displayTitle === 'string' && body.displayTitle.trim()
+        ? body.displayTitle.trim()
+        : p.length > 60 ? `${p.slice(0, 60)}…` : p
+      setReadyTree({ id: body.id, title: headline })
+      setTitleDraft(headline)
+      setCreating(false)
     } catch {
       setError(t('tree.createFailed'))
       setCreating(false)
@@ -295,7 +339,49 @@ export default function TreePage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-2xl mx-auto px-5 py-10 space-y-6">
-              {creating ? (
+              {readyTree ? (
+                /* MAKE IT YOURS — the endowment beat: name the tree, pick its
+                   accent. Everything optional; Open works untouched. */
+                <div className="py-10 flex flex-col items-center text-center space-y-6">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center">
+                    <CheckCircle2 className="w-7 h-7 text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-foreground">{t('tree.readyTitle')}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{t('tree.readySub')}</p>
+                  </div>
+                  <div className="w-full max-w-md space-y-4 text-left">
+                    <input
+                      value={titleDraft}
+                      onChange={e => setTitleDraft(e.target.value)}
+                      maxLength={80}
+                      className="w-full bg-background border border-border rounded-xl px-4 py-3 text-base font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground">{t('tree.pickAccent')}</span>
+                      <div className="flex items-center gap-2">
+                        {ACCENTS.map(c => (
+                          <button
+                            key={c}
+                            onClick={() => setAccentPick(a => (a === c ? null : c))}
+                            aria-label={c}
+                            className={`w-7 h-7 rounded-full border-2 transition-transform ${accentPick === c ? 'border-foreground scale-110' : 'border-transparent hover:scale-105'}`}
+                            style={{ background: c }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={openReadyTree}
+                    disabled={opening}
+                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {opening ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sprout className="w-4 h-4" />}
+                    {t('tree.openMyTree')}
+                  </button>
+                </div>
+              ) : creating ? (
                 /* CONSTRUCTION — the tree is being built from the whole
                    conversation (the Release-EDU curriculum-builder moment). */
                 <div className="py-14 flex flex-col items-center text-center space-y-6">
@@ -342,6 +428,17 @@ export default function TreePage() {
                     </div>
                   ))}
                 </div>
+              )}
+              {firstRead && step > 1 && (
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+                    <Bot className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div className="rounded-2xl rounded-tl-sm border border-emerald-400/30 bg-emerald-500/[0.06] px-4 py-3">
+                    <p className="text-[11px] font-bold text-emerald-300 uppercase tracking-wide mb-1">{t('tree.firstReadTitle')}</p>
+                    <p className="text-[13px] text-foreground/90 leading-relaxed">{firstRead}</p>
+                  </div>
+                </motion.div>
               )}
               <motion.div
                 key={step}
@@ -525,6 +622,9 @@ export default function TreePage() {
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <p title={tree.title} className={cn('text-sm font-bold text-foreground transition-colors', consolidated ? 'group-hover:text-amber-400' : 'group-hover:text-primary')}>
+                      {tree.accentColor && (
+                        <span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle" style={{ background: tree.accentColor, boxShadow: `0 0 8px ${tree.accentColor}66` }} />
+                      )}
                       {tree.displayTitle || tree.title}
                       {consolidated && (
                         <span className="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-400 text-[10px] font-bold align-middle">
@@ -547,7 +647,7 @@ export default function TreePage() {
                       onClick={e => { e.preventDefault(); startReview(tree.id) }}
                       disabled={reviewBusy === tree.id}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 text-amber-300 text-[11px] font-medium hover:bg-amber-500/20 transition-colors flex-shrink-0 disabled:opacity-50"
-                      title={t('tree.reviewHint')}
+                      title={t('tree.reviewHintDecay').replace('{n}', String(tree.understoodCount))}
                     >
                       {reviewBusy === tree.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                       {t('tree.review')}
@@ -587,11 +687,24 @@ export default function TreePage() {
                       </span>
                     </>
                   ) : (
+                    /* Head start: what they've ALREADY done counts visibly —
+                       never a bare zero. */
                     <span className="text-[11px] text-muted-foreground">
-                      {t('tree.nodesReady').replace('{n}', String(tree.nodeCount))}
+                      🌱 {t('tree.headPlanted')}{tree.hasPurpose ? ` · ${t('tree.headPurpose')}` : ''} · {t('tree.nodesReady').replace('{n}', String(tree.nodeCount))}
                     </span>
                   )}
                 </div>
+                {/* Loss aversion (honest): a nearly-finished tree going quiet
+                    names what's at stake — how little is left vs. banked work. */}
+                {(() => {
+                  const remaining = tree.nodeCount - tree.understoodCount
+                  const stale = Date.now() - new Date(tree.updatedAt).getTime() > 5 * 86_400_000
+                  return tree.status === 'active' && tree.understoodCount > 0 && remaining >= 1 && remaining <= 2 && stale ? (
+                    <p className="mt-2 text-[11px] text-amber-400">
+                      {t('tree.almostDone').replace('{k}', String(remaining)).replace('{pct}', String(pct))}
+                    </p>
+                  ) : null
+                })()}
               </motion.div>
             </Link>
           )

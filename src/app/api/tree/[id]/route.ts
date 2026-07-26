@@ -50,7 +50,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const userId = await getUserId()
-  const body = (await req.json().catch(() => ({}))) as { status?: string; action?: string; purpose?: string }
+  const body = (await req.json().catch(() => ({}))) as { status?: string; action?: string; purpose?: string; displayTitle?: string; accentColor?: string }
 
   // Copilot purpose refinement — applied only on the student's explicit
   // Approve tap (permission-based, like all tree changes).
@@ -58,6 +58,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const purpose = (body.purpose ?? '').trim().slice(0, 500)
     if (!purpose) return NextResponse.json({ error: 'Purpose required' }, { status: 400 })
     const updated = await prisma.problemTree.updateMany({ where: { id, userId }, data: { purpose } })
+    if (updated.count === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json({ ok: true })
+  }
+
+  // "Make it yours" (endowment): rename the tree and/or pick its accent.
+  if (body.action === 'set_meta') {
+    const ACCENTS = ['#34D399', '#38BDF8', '#A78BFA', '#FBBF24', '#FB7185', '#2DD4BF']
+    const displayTitle = typeof body.displayTitle === 'string' ? body.displayTitle.trim().slice(0, 80) : ''
+    const accentColor = typeof body.accentColor === 'string' && ACCENTS.includes(body.accentColor) ? body.accentColor : null
+    if (!displayTitle && !accentColor) return NextResponse.json({ error: 'Nothing to set' }, { status: 400 })
+    const updated = await prisma.problemTree.updateMany({
+      where: { id, userId },
+      data: { ...(displayTitle ? { displayTitle } : {}), ...(accentColor ? { accentColor } : {}) },
+    })
     if (updated.count === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     return NextResponse.json({ ok: true })
   }

@@ -1016,6 +1016,20 @@ function WorkspaceInner() {
                             </span>
                           )}
                         </p>
+                        {/* Journey strip (goal gradient): the real milestones
+                            already behind them render as done — the card
+                            never opens as a wall of nothing. */}
+                        <div className="flex items-center gap-1 text-[10px] flex-wrap pb-0.5">
+                          <span className="inline-flex items-center gap-0.5 text-emerald-300">✓ {t('workspace.jOpened')}</span>
+                          <span className="text-muted-foreground/50">→</span>
+                          <span className={qs.facets?.length ? 'inline-flex items-center gap-0.5 text-emerald-300' : 'text-muted-foreground/60'}>
+                            {qs.facets?.length ? '✓ ' : ''}{t('workspace.jSyllabus')}
+                          </span>
+                          <span className="text-muted-foreground/50">→</span>
+                          <span className={masteryFilled(qs) > 0 ? 'text-amber-300' : 'text-muted-foreground/60'}>{t('workspace.jProving')}</span>
+                          <span className="text-muted-foreground/50">→</span>
+                          <span className="text-muted-foreground/60">{t('tree.verified')}</span>
+                        </div>
                         {qs.facets?.length ? (
                           <ul className="space-y-1">
                             {qs.facets.map((f, i) => (
