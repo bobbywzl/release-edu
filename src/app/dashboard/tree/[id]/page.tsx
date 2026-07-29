@@ -361,10 +361,7 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
 
                 {isOpen && (
                   <div className="border-t border-border px-4 py-3 space-y-4 bg-background/40">
-                    {node.parentId === null ? (
-                      /* The root has no workspace — edits go through the Copilot. */
-                      <p className="text-[11px] text-muted-foreground">{t('tree.rootViaCopilot')}</p>
-                    ) : (
+                    {node.parentId === null ? null : (
                       <Link
                         href={`/dashboard/workspace?tree=${tree.id}&node=${node.id}`}
                         className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
@@ -889,17 +886,7 @@ function TreeCanvasInner() {
 
               {!selected.pending && (
                 <>
-                  {selected.parentId === null ? (
-                    /* THE ROOT HAS NO WORKSPACE — it IS the problem statement.
-                       Its title/framing are edited through the Tree Copilot
-                       (approval-gated edit chips), never worked on directly. */
-                    <div className="border border-primary/30 bg-primary/[0.06] rounded-xl p-3">
-                      <p className="text-xs text-foreground/90 leading-relaxed flex items-start gap-1.5">
-                        <Bot className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
-                        <span>{t('tree.rootViaCopilot')}</span>
-                      </p>
-                    </div>
-                  ) : (
+                  {selected.parentId === null ? null : (
                   <button
                     onClick={() => {
                       try {
