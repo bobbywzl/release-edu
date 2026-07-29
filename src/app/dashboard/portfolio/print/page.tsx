@@ -80,6 +80,31 @@ function PortfolioPrintContent() {
   const autoPrint = searchParams.get('autoprint') !== '0'
 
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
+  // Honors band: earned Tree-EDU badges + fully-verified mastered trees —
+  // the headline achievements lead the printed document too.
+  const [honorBadges, setHonorBadges] = useState<Array<{ id: string; icon: string; tier: string; name: { en: string; zh: string }; earnedAt: string | null }>>([])
+  const [masteredTrees, setMasteredTrees] = useState<Array<{ id: string; title: string; nodeCount: number; understoodCount: number; updatedAt: string }>>([])
+  useEffect(() => {
+    fetch('/api/xp/summary', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (!Array.isArray(j?.badges)) return
+        const tierOrder: Record<string, number> = { legendary: 0, gold: 1, silver: 2, bronze: 3 }
+        setHonorBadges((j.badges as Array<{ id: string; icon: string; tier: string; earned: boolean; featured: boolean; name: { en: string; zh: string }; earnedAt: string | null }>)
+          .filter(b => b.earned && !/^(ch_|track_|proj_)/.test(b.id))
+          .sort((a, b) => Number(b.featured) - Number(a.featured) || (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9))
+          .slice(0, 10))
+      })
+      .catch(() => {})
+    fetch('/api/tree', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!Array.isArray(d?.trees)) return
+        setMasteredTrees((d.trees as Array<{ id: string; title: string; status: string; nodeCount: number; understoodCount: number; updatedAt: string }>)
+          .filter(tr => tr.status === 'completed' && tr.nodeCount > 0 && tr.understoodCount === tr.nodeCount))
+      })
+      .catch(() => {})
+  }, [])
   const [personalStatement, setPersonalStatement] = useState<string>('')
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading')
   const hasPrintedRef = useRef(false)
@@ -375,6 +400,43 @@ function PortfolioPrintContent() {
           </span>
         </div>
       </header>
+
+      {/* Honors & Achievements — the verified crowns lead the document */}
+      {(masteredTrees.length > 0 || honorBadges.length > 0) && (
+        <section className="avoid-break">
+          <h2>Honors &amp; Achievements</h2>
+          {masteredTrees.length > 0 && (
+            <div style={{ margin: '4pt 0 6pt 0' }}>
+              {masteredTrees.map(tr => (
+                <div key={tr.id} style={{
+                  border: '1.5pt solid #b45309', borderRadius: '6pt', background: '#fffbeb',
+                  padding: '6pt 9pt', margin: '0 0 5pt 0',
+                }}>
+                  <span style={{ fontSize: '10.5pt', fontWeight: 700, color: '#92400e' }}>🏆 {tr.title}</span>
+                  <span style={{ fontSize: '8.5pt', color: '#a16207', marginLeft: '6pt' }}>
+                    Problem mastered end-to-end — {tr.understoodCount}/{tr.nodeCount} nodes checkpoint-verified · {new Date(tr.updatedAt).toLocaleDateString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {honorBadges.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4pt' }}>
+              {honorBadges.map(b => (
+                <span key={b.id} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '3pt',
+                  border: `1pt solid ${b.tier === 'legendary' ? '#c026d3' : b.tier === 'gold' ? '#ca8a04' : b.tier === 'silver' ? '#64748b' : '#b45309'}`,
+                  color: b.tier === 'legendary' ? '#a21caf' : b.tier === 'gold' ? '#854d0e' : b.tier === 'silver' ? '#475569' : '#92400e',
+                  background: b.tier === 'legendary' ? '#fdf4ff' : b.tier === 'gold' ? '#fefce8' : b.tier === 'silver' ? '#f8fafc' : '#fffbeb',
+                  borderRadius: '99pt', padding: '2.5pt 7pt', fontSize: '8.5pt', fontWeight: 600,
+                }}>
+                  {b.icon} {b.name.en}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Professional Summary */}
       {portfolio.summary && (
