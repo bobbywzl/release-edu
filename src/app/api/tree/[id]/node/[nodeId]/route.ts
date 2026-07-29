@@ -26,7 +26,7 @@ export async function PATCH(
 ) {
   const { id, nodeId } = await params
   const userId = await getUserId()
-  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string; title?: string; summary?: string; newParentId?: string }
+  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string; title?: string; summary?: string; newParentId?: string; moveTail?: number }
 
   // Ownership check through the tree.
   const node = await prisma.treeNode.findFirst({
@@ -37,8 +37,72 @@ export async function PATCH(
   switch (body.action) {
     case 'approve': {
       if (!node.pending) return NextResponse.json({ ok: true })
-      await prisma.treeNode.update({ where: { id: nodeId }, data: { pending: false } })
+      await prisma.treeNode.update({ where: { id: nodeId }, data: { pending: false, pendingPlan: null } })
+      // INSERT-A-LAYER: the ghost carried an adoption plan — the approval tap
+      // IS the permission for the whole insert, so re-parent the listed
+      // nodes (each with its subtree) under the newly approved node.
+      // Re-validated on live data: same tree, never the root, never an
+      // ancestor of this node (cycle), never itself.
+      try {
+        const plan = node.pendingPlan ? (JSON.parse(node.pendingPlan) as { adopt?: unknown }) : null
+        const wanted = Array.isArray(plan?.adopt) ? (plan!.adopt as unknown[]).filter((x): x is string => typeof x === 'string') : []
+        if (wanted.length > 0) {
+          const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
+          const parentOf = new Map(all.map(n2 => [n2.id, n2.parentId]))
+          const ancestors = new Set<string>()
+          let cur = parentOf.get(nodeId) ?? null
+          while (cur) { ancestors.add(cur); cur = parentOf.get(cur) ?? null }
+          const valid = wanted.filter(cid =>
+            cid !== nodeId && parentOf.has(cid) && parentOf.get(cid) !== null && !ancestors.has(cid))
+          if (valid.length > 0) {
+            await prisma.treeNode.updateMany({ where: { id: { in: valid }, treeId: id }, data: { parentId: nodeId } })
+          }
+        }
+      } catch { /* malformed plan — the plain approval stands */ }
       return NextResponse.json({ ok: true })
+    }
+    case 'split': {
+      // RESTRUCTURE DRIFT (copilot chip, tap = permission): extract the
+      // drifted tail of this node's workspace conversation into a NEW CHILD
+      // node — the tree stays the honest map of what is being learned.
+      if (node.pending) return NextResponse.json({ error: 'Approve the node first' }, { status: 400 })
+      if (node.parentId === null) return NextResponse.json({ error: 'The root has no workspace to split' }, { status: 400 })
+      const title = (body.title ?? '').trim().slice(0, 120)
+      if (!title) return NextResponse.json({ error: 'Title required' }, { status: 400 })
+      const moveTail = Math.max(2, Math.min(30, Math.round(Number(body.moveTail)) || 8))
+      const siblings = await prisma.treeNode.count({ where: { parentId: nodeId } })
+      const created = await prisma.treeNode.create({
+        data: {
+          treeId: id, parentId: nodeId, kind: 'component',
+          title, summary: (body.summary ?? '').trim().slice(0, 500),
+          pending: false, order: siblings, origin: 'copilot',
+        },
+      })
+      // Move the last N messages (and their highlights) into the new node's
+      // workspace. Best-effort: the node exists even if the move fails.
+      try {
+        const conv = await prisma.conversation.findFirst({
+          where: { userId, context: `tree-node:${nodeId}` },
+          select: { id: true },
+        })
+        if (conv) {
+          const tail = await prisma.message.findMany({
+            where: { conversationId: conv.id },
+            orderBy: { createdAt: 'desc' },
+            take: moveTail,
+            select: { id: true },
+          })
+          if (tail.length > 0) {
+            const newConv = await prisma.conversation.create({
+              data: { userId, title: `Workspace — ${title.slice(0, 50)}`, context: `tree-node:${created.id}` },
+            })
+            const ids = tail.map(m => m.id)
+            await prisma.message.updateMany({ where: { id: { in: ids } }, data: { conversationId: newConv.id } })
+            await prisma.messageHighlight.updateMany({ where: { messageId: { in: ids } }, data: { conversationId: newConv.id } }).catch(() => null)
+          }
+        }
+      } catch { /* non-critical — conversation move is best-effort */ }
+      return NextResponse.json({ ok: true, node: created })
     }
     case 'reject': {
       if (!node.pending) return NextResponse.json({ error: 'Only pending nodes can be rejected' }, { status: 400 })
