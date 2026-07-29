@@ -22,7 +22,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
-  Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2, Maximize2,
+  Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2, Maximize2, Scissors,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel } from '@/components/multimodal-input'
@@ -203,7 +203,9 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
         ? { action: 'edit', title: a.newTitle, summary: a.newSummary }
         : a.type === 'move'
           ? { action: 'move', newParentId: a.newParentId }
-          : { action: 'delete' }
+          : a.type === 'split'
+            ? { action: 'split', title: a.newTitle, summary: a.newSummary, moveTail: a.moveTail }
+            : { action: 'delete' }
       const res = await fetch(`/api/tree/${tree.id}/node/${a.nodeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -257,12 +259,14 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
   const actionDesc = (a: CopilotAction): string => {
     if (a.type === 'edit') return t('tree.actEditDesc').replace('{a}', a.title)
     if (a.type === 'move') return t('tree.actMoveDesc').replace('{a}', a.title).replace('{b}', a.newParentTitle ?? '')
+    if (a.type === 'split') return t('tree.actSplitDesc').replace('{a}', a.title).replace('{b}', a.newTitle ?? '').replace('{n}', String(a.moveTail ?? 8))
     return t('tree.actDeleteDesc').replace('{a}', a.title)
   }
   const ActionIcon = ({ type }: { type: CopilotAction['type'] }) =>
     type === 'edit' ? <Pencil className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
       : type === 'move' ? <MoveRight className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
-        : <Trash2 className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
+        : type === 'split' ? <Scissors className="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
+          : <Trash2 className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
 
   return (
     <>

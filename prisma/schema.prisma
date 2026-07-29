@@ -84,6 +84,10 @@ model TreeNode {
   // AI-proposed nodes await the student's explicit permission before joining
   // the tree. pending=true renders as a ghost node with approve/reject.
   pending     Boolean  @default(false)
+  // INSERT-A-LAYER plan for a pending ghost: JSON {adopt: [nodeIds]} — the
+  // existing nodes that re-parent under this node when the student APPROVES
+  // it (one tap = permission for the whole insert). Cleared on approval.
+  pendingPlan String?
   // Where this node came from — the IKEA-effect attribution. 'seed' = planted
   // by the initial tree generation; 'copilot' = grown from the student's ask
   // in the Tree Copilot; 'question' = grown from their workspace questions;

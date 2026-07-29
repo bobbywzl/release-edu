@@ -47,6 +47,8 @@ interface TreeNodeData {
   origin?: string | null
   createdAt?: string
   updatedAt?: string
+  // Ghost adoption plan (insert-a-layer): JSON {adopt: [ids]}.
+  pendingPlan?: string | null
 }
 
 interface TreeData {
@@ -173,6 +175,15 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
   const n = data.node
   const breatheDelay = `${(Math.abs(jitter(n.id, 5)) * 3).toFixed(2)}s`
   const breatheDur = `${(3 + Math.abs(jitter(n.id, 9)) * 2).toFixed(2)}s`
+  // Insert-a-layer ghosts announce their adoption: approving re-parents
+  // this many existing branches under them.
+  const adoptCount = (() => {
+    if (!n.pending || !n.pendingPlan) return 0
+    try {
+      const plan = JSON.parse(n.pendingPlan) as { adopt?: unknown[] }
+      return Array.isArray(plan?.adopt) ? plan.adopt.length : 0
+    } catch { return 0 }
+  })()
   return (
     <div className="flex flex-col items-center" style={{ width: NODE_W }}>
       <Handle type="source" position={Position.Top} className="!opacity-0 !pointer-events-none !w-1 !h-1" style={{ top: 10 }} />
@@ -212,7 +223,13 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
       {n.pending && (
         /* Effort anchor (contrast effect): a ghost is a ~15-minute add, not
            an unbounded commitment — approving reads as a small step. */
-        <div className="flex items-center gap-1.5 mt-1.5">
+        <div className="flex flex-col items-center gap-1 mt-1.5">
+          {adoptCount > 0 && (
+            <span className="text-[9px] text-emerald-300/90 font-medium">
+              {`⤵ ${adoptCount}`}
+            </span>
+          )}
+          <div className="flex items-center gap-1.5">
           <span className="text-[9px] text-muted-foreground/80">≈15 min</span>
           <button
             onClick={e => { e.stopPropagation(); data.onApprove(n.id) }}
@@ -226,6 +243,7 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
           >
             <X className="w-3 h-3" />
           </button>
+          </div>
         </div>
       )}
     </div>

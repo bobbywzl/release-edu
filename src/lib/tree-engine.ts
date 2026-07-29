@@ -920,7 +920,7 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
  *  chip; the student applies it with a tap (PATCH node route). NOTHING is
  *  executed by the copilot itself: same permission covenant as growth. */
 export interface CopilotAction {
-  type: 'edit' | 'move' | 'delete'
+  type: 'edit' | 'move' | 'delete' | 'split'
   nodeId: string
   /** The node's CURRENT title — what the chip names. */
   title: string
@@ -928,6 +928,8 @@ export interface CopilotAction {
   newSummary?: string
   newParentId?: string
   newParentTitle?: string
+  /** split: how many recent workspace messages move into the new child. */
+  moveTail?: number
 }
 
 export interface CopilotResult {
@@ -1003,6 +1005,7 @@ ${attachBlock}
 YOUR FUNCTIONS (all in one box):
 1. CONVERSE & TEACH about the whole problem under the Answer Standard — every answer Relevant (scoped to this tree's problem and purpose) and Informative (carries the mechanism/why). Never re-teach what an existing node already owns — point to that node instead ("open '<node>' for that — here's how it connects…").
 2. PROPOSE BRANCHES anywhere: return proposals as {"parent": <numeric handle>, "title", "summary", "kind"} — they appear as pending ghosts the student must approve. Propose under the MOST fitting parent (root for new solution directions, deeper nodes for components). 0-6 per turn; each must be a distinct pain point/concept NOT already in the tree, with an informative summary (what it is + why it unlocks the goal).
+   INSERT A LAYER: a proposal may carry "adoptChildren": [<handles of EXISTING nodes>] — when the student approves that ghost, those nodes (each with its whole subtree) automatically re-parent UNDER it. This is how you restructure top-down: e.g. "intro nodes between the root and the current branches" = propose under root with adoptChildren = the current branch handles. Never put the same handle in two proposals; never adopt the root or the proposal's own parent.
 3. REFINE THE PURPOSE: when the conversation (or an attachment — e.g. the product they're building) reveals what this tree is REALLY for, return "purposeUpdate": a sharp 1-2 sentence purpose. The student approves it with a tap. When the purpose reorients the tree (e.g. "improve MY product" → build-partner mode: solution-proposing, evidence-grounded, deployable depth), ALSO propose the new solution branches that fit — prefer growing over pruning: a reorientation alone is never a reason to delete nodes (that needs function 6's bar).
 4. BE A BUILD PARTNER when the purpose is a real product/project: ground every proposal and answer in the student's actual artifacts (attachments above), propose concrete improvement branches, and teach the mechanism behind each suggestion.
 5. GENERATED VISUALS: when the student asks for a diagram/graph/sketch, OR the concept is inherently visual (structure, flow, comparison, a product sketch), place EXACTLY one fenced block inside your reply markdown where the visual belongs:
@@ -1014,6 +1017,7 @@ The UI renders it as a generated image in place. Never mention the block. At mos
    {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — sharpen the wording of the SAME concept; include ONLY the field(s) you're changing. An edit never retargets a node to a DIFFERENT concept (its checkpoint history would lie) — for that, propose delete + a new branch.
    {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
    {"op":"delete","node":<handle>} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
+   {"op":"split","node":<handle>,"title":"2-6 words","summary":"1-2 sentences","moveTail":<2-30>} — RESTRUCTURE DRIFT: when a node's workspace conversation has clearly outgrown that node's own syllabus (the catalog shows a long chat against a narrow or already-proven syllabus — RECALL the chat first to confirm the drift and choose the boundary), extract the drifted thread into a NEW CHILD node. On the student's tap a child is created under it and the LAST moveTail messages of that workspace MOVE into the child's workspace. One concept per node — the tree must stay the true map of what is being learned.
    The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
 7. RECALL STORED CONTEXT (on demand — the catalog above is your index): you do NOT automatically see the student's per-node work. Available kinds per node: "chat" (workspace conversation: node digest + rolling summary + recent messages), "notes" (their editable notes), "files" (attached evidence incl. analyzed images/audio/PDFs), "highlights" (passages they marked in chat), "annotations" (their notes on the explainer), "progress" (project-progress log), "syllabus" (verification/facet state), "explainer" (the stored full explainer). "tree" as the node value = files shared in THIS copilot.
    WHEN to recall: (a) the student asks about their own history/work/files/notes/conversations ("what did I discuss…", "based on my notes/files…", "summarize what I've learned"), or (b) you STRONGLY judge stored context would materially change your answer or proposals (e.g. proposing branches that a workspace may already have covered, or tailoring to evidence they attached earlier). Recall costs the student tokens — NEVER recall for greetings, small talk, or anything answerable from the tree structure and catalog alone.
@@ -1030,15 +1034,15 @@ RULES:
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON — either a normal turn:
-{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete","node":0,"title":"…","summary":"…","newParent":0}]}
+{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf", "adoptChildren": [1, 2]}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete|split","node":0,"title":"…","summary":"…","newParent":0,"moveTail":8}]}
 OR a recall request first (function 7):
 {"contextRequest": {"nodes": [{"node": 0, "kinds": ["chat","files"]}], "why": "…"}}`
 
   type CopilotParsed = {
     reply?: string
-    proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string }>
+    proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string; adoptChildren?: number[] }>
     purposeUpdate?: string | null
-    actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number }>
+    actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number; moveTail?: number }>
     contextRequest?: { nodes?: ContextRequestNode[]; why?: string }
   }
   const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
@@ -1138,10 +1142,26 @@ Answer the student NOW, grounded in the content above; quote or reference it con
   }
 
   const created: TreeNode[] = []
+  const adopted = new Set<string>() // a node can be adopted by ONE ghost per turn
   for (const p of rawProposals) {
     const parentIdx = Number.isInteger(p.parent) ? (p.parent as number) : 0
     const parent = real[Math.min(Math.max(parentIdx, 0), real.length - 1)] ?? real[0]
     if (!parent) continue
+    // INSERT-A-LAYER: resolve adoptChildren handles → an approval-gated plan
+    // stored on the ghost. Excludes the root, the ghost's own parent and its
+    // ancestor chain (cycles), and anything already claimed this turn.
+    const parentAncestors = new Set<string>()
+    {
+      let cur: string | null = parent.id
+      const byId = new Map(tree.nodes.map(n => [n.id, n.parentId]))
+      while (cur) { parentAncestors.add(cur); cur = byId.get(cur) ?? null }
+    }
+    const adopt = (Array.isArray(p.adoptChildren) ? p.adoptChildren : [])
+      .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < real.length)
+      .map(h => real[h as number])
+      .filter(n => n.parentId !== null && !parentAncestors.has(n.id) && !adopted.has(n.id))
+      .slice(0, 12)
+    adopt.forEach(n => adopted.add(n.id))
     const siblings = await prisma.treeNode.count({ where: { parentId: parent.id } })
     created.push(await prisma.treeNode.create({
       data: {
@@ -1149,6 +1169,7 @@ Answer the student NOW, grounded in the content above; quote or reference it con
         kind: p.kind === 'leaf' ? 'leaf' : 'component',
         title: (p.title as string).slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
         pending: true, order: siblings, origin: 'copilot',
+        ...(adopt.length > 0 ? { pendingPlan: JSON.stringify({ adopt: adopt.map(n => n.id) }) } : {}),
       },
     }))
   }
@@ -1184,6 +1205,17 @@ Answer the student NOW, grounded in the content above; quote or reference it con
     } else if (a.op === 'delete') {
       if (target.parentId === null) continue
       actions.push({ type: 'delete', nodeId: target.id, title: target.title })
+    } else if (a.op === 'split') {
+      // Drift extraction: only real workspace-bearing nodes (never the root).
+      if (target.parentId === null) continue
+      const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
+      if (!newTitle) continue
+      const moveTail = Math.max(2, Math.min(30, Number.isFinite(a.moveTail as number) ? Math.round(a.moveTail as number) : 8))
+      actions.push({
+        type: 'split', nodeId: target.id, title: target.title,
+        newTitle, newSummary: typeof a.summary === 'string' ? a.summary.trim().slice(0, 500) : undefined,
+        moveTail,
+      })
     }
   }
 
