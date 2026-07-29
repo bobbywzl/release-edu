@@ -4,6 +4,7 @@
  * Problem-first: this page IS the front door of learning in the Tree model.
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -316,23 +317,25 @@ export default function TreePage() {
       {/* Full-screen session-onboarding conversation — Bob asks one question
           per screen (5 max, per FOUNDATION); same state + create logic as the
           old inline stepper, now immersive. ✕ closes without losing drafts. */}
-      {showOnboard && (
-        <div className="fixed inset-0 z-[130] bg-background flex flex-col">
+      {showOnboard && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[200] bg-background flex flex-col">
           <div className="h-14 flex-shrink-0 border-b border-border flex items-center gap-3 px-4">
             <Sprout className="w-5 h-5 text-emerald-400 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-bold text-foreground truncate">{t('tree.newSession')}</p>
               <p className="text-[11px] text-muted-foreground truncate">{t('tree.sessionSetup')}</p>
             </div>
-            <div className="flex items-center gap-1.5 mr-2">
-              {Array.from({ length: STEPS }, (_, i) => (
-                <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-primary' : i < step ? 'w-3 bg-primary/50' : 'w-3 bg-muted'}`} />
-              ))}
-            </div>
+            {!creating && !readyTree && (
+              <div className="flex items-center gap-1.5 mr-2">
+                {Array.from({ length: STEPS }, (_, i) => (
+                  <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-primary' : i < step ? 'w-3 bg-primary/50' : 'w-3 bg-muted'}`} />
+                ))}
+              </div>
+            )}
             <button
               onClick={() => { if (!creating) setShowOnboard(false) }}
               aria-label={t('common.dismiss')}
-              className="w-8 h-8 rounded-lg hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${creating ? 'text-muted-foreground/30 cursor-default' : 'hover:bg-accent text-muted-foreground hover:text-foreground'}`}
             >
               <X className="w-4 h-4" />
             </button>
@@ -586,7 +589,7 @@ export default function TreePage() {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       {/* Existing trees */}
       <div className="space-y-3">
