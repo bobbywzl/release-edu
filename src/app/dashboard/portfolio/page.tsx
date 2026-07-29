@@ -5,8 +5,7 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Award, RefreshCw, FileText, ChevronDown, ChevronUp,
-  Sparkles, TrendingUp, Target, BarChart3, Star, Zap, BookOpen,
-} from 'lucide-react'
+  Sparkles, TrendingUp, Target, BarChart3, Star, Zap, BookOpen, Trophy } from 'lucide-react'
 import { TreeLogo } from '@/components/tree-logo'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -34,9 +33,10 @@ interface XpBadgeInfo {
 const BADGE_TIER_STYLES: Record<XpBadgeInfo['tier'], string> = {
   bronze: 'border-amber-700/50 bg-amber-700/10',
   silver: 'border-slate-400/50 bg-slate-400/10',
-  gold: 'border-yellow-400/50 bg-yellow-400/10',
-  legendary: 'border-fuchsia-400/50 bg-fuchsia-400/10',
+  gold: 'border-yellow-400/50 bg-yellow-400/10 shadow-[0_0_18px_rgba(250,204,21,0.12)]',
+  legendary: 'border-fuchsia-400/50 bg-fuchsia-400/10 shadow-[0_0_18px_rgba(232,121,249,0.15)]',
 }
+const BADGE_TIER_ORDER: Record<XpBadgeInfo['tier'], number> = { legendary: 0, gold: 1, silver: 2, bronze: 3 }
 
 function AchievementsSection() {
   const { language, t } = useLanguage()
@@ -56,8 +56,10 @@ function AchievementsSection() {
   // never surface pre-pivot "Mastered 25 chapters"-style evidence.
   const earned = data.badges.filter(b => b.earned && !/^(ch_|track_|proj_)/.test(b.id))
   if (earned.length === 0) return null
-  const featured = earned.filter(b => b.featured)
-  const shown = (featured.length > 0 ? featured : earned).slice(0, 4)
+  // Featured medals lead; the rest follow by tier weight — up to 8 shine.
+  const byTier = [...earned].sort((a, b) =>
+    Number(b.featured) - Number(a.featured) || BADGE_TIER_ORDER[a.tier] - BADGE_TIER_ORDER[b.tier])
+  const shown = byTier.slice(0, 8)
 
   return (
     <motion.section {...fadeUp} className="space-y-4">
@@ -74,7 +76,7 @@ function AchievementsSection() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {shown.map(b => (
           <div key={b.id} className={`border rounded-lg p-3.5 flex items-start gap-3 ${BADGE_TIER_STYLES[b.tier]}`}>
-            <span className="text-2xl leading-none mt-0.5">{b.icon}</span>
+            <span className="text-3xl leading-none mt-0.5 drop-shadow-[0_0_6px_rgba(255,255,255,0.15)]">{b.icon}</span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground">{b.name[lang]}</p>
               <p className="text-[11px] text-muted-foreground leading-snug">{b.desc[lang]}</p>
@@ -114,20 +116,24 @@ function ForestSection() {
   return (
     <motion.section {...fadeUp} className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <TreeLogo className="w-4 h-4 text-emerald-400" />
+        <h2 className="text-base font-bold text-amber-300 flex items-center gap-2">
+          <Trophy className="w-5 h-5 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]" />
           {t('portfolio.forest')}
+          <span className="text-[11px] font-semibold text-amber-400/80 px-1.5 py-0.5 rounded-full border border-amber-400/40 bg-amber-500/10">{completed.length}</span>
         </h2>
         <p className="text-[11px] text-muted-foreground mt-0.5">{t('portfolio.forestSub')}</p>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {completed.map(tree => (
           <Link key={tree.id} href={`/dashboard/tree/${tree.id}`} className="block group">
-            <div className="border border-emerald-400/30 bg-emerald-500/[0.05] rounded-xl p-4 text-center hover:border-emerald-400/60 transition-colors">
-              <TreeLogo className="w-9 h-9 text-emerald-400 mx-auto" />
-              <p className="text-xs font-semibold text-foreground mt-2 line-clamp-2 leading-snug group-hover:text-emerald-300 transition-colors">{tree.title}</p>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                {tree.nodeCount} {t('dashboard.nodes')} · {new Date(tree.updatedAt).toLocaleDateString()}
+            <div className="border border-amber-400/40 bg-gradient-to-b from-amber-500/[0.14] to-amber-500/[0.03] rounded-xl p-4 text-center hover:border-amber-400/70 hover:shadow-[0_0_24px_rgba(251,191,36,0.15)] transition-all">
+              <div className="relative w-10 h-10 mx-auto">
+                <TreeLogo className="w-10 h-10 text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.5)]" />
+                <Trophy className="absolute -bottom-1 -right-1.5 w-4 h-4 text-yellow-300" />
+              </div>
+              <p className="text-xs font-bold text-amber-100 mt-2 line-clamp-2 leading-snug group-hover:text-amber-300 transition-colors">{tree.title}</p>
+              <p className="text-[10px] text-amber-200/60 mt-1">
+                {tree.understoodCount}/{tree.nodeCount} {t('dashboard.nodes')} ✓ · {new Date(tree.updatedAt).toLocaleDateString()}
               </p>
             </div>
           </Link>
@@ -633,6 +639,11 @@ export default function PortfolioPage() {
           {/* Divider */}
           <div className="border-t border-border/50" />
 
+          {/* THE HEADLINE ACHIEVEMENTS — mastered trees + earned badges lead
+              the portfolio: the most colorful, most verified evidence first. */}
+          <ForestSection />
+          <AchievementsSection />
+
           {/* Summary */}
           <motion.section {...fadeUp} className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -699,12 +710,6 @@ export default function PortfolioPage() {
               ))}
             </div>
           </motion.section>
-
-          {/* The Forest — problems mastered end-to-end */}
-          <ForestSection />
-
-          {/* Achievements — featured XP badges as competency evidence */}
-          <AchievementsSection />
 
           {/* Projects */}
           {Array.isArray(portfolio.projects) && portfolio.projects.length > 0 && (
