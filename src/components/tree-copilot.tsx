@@ -23,6 +23,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2, Maximize2, Scissors,
+  GitMerge, ExternalLink, Scale, ListOrdered,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel } from '@/components/multimodal-input'
@@ -197,6 +198,8 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
   async function applyAction(a: CopilotAction, idx: number) {
     if (actionBusy !== null) return
     if (a.type === 'delete' && !confirm(t('tree.deleteNodeConfirm'))) return
+    if (a.type === 'merge' && !confirm(t('tree.mergeConfirm').replace('{a}', a.title).replace('{b}', a.mergeIntoTitle ?? ''))) return
+    if (a.type === 'spinoff' && !confirm(t('tree.spinoffConfirm').replace('{a}', a.title))) return
     setActionBusy(idx)
     try {
       const payload = a.type === 'edit'
@@ -205,7 +208,15 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
           ? { action: 'move', newParentId: a.newParentId }
           : a.type === 'split'
             ? { action: 'split', title: a.newTitle, summary: a.newSummary, moveTail: a.moveTail }
-            : { action: 'delete' }
+            : a.type === 'merge'
+              ? { action: 'merge', intoNodeId: a.mergeIntoId }
+              : a.type === 'spinoff'
+                ? { action: 'spinoff' }
+                : a.type === 'rebalance'
+                  ? { action: 'rebalance', title: a.newTitle, summary: a.newSummary, facets: a.facets }
+                  : a.type === 'reorder'
+                    ? { action: 'reorder', childIds: a.childOrder }
+                    : { action: 'delete' }
       const res = await fetch(`/api/tree/${tree.id}/node/${a.nodeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -213,7 +224,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
       })
       if (res.ok) {
         setActions(list => list.filter((_, i) => i !== idx))
-        setNote({ text: t('tree.copilotApplied'), tone: 'ok' })
+        setNote({ text: a.type === 'spinoff' ? t('tree.spunOff') : t('tree.copilotApplied'), tone: 'ok' })
         await onChanged()
         setTimeout(open ? () => fit(0) : fitAvoidingCloud, 150)
       } else if (res.status >= 400 && res.status < 500) {
@@ -260,13 +271,21 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
     if (a.type === 'edit') return t('tree.actEditDesc').replace('{a}', a.title)
     if (a.type === 'move') return t('tree.actMoveDesc').replace('{a}', a.title).replace('{b}', a.newParentTitle ?? '')
     if (a.type === 'split') return t('tree.actSplitDesc').replace('{a}', a.title).replace('{b}', a.newTitle ?? '').replace('{n}', String(a.moveTail ?? 8))
+    if (a.type === 'merge') return t('tree.actMergeDesc').replace('{a}', a.title).replace('{b}', a.mergeIntoTitle ?? '')
+    if (a.type === 'spinoff') return t('tree.actSpinoffDesc').replace('{a}', a.title)
+    if (a.type === 'rebalance') return t('tree.actRebalanceDesc').replace('{a}', a.title).replace('{b}', a.newTitle ?? '').replace('{n}', String(a.facets?.length ?? 0))
+    if (a.type === 'reorder') return t('tree.actReorderDesc').replace('{a}', a.title).replace('{list}', (a.childTitles ?? []).map((x, i) => `${i + 1}. ${x}`).join(' → '))
     return t('tree.actDeleteDesc').replace('{a}', a.title)
   }
   const ActionIcon = ({ type }: { type: CopilotAction['type'] }) =>
     type === 'edit' ? <Pencil className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
       : type === 'move' ? <MoveRight className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
         : type === 'split' ? <Scissors className="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
-          : <Trash2 className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
+          : type === 'merge' ? <GitMerge className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+            : type === 'spinoff' ? <ExternalLink className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
+              : type === 'rebalance' ? <Scale className="w-3.5 h-3.5 text-teal-300 flex-shrink-0" />
+                : type === 'reorder' ? <ListOrdered className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
+                  : <Trash2 className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
 
   return (
     <>

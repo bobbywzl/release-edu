@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { collectSubtreeIds } from '@/lib/tree-engine'
+import { parseQuizState, masteryMet, type QuizState } from '@/lib/mastery'
 
 export async function PATCH(
   req: NextRequest,
@@ -26,7 +27,10 @@ export async function PATCH(
 ) {
   const { id, nodeId } = await params
   const userId = await getUserId()
-  const body = (await req.json().catch(() => ({}))) as { action?: string; text?: string; title?: string; summary?: string; newParentId?: string; moveTail?: number }
+  const body = (await req.json().catch(() => ({}))) as {
+    action?: string; text?: string; title?: string; summary?: string; newParentId?: string
+    moveTail?: number; intoNodeId?: string; facets?: string[]; childIds?: string[]
+  }
 
   // Ownership check through the tree.
   const node = await prisma.treeNode.findFirst({
@@ -103,6 +107,157 @@ export async function PATCH(
         }
       } catch { /* non-critical — conversation move is best-effort */ }
       return NextResponse.json({ ok: true, node: created })
+    }
+    case 'merge': {
+      // Fold THIS node into another (copilot chip, tap = permission): children,
+      // conversation, highlights, files, notes, annotations, progress and the
+      // syllabus contract all transfer; the source is removed. VERIFICATION
+      // HONESTY: the target stays 'understood' only if the COMBINED contract
+      // is already fully proven — otherwise it drops to 'learning' to re-prove.
+      if (node.pending || node.parentId === null) return NextResponse.json({ error: 'Invalid merge source' }, { status: 400 })
+      const into = typeof body.intoNodeId === 'string' && body.intoNodeId
+        ? await prisma.treeNode.findFirst({ where: { id: body.intoNodeId, treeId: id, pending: false } })
+        : null
+      if (!into || into.parentId === null || into.id === nodeId) {
+        return NextResponse.json({ error: 'Invalid merge target' }, { status: 400 })
+      }
+      const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
+      if (collectSubtreeIds(all, nodeId).has(into.id)) {
+        return NextResponse.json({ error: 'Target is inside the merged branch' }, { status: 400 })
+      }
+      await prisma.treeNode.updateMany({ where: { parentId: nodeId }, data: { parentId: into.id } })
+      try {
+        const [srcConv, dstConv0] = await Promise.all([
+          prisma.conversation.findFirst({ where: { userId, context: `tree-node:${nodeId}` }, select: { id: true } }),
+          prisma.conversation.findFirst({ where: { userId, context: `tree-node:${into.id}` }, select: { id: true } }),
+        ])
+        if (srcConv) {
+          const dstConv = dstConv0 ?? await prisma.conversation.create({
+            data: { userId, title: `Workspace — ${into.title.slice(0, 50)}`, context: `tree-node:${into.id}` },
+          })
+          await prisma.message.updateMany({ where: { conversationId: srcConv.id }, data: { conversationId: dstConv.id } })
+          await prisma.messageHighlight.updateMany({ where: { conversationId: srcConv.id }, data: { conversationId: dstConv.id } }).catch(() => null)
+          await prisma.conversation.delete({ where: { id: srcConv.id } }).catch(() => null)
+        }
+      } catch { /* conversation transfer is best-effort */ }
+      await prisma.linkedFile.updateMany({ where: { userId, workType: 'tree-node', workId: nodeId }, data: { workId: into.id } }).catch(() => null)
+      const arr = (raw: string | null) => { try { const v = JSON.parse(raw ?? '[]'); return Array.isArray(v) ? v : [] } catch { return [] } }
+      const srcQs = parseQuizState(node.quizState)
+      const dstQs = parseQuizState(into.quizState)
+      const facetMap = new Map<string, { name: string; done: boolean }>()
+      for (const f of [...(dstQs.facets ?? []), ...(srcQs.facets ?? [])]) {
+        const prev = facetMap.get(f.name)
+        facetMap.set(f.name, { name: f.name, done: (prev?.done ?? false) || f.done })
+      }
+      const mergedQs: QuizState = {
+        ...dstQs,
+        correct: dstQs.correct + srcQs.correct,
+        attempts: dstQs.attempts + srcQs.attempts,
+        combo: 0,
+        shortCorrect: dstQs.shortCorrect + srcQs.shortCorrect,
+        sureWrong: dstQs.sureWrong + srcQs.sureWrong,
+        sureRight: dstQs.sureRight + srcQs.sureRight,
+        missed: [...dstQs.missed, ...srcQs.missed].slice(-5),
+        reviewedAt: dstQs.reviewedAt ?? srcQs.reviewedAt,
+        facets: facetMap.size > 0 ? Array.from(facetMap.values()) : null,
+      }
+      const met = masteryMet(mergedQs)
+      const ann = [...arr(into.annotations), ...arr(node.annotations)]
+      const prog = [...arr(into.progressLog), ...arr(node.progressLog)]
+      const combinedNotes = [into.notes, node.notes].filter(x => x && x.trim()).join('\n\n---\n\n')
+      await prisma.treeNode.update({
+        where: { id: into.id },
+        data: {
+          ...(combinedNotes ? { notes: combinedNotes.slice(0, 20000) } : {}),
+          ...(ann.length > 0 ? { annotations: JSON.stringify(ann.slice(-40)) } : {}),
+          ...(prog.length > 0 ? { progressLog: JSON.stringify(prog.slice(-40)) } : {}),
+          quizState: JSON.stringify(mergedQs),
+          status: met ? 'understood' : (into.status === 'understood' || node.status === 'understood' ? 'learning' : into.status),
+          // stale after the merge — the background pass rebuilds it
+          contextSummary: null, contextSummaryAt: null,
+        },
+      })
+      await prisma.treeNode.delete({ where: { id: nodeId } })
+      return NextResponse.json({ ok: true })
+    }
+    case 'spinoff': {
+      // Detach this node + its whole subtree into a NEW problem tree — the
+      // goal-necessity escape hatch that preserves valuable off-goal work.
+      // Conversations/files/verification key on node ids, so they travel free.
+      if (node.pending || node.parentId === null) return NextResponse.json({ error: 'Invalid spin-off source' }, { status: 400 })
+      const srcTree = await prisma.problemTree.findFirst({
+        where: { id, userId },
+        select: { language: true, difficulty: true, personalContext: true },
+      })
+      const all = await prisma.treeNode.findMany({ where: { treeId: id }, select: { id: true, parentId: true } })
+      const subtree = Array.from(collectSubtreeIds(all, nodeId))
+      const newTree = await prisma.problemTree.create({
+        data: {
+          userId,
+          title: node.title,
+          displayTitle: node.title.slice(0, 80),
+          framing: node.summary || null,
+          language: srcTree?.language ?? null,
+          difficulty: srcTree?.difficulty ?? null,
+          personalContext: srcTree?.personalContext ?? null,
+        },
+      })
+      await prisma.treeNode.updateMany({ where: { id: { in: subtree }, treeId: id }, data: { treeId: newTree.id } })
+      await prisma.treeNode.update({ where: { id: nodeId }, data: { parentId: null, kind: 'root' } })
+      return NextResponse.json({ ok: true, newTreeId: newTree.id })
+    }
+    case 'rebalance': {
+      // Move some of this node's UNPROVEN syllabus facets into a new child —
+      // narrowing an overloaded contract without ever touching proven facets.
+      if (node.pending || node.parentId === null) return NextResponse.json({ error: 'Invalid rebalance source' }, { status: 400 })
+      const title = (body.title ?? '').trim().slice(0, 120)
+      if (!title) return NextResponse.json({ error: 'Title required' }, { status: 400 })
+      const wanted = (Array.isArray(body.facets) ? body.facets : []).filter((f): f is string => typeof f === 'string')
+      const qs = parseQuizState(node.quizState)
+      const have = qs.facets ?? []
+      const moving = have.filter(f => !f.done && wanted.includes(f.name))
+      const remaining = have.filter(f => !moving.some(m => m.name === f.name))
+      if (moving.length === 0 || remaining.length === 0) {
+        return NextResponse.json({ error: 'Facets no longer movable' }, { status: 400 })
+      }
+      const siblings = await prisma.treeNode.count({ where: { parentId: nodeId } })
+      const childQs: QuizState = {
+        correct: 0, attempts: 0, combo: 0, shortCorrect: 0, sureWrong: 0, sureRight: 0,
+        missed: [], reviewedAt: null, pending: null, untaggedStreak: 0,
+        facets: moving.map(f => ({ name: f.name, done: false })),
+      }
+      const created = await prisma.treeNode.create({
+        data: {
+          treeId: id, parentId: nodeId, kind: 'component',
+          title, summary: (body.summary ?? '').trim().slice(0, 500),
+          pending: false, order: siblings, origin: 'copilot',
+          quizState: JSON.stringify(childQs),
+        },
+      })
+      await prisma.treeNode.update({
+        where: { id: nodeId },
+        data: { quizState: JSON.stringify({ ...qs, facets: remaining }) },
+      })
+      return NextResponse.json({ ok: true, node: created })
+    }
+    case 'reorder': {
+      // Set the recommended learning order of this node's children (the
+      // canvas renders the numbered path from sibling `order`).
+      const ids = (Array.isArray(body.childIds) ? body.childIds : []).filter((x): x is string => typeof x === 'string')
+      if (ids.length < 2) return NextResponse.json({ error: 'Need at least two children' }, { status: 400 })
+      const kids = await prisma.treeNode.findMany({ where: { parentId: nodeId, treeId: id }, select: { id: true } })
+      const kidIds = new Set(kids.map(k => k.id))
+      const valid = ids.filter(cid => kidIds.has(cid))
+      if (valid.length < 2) return NextResponse.json({ error: 'Children no longer match' }, { status: 400 })
+      for (let i = 0; i < valid.length; i++) {
+        await prisma.treeNode.update({ where: { id: valid[i] }, data: { order: i } })
+      }
+      // Unlisted children keep their relative order, after the listed ones.
+      const others = kids.filter(k => !valid.includes(k.id))
+      for (let i = 0; i < others.length; i++) {
+        await prisma.treeNode.update({ where: { id: others[i].id }, data: { order: valid.length + i } })
+      }
+      return NextResponse.json({ ok: true })
     }
     case 'reject': {
       if (!node.pending) return NextResponse.json({ error: 'Only pending nodes can be rejected' }, { status: 400 })
