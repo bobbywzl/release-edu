@@ -389,7 +389,9 @@ JSON shape:
 export async function getTreeWithNodes(userId: string, treeId: string) {
   return prisma.problemTree.findFirst({
     where: { id: treeId, userId },
-    include: { nodes: { orderBy: [{ createdAt: 'asc' }] } },
+    // order-first: the copilot's "reorder" op sets the recommended learning
+    // path per sibling group; createdAt breaks ties for legacy rows.
+    include: { nodes: { orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] } },
   })
 }
 
@@ -920,7 +922,7 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
  *  chip; the student applies it with a tap (PATCH node route). NOTHING is
  *  executed by the copilot itself: same permission covenant as growth. */
 export interface CopilotAction {
-  type: 'edit' | 'move' | 'delete' | 'split'
+  type: 'edit' | 'move' | 'delete' | 'split' | 'merge' | 'spinoff' | 'rebalance' | 'reorder'
   nodeId: string
   /** The node's CURRENT title — what the chip names. */
   title: string
@@ -930,6 +932,14 @@ export interface CopilotAction {
   newParentTitle?: string
   /** split: how many recent workspace messages move into the new child. */
   moveTail?: number
+  /** merge: the surviving node this one folds into. */
+  mergeIntoId?: string
+  mergeIntoTitle?: string
+  /** rebalance: exact UNPROVEN facet names moving into the new child. */
+  facets?: string[]
+  /** reorder: the parent's children ids in recommended learning order. */
+  childOrder?: string[]
+  childTitles?: string[]
 }
 
 export interface CopilotResult {
@@ -1006,6 +1016,7 @@ YOUR FUNCTIONS (all in one box):
 1. CONVERSE & TEACH about the whole problem under the Answer Standard — every answer Relevant (scoped to this tree's problem and purpose) and Informative (carries the mechanism/why). Never re-teach what an existing node already owns — point to that node instead ("open '<node>' for that — here's how it connects…").
 2. PROPOSE BRANCHES anywhere: return proposals as {"parent": <numeric handle>, "title", "summary", "kind"} — they appear as pending ghosts the student must approve. Propose under the MOST fitting parent (root for new solution directions, deeper nodes for components). 0-6 per turn; each must be a distinct pain point/concept NOT already in the tree, with an informative summary (what it is + why it unlocks the goal).
    INSERT A LAYER: a proposal may carry "adoptChildren": [<handles of EXISTING nodes>] — when the student approves that ghost, those nodes (each with its whole subtree) automatically re-parent UNDER it. This is how you restructure top-down: e.g. "intro nodes between the root and the current branches" = propose under root with adoptChildren = the current branch handles. Never put the same handle in two proposals; never adopt the root or the proposal's own parent.
+   PREREQUISITE EXTRACTION: when the stored work shows several branches stumbling over the SAME missing concept (repeated wrong-streaks/questions across branches — confirm via recall), propose ONE prerequisite node under their closest common ancestor and pair it with a "reorder" action that puts it FIRST among its siblings — one shared foundation beats re-teaching it in every branch.
 3. REFINE THE PURPOSE: when the conversation (or an attachment — e.g. the product they're building) reveals what this tree is REALLY for, return "purposeUpdate": a sharp 1-2 sentence purpose. The student approves it with a tap. When the purpose reorients the tree (e.g. "improve MY product" → build-partner mode: solution-proposing, evidence-grounded, deployable depth), ALSO propose the new solution branches that fit — prefer growing over pruning: a reorientation alone is never a reason to delete nodes (that needs function 6's bar).
 4. BE A BUILD PARTNER when the purpose is a real product/project: ground every proposal and answer in the student's actual artifacts (attachments above), propose concrete improvement branches, and teach the mechanism behind each suggestion.
 5. GENERATED VISUALS: when the student asks for a diagram/graph/sketch, OR the concept is inherently visual (structure, flow, comparison, a product sketch), place EXACTLY one fenced block inside your reply markdown where the visual belongs:
@@ -1017,6 +1028,10 @@ The UI renders it as a generated image in place. Never mention the block. At mos
    {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — sharpen the wording of the SAME concept; include ONLY the field(s) you're changing. An edit never retargets a node to a DIFFERENT concept (its checkpoint history would lie) — for that, propose delete + a new branch.
    {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
    {"op":"delete","node":<handle>} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
+   {"op":"merge","node":<handle>,"mergeInto":<handle>} — fold an overlapping/duplicate node into another: its children, conversation, notes, files, highlights and syllabus contract all transfer to the target, then it is removed. The merged node must RE-PROVE the combined syllabus (it stays verified only if every combined facet is already proven) — say so in your reply. Only for genuine overlap.
+   {"op":"spinoff","node":<handle>} — a branch has outgrown THIS tree's goal (goal-necessity law): detach the node and its whole subtree into a NEW problem tree of its own — all workspaces, files and verification travel with it. Prefer this over delete whenever the work is valuable but off-goal.
+   {"op":"rebalance","node":<handle>,"title":"new child 2-6 words","summary":"1-2 sentences","facets":["exact UNPROVEN facet names to move"]} — an overloaded syllabus: move some of the node's unproven facets into a new child node. The node keeps at least one facet; PROVEN facets never move. Use when the catalog shows a wide contract barely advancing.
+   {"op":"reorder","node":<parent handle>,"children":[<child handles in recommended learning order>]} — set the LEARNING PATH through a node's children (the canvas numbers the path; ancestors are always learned before descendants). Use after inserting a prerequisite, or whenever the student asks "where do I start".
    {"op":"split","node":<handle>,"title":"2-6 words","summary":"1-2 sentences","moveTail":<2-30>} — RESTRUCTURE DRIFT: when a node's workspace conversation has clearly outgrown that node's own syllabus (the catalog shows a long chat against a narrow or already-proven syllabus — RECALL the chat first to confirm the drift and choose the boundary), extract the drifted thread into a NEW CHILD node. On the student's tap a child is created under it and the LAST moveTail messages of that workspace MOVE into the child's workspace. One concept per node — the tree must stay the true map of what is being learned.
    The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
 7. RECALL STORED CONTEXT (on demand — the catalog above is your index): you do NOT automatically see the student's per-node work. Available kinds per node: "chat" (workspace conversation: node digest + rolling summary + recent messages), "notes" (their editable notes), "files" (attached evidence incl. analyzed images/audio/PDFs), "highlights" (passages they marked in chat), "annotations" (their notes on the explainer), "progress" (project-progress log), "syllabus" (verification/facet state), "explainer" (the stored full explainer). "tree" as the node value = files shared in THIS copilot.
@@ -1034,7 +1049,7 @@ RULES:
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON — either a normal turn:
-{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf", "adoptChildren": [1, 2]}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete|split","node":0,"title":"…","summary":"…","newParent":0,"moveTail":8}]}
+{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf", "adoptChildren": [1, 2]}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete|split|merge|spinoff|rebalance|reorder","node":0,"title":"…","summary":"…","newParent":0,"moveTail":8,"mergeInto":0,"facets":["…"],"children":[1,2]}]}
 OR a recall request first (function 7):
 {"contextRequest": {"nodes": [{"node": 0, "kinds": ["chat","files"]}], "why": "…"}}`
 
@@ -1042,7 +1057,7 @@ OR a recall request first (function 7):
     reply?: string
     proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string; adoptChildren?: number[] }>
     purposeUpdate?: string | null
-    actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number; moveTail?: number }>
+    actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number; moveTail?: number; mergeInto?: number; facets?: string[]; children?: number[] }>
     contextRequest?: { nodes?: ContextRequestNode[]; why?: string }
   }
   const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
@@ -1205,6 +1220,35 @@ Answer the student NOW, grounded in the content above; quote or reference it con
     } else if (a.op === 'delete') {
       if (target.parentId === null) continue
       actions.push({ type: 'delete', nodeId: target.id, title: target.title })
+    } else if (a.op === 'merge') {
+      const into = Number.isInteger(a.mergeInto) && (a.mergeInto as number) >= 0 ? real[a.mergeInto as number] : undefined
+      if (!into || target.parentId === null || into.parentId === null || into.id === target.id) continue
+      if (collectSubtreeIds(tree.nodes, target.id).has(into.id)) continue
+      actions.push({ type: 'merge', nodeId: target.id, title: target.title, mergeIntoId: into.id, mergeIntoTitle: into.title })
+    } else if (a.op === 'spinoff') {
+      if (target.parentId === null) continue
+      actions.push({ type: 'spinoff', nodeId: target.id, title: target.title })
+    } else if (a.op === 'rebalance') {
+      if (target.parentId === null) continue
+      const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
+      const facets = (Array.isArray(a.facets) ? a.facets : [])
+        .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+        .map(f => f.trim().slice(0, 200)).slice(0, 8)
+      if (!newTitle || facets.length === 0) continue
+      actions.push({
+        type: 'rebalance', nodeId: target.id, title: target.title,
+        newTitle, newSummary: typeof a.summary === 'string' ? a.summary.trim().slice(0, 500) : undefined, facets,
+      })
+    } else if (a.op === 'reorder') {
+      const kids = (Array.isArray(a.children) ? a.children : [])
+        .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < real.length)
+        .map(h => real[h as number])
+        .filter(n => n.parentId === target.id)
+      if (kids.length < 2) continue
+      actions.push({
+        type: 'reorder', nodeId: target.id, title: target.title,
+        childOrder: kids.map(k => k.id), childTitles: kids.map(k => k.title),
+      })
     } else if (a.op === 'split') {
       // Drift extraction: only real workspace-bearing nodes (never the root).
       if (target.parentId === null) continue

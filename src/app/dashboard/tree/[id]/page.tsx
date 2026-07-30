@@ -49,6 +49,8 @@ interface TreeNodeData {
   updatedAt?: string
   // Ghost adoption plan (insert-a-layer): JSON {adopt: [ids]}.
   pendingPlan?: string | null
+  // Sibling learning-path position (copilot reorder writes it).
+  order?: number
 }
 
 interface TreeData {
@@ -169,9 +171,19 @@ interface FlowNodeData {
   onApprove: (id: string) => void
   onReject: (id: string) => void
   approveLabel: string
+  /** Learning path: 1-based position in the recommended walk; null = root. */
+  pathIndex?: number | null
+  /** The single recommended next stop — gets the "start here" pill. */
+  isNext?: boolean
+  /** Collapse support (visual decluttering — nothing is deleted). */
+  childCount?: number
+  collapsed?: boolean
+  collapsedCount?: number
+  onToggleCollapse?: (id: string) => void
 }
 
 function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
+  const { t } = useLanguage()
   const n = data.node
   const breatheDelay = `${(Math.abs(jitter(n.id, 5)) * 3).toFixed(2)}s`
   const breatheDur = `${(3 + Math.abs(jitter(n.id, 9)) * 2).toFixed(2)}s`
@@ -185,9 +197,20 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
     } catch { return 0 }
   })()
   return (
-    <div className="flex flex-col items-center" style={{ width: NODE_W }}>
+    <div className="relative flex flex-col items-center" style={{ width: NODE_W }}>
       <Handle type="source" position={Position.Top} className="!opacity-0 !pointer-events-none !w-1 !h-1" style={{ top: 10 }} />
       <Handle type="target" position={Position.Bottom} className="!opacity-0 !pointer-events-none !w-1 !h-1" style={{ top: 14, bottom: 'auto' }} />
+
+      {/* Collapse toggle — fold/unfold this branch (view only, per tree). */}
+      {!n.pending && (data.childCount ?? 0) > 0 && (
+        <button
+          onClick={e => { e.stopPropagation(); data.onToggleCollapse?.(n.id) }}
+          title={data.collapsed ? t('tree.expandBranch') : t('tree.collapseBranch')}
+          className="absolute right-6 top-0.5 min-w-5 h-5 px-1 rounded-full bg-card/85 border border-border/60 text-[9px] text-muted-foreground hover:text-foreground hover:border-foreground/30 flex items-center justify-center z-10"
+        >
+          {data.collapsed ? `+${data.collapsedCount ?? ''}` : '−'}
+        </button>
+      )}
 
       <div className="h-7 flex items-center justify-center">
         <span
@@ -210,6 +233,17 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
           style={n.status === 'understood' && !n.pending ? undefined : { animationDelay: breatheDelay, animationDuration: breatheDur }}
         />
       </div>
+
+      {/* Learning path: numbered stop, and THE next recommended node. */}
+      {!n.pending && n.parentId !== null && n.status !== 'understood' && data.pathIndex != null && (
+        data.isNext ? (
+          <span className="mt-0.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 text-[9px] font-bold animate-pulse whitespace-nowrap">
+            ▶ {t('tree.startHere')} · #{data.pathIndex}
+          </span>
+        ) : (
+          <span className="mt-0.5 text-[9px] text-muted-foreground/70 font-semibold">#{data.pathIndex}</span>
+        )
+      )}
 
       <div className="mt-1 text-center select-none">
         <p className={cn('text-[12px] font-bold leading-tight', n.pending ? 'text-muted-foreground italic' : 'text-foreground')}>
@@ -526,6 +560,69 @@ function TreeCanvasInner() {
   const relRef = useRef<{ parent: Map<string, string | null>; children: Map<string, string[]> }>({ parent: new Map(), children: new Map() })
 
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeData>([])
+  // COLLAPSE (visual decluttering): ids of folded branch roots — their
+  // descendants leave the canvas, nothing is deleted. Persisted per tree.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`tree-collapsed:${params.id}`)
+      if (raw) setCollapsed(new Set((JSON.parse(raw) as string[]).filter(x => typeof x === 'string')))
+    } catch { /* fresh */ }
+  }, [params.id])
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      try { localStorage.setItem(`tree-collapsed:${params.id}`, JSON.stringify(Array.from(next))) } catch { /* non-critical */ }
+      return next
+    })
+  }, [params.id])
+  // Descendants of collapsed roots — hidden from canvas + edges.
+  const hiddenByCollapse = useMemo(() => {
+    const hidden = new Set<string>()
+    if (!tree || collapsed.size === 0) return hidden
+    const kids = new Map<string, string[]>()
+    for (const n of tree.nodes) {
+      if (!n.parentId) continue
+      if (!kids.has(n.parentId)) kids.set(n.parentId, [])
+      kids.get(n.parentId)!.push(n.id)
+    }
+    const mark = (id: string) => { for (const c of kids.get(id) ?? []) { hidden.add(c); mark(c) } }
+    collapsed.forEach(id => { if (tree.nodes.some(n => n.id === id && !hidden.has(id))) mark(id) })
+    return hidden
+  }, [tree, collapsed])
+  // LEARNING PATH: deterministic pre-order walk — parent before children
+  // (the redundancy law's direction), siblings by copilot-set `order`. The
+  // first unverified stop wears the "start here" pill.
+  const { pathIndex, nextOnPath } = useMemo(() => {
+    const empty = { pathIndex: new Map<string, number>(), nextOnPath: null as string | null }
+    if (!tree) return empty
+    const realNodes = tree.nodes.filter(n => !n.pending)
+    const root = realNodes.find(n => n.parentId === null)
+    if (!root) return empty
+    const kids = new Map<string, TreeNodeData[]>()
+    for (const n of realNodes) {
+      if (!n.parentId) continue
+      if (!kids.has(n.parentId)) kids.set(n.parentId, [])
+      kids.get(n.parentId)!.push(n)
+    }
+    kids.forEach(list => list.sort((a, b) =>
+      (a.order ?? 0) - (b.order ?? 0) || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')))
+    const idx = new Map<string, number>()
+    let i = 0
+    const walk = (id: string) => {
+      for (const c of kids.get(id) ?? []) { idx.set(c.id, ++i); walk(c.id) }
+    }
+    walk(root.id)
+    let next: string | null = null
+    for (const [nid, k] of Array.from(idx.entries()).sort((a, b) => a[1] - b[1])) {
+      void k
+      const n = realNodes.find(x => x.id === nid)
+      if (n && n.status !== 'understood') { next = nid; break }
+    }
+    return { pathIndex: idx, nextOnPath: next }
+  }, [tree])
 
   const load = useCallback(async () => {
     try {
@@ -671,7 +768,25 @@ function TreeCanvasInner() {
   // settle into place (CSS transition while `settling`).
   useEffect(() => {
     if (!tree) return
-    const { pos, depth } = layoutTree(tree.nodes)
+    const visible = tree.nodes.filter(n => !hiddenByCollapse.has(n.id))
+    const childCounts = new Map<string, number>()
+    for (const n of tree.nodes) {
+      if (n.parentId && !n.pending) childCounts.set(n.parentId, (childCounts.get(n.parentId) ?? 0) + 1)
+    }
+    const hiddenCounts = new Map<string, number>()
+    collapsed.forEach(cid => {
+      const kids = new Map<string, string[]>()
+      for (const n of tree.nodes) {
+        if (!n.parentId) continue
+        if (!kids.has(n.parentId)) kids.set(n.parentId, [])
+        kids.get(n.parentId)!.push(n.id)
+      }
+      let count = 0
+      const walkC = (x: string) => { for (const c of kids.get(x) ?? []) { count++; walkC(c) } }
+      walkC(cid)
+      hiddenCounts.set(cid, count)
+    })
+    const { pos, depth } = layoutTree(visible)
     const target = (n: TreeNodeData) => draggedPos.current.get(n.id) ?? pos.get(n.id) ?? { x: 0, y: 0 }
     const mk = (n: TreeNodeData, p: { x: number; y: number }): FlowNode<FlowNodeData> => ({
       id: n.id,
@@ -682,6 +797,12 @@ function TreeCanvasInner() {
         onApprove: id => act(id, 'approve'),
         onReject: id => act(id, 'reject'),
         approveLabel: t('tree.addToTree'),
+        pathIndex: pathIndex.get(n.id) ?? null,
+        isNext: n.id === nextOnPath,
+        childCount: childCounts.get(n.id) ?? 0,
+        collapsed: collapsed.has(n.id),
+        collapsedCount: hiddenCounts.get(n.id) ?? 0,
+        onToggleCollapse: toggleCollapse,
       },
     })
 
@@ -689,12 +810,12 @@ function TreeCanvasInner() {
       settledRef.current = true
       // Scatter → settle. The scatter is deterministic so replays feel alive
       // but never chaotic.
-      setNodes(tree.nodes.map(n => mk(n, {
+      setNodes(visible.map(n => mk(n, {
         x: (pos.get(n.id)?.x ?? 0) + jitter(n.id, 21) * 340,
         y: (pos.get(n.id)?.y ?? 0) + jitter(n.id, 33) * 260,
       })))
       setTimeout(() => {
-        setNodes(tree.nodes.map(n => mk(n, target(n))))
+        setNodes(visible.map(n => mk(n, target(n))))
         setTimeout(() => {
           setSettling(false)
           // Mount-time fitView ran before the organic layout settled, which
@@ -704,16 +825,17 @@ function TreeCanvasInner() {
         }, 950)
       }, 60)
     } else {
-      setNodes(tree.nodes.map(n => mk(n, target(n))))
+      setNodes(visible.map(n => mk(n, target(n))))
     }
     void depth
-  }, [tree, act, t, setNodes])
+  }, [tree, act, t, setNodes, hiddenByCollapse, collapsed, pathIndex, nextOnPath, toggleCollapse])
 
   const flowEdges = useMemo(() => {
     if (!tree) return [] as FlowEdge[]
-    const { depth } = layoutTree(tree.nodes)
-    return tree.nodes
-      .filter(n => n.parentId)
+    const visible = tree.nodes.filter(n => !hiddenByCollapse.has(n.id))
+    const { depth } = layoutTree(visible)
+    return visible
+      .filter(n => n.parentId && !hiddenByCollapse.has(n.parentId))
       .map(n => ({
         id: `e-${n.parentId}-${n.id}`,
         source: n.parentId!,
@@ -722,7 +844,7 @@ function TreeCanvasInner() {
         data: { depth: depth.get(n.id) ?? 2, pending: n.pending },
         style: { stroke: n.pending ? 'hsl(var(--muted-foreground))' : 'hsl(var(--primary))' },
       }))
-  }, [tree])
+  }, [tree, hiddenByCollapse])
 
   const selected = tree?.nodes.find(n => n.id === selectedId) ?? null
   const selectedProgress = parseArr<{ text: string; createdAt: string }>(selected?.progressLog)

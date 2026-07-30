@@ -100,6 +100,13 @@ Each session carries its own language / difficulty / personal background / PURPO
   `PATCH /api/tree/[id]` `set_purpose`, multimodal input — file/camera/video
   capture inputs + MediaRecorder voice → Gemini `analyzeImage` analysis, stored
   as `LinkedFile` workType `tree` — and generated visuals via ```image blocks;
+  FULL STRUCTURAL CONTROL via approval-gated ops: insert-a-layer proposals
+  (`adoptChildren` → `TreeNode.pendingPlan`, applied on approve), split (drift
+  → new child + message move), merge (work transfers, combined syllabus
+  re-proven), spinoff (subtree → new tree), rebalance (unproven facets → new
+  child), reorder (sibling `order` = the canvas LEARNING PATH: numbered stops
+  + "start here" pill, pre-order parent-before-child) + client-side branch
+  collapse (localStorage, view-only);
   thread persisted as Conversation context `tree-copilot:<treeId>`). COPILOT
   CONTEXT RECALL (`src/lib/tree-context.ts`): every turn carries a token-light
   STORED WORK CATALOG (counts/names per node: workspace chats, notes, files +
