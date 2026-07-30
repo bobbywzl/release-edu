@@ -246,8 +246,12 @@ DB on deploy, so keep them additive.
 
 Pre-flight before any push: `npx tsc -p tsconfig.json --noEmit` clean (ignore
 `scripts/`), then `npx next build` compiles. Development happens on the session's
-designated `claude/...` branch; production ships by merging that branch into `main`
-(`--no-ff`) and pushing — only with the user's go-ahead.
+designated `claude/...` branch. **STANDING DIRECTIVE (user, July 2026): completed,
+build-verified work ships to PROD DIRECTLY — no per-change go-ahead.** Pipeline:
+commit on the branch → push → cherry-pick onto `main` → re-verify (tsc + build)
+→ `git push origin main` → merge `origin/main` back into the branch. Exceptions:
+auto-loop suggestions stay gated on the branch until the user picks them, and
+destructive/irreversible data operations still get a confirm first.
 
 ## Quick Sanity Checks Before Shipping
 
