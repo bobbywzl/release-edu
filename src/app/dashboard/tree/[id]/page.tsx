@@ -245,12 +245,11 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
         )
       )}
 
+      {/* Title only — the summary lives in the side panel on click, so the
+          canvas stays a clean map of concepts, not a wall of captions. */}
       <div className="mt-1 text-center select-none">
         <p className={cn('text-[12px] font-bold leading-tight', n.pending ? 'text-muted-foreground italic' : 'text-foreground')}>
           {n.title}
-        </p>
-        <p className="text-[10px] text-muted-foreground/80 leading-snug line-clamp-2 mt-0.5 max-w-[180px] mx-auto">
-          {n.summary}
         </p>
       </div>
 
