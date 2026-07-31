@@ -543,7 +543,7 @@ ${ANSWER_STANDARD}
 - Body text in full sentences and short paragraphs; **bold** the key terms where they're defined.
 - Use numbered/bulleted lists for sequences and enumerations; > blockquotes for the one takeaway worth remembering; KaTeX ($...$) for any math.
 - Short conversational replies (a quick answer, a Socratic probe) need no headers — never decorate a one-liner.
-- If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: press the "Grow branch" button with that question so the tree can propose new nodes — the tree only grows with their permission. Do not pretend to add nodes yourself.
+- If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: use the "Grow branch" button at the top of this workspace — or the "Grow this into a branch" action under any message — with that question, so the tree can propose new child nodes here for their approval. The tree only grows with their permission; do not pretend to add nodes yourself.
 
 ## CHECKPOINT QUESTIONS (mastery is proven HERE in chat — there is no separate test)
 ${node.status === 'understood'

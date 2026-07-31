@@ -21,6 +21,7 @@ import {
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
 import { MessageErrorBoundary } from '@/components/message-error-boundary'
+import { GrowBranchDialog } from '@/components/grow-branch'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -134,6 +135,10 @@ function WorkspaceInner() {
   const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
+  // GROW BRANCH (FOUNDATION: the tree grows through the learner's own
+  // questions) — null = closed; a string opens the dialog with that seed
+  // question ('' = blank). Approved children attach under THIS node.
+  const [growSeed, setGrowSeed] = useState<string | null>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
   // The chat's own scroll container — scrolling is done on it directly
   // (scrollTop), not via scrollIntoView, so only the chat moves and never
@@ -265,7 +270,7 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setGrowSeed(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
@@ -730,6 +735,15 @@ function WorkspaceInner() {
           <p className="text-sm font-bold text-foreground truncate">{node?.title ?? '…'}</p>
           <p title={tree?.title} className="text-[11px] text-muted-foreground truncate">{tree?.displayTitle || tree?.title}</p>
         </div>
+        {/* GROW BRANCH — the workspace growth affordance Bob's prompt
+            references; curiosity happens here, not on the canvas. */}
+        <button
+          onClick={() => setGrowSeed('')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors flex-shrink-0"
+          title={t('workspace.growSub')}
+        >
+          <Sprout className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('workspace.growBranch')}</span>
+        </button>
         {node?.status === 'understood' ? (
           /* THE verified signature — same state the chat's verdicts report
              (node.status, reconciled server-side against the coverage tally),
@@ -798,7 +812,7 @@ function WorkspaceInner() {
                 <motion.div
                   key={m.id}
                   initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                  className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
+                  className={cn('group/turn flex flex-col', m.role === 'user' ? 'items-end' : 'items-start')}
                 >
                   <div className={cn(
                     'rounded-2xl px-4 py-3 text-[15px] leading-relaxed',
@@ -872,6 +886,16 @@ function WorkspaceInner() {
                       </>
                     )}
                   </div>
+                  {/* Grow-this-turn: any exchange can become a branch — the
+                      seed question is the turn's text, editable before
+                      sending. Faded until hover on pointers; always visible
+                      (and tappable) on touch. */}
+                  <button
+                    onClick={() => setGrowSeed((m.role === 'assistant' ? (parts?.text ?? m.content) : m.content).trim().slice(0, 500))}
+                    className="mt-1 inline-flex items-center gap-1 text-[10px] text-emerald-300/50 hover:text-emerald-300 sm:opacity-0 sm:group-hover/turn:opacity-100 transition-opacity"
+                  >
+                    <Sprout className="w-3 h-3" /> {t('workspace.growThisTurn')}
+                  </button>
                 </motion.div>
               )
             })}
@@ -955,6 +979,14 @@ function WorkspaceInner() {
                     </button>
                   )
                 )}
+                {/* A checkpoint can seed growth too: the question that stumps
+                    you is often the branch you need. */}
+                <button
+                  onClick={() => setGrowSeed(activeQuiz.question.trim().slice(0, 500))}
+                  className="inline-flex items-center gap-1 text-[10px] text-emerald-300/60 hover:text-emerald-300 transition-colors"
+                >
+                  <Sprout className="w-3 h-3" /> {t('workspace.growThisTurn')}
+                </button>
                 {/* Metacognitive calibration — confident-wrong answers get the
                     hypercorrection treatment from the judge. */}
                 <div className="flex items-center gap-1.5">
@@ -1358,6 +1390,19 @@ function WorkspaceInner() {
           </div>
         )}
       </div>
+
+      {/* Grow-branch dialog — proposals are pending ghosts; approved
+          children attach under THIS node (permission-based, per FOUNDATION). */}
+      {growSeed !== null && node && treeId && nodeId && (
+        <GrowBranchDialog
+          treeId={treeId}
+          nodeId={nodeId}
+          nodeTitle={node.title}
+          seedQuestion={growSeed}
+          onClose={() => setGrowSeed(null)}
+          onGrown={loadTree}
+        />
+      )}
 
       {/* Fullscreen explainer — the same rendered content at reading width,
           with PDF export. Esc or ✕ closes. */}
