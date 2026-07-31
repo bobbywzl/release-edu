@@ -1,19 +1,23 @@
 'use client'
-import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
+/**
+ * HighlightableText — SELECTION + CREATION only.
+ *
+ * Select text → color toolbar → save. Offsets are measured against the
+ * container's rendered text (Range.toString()), the same offset space the
+ * declarative renderer paints in.
+ *
+ * PAINTING saved highlights is NOT done here anymore. Wrap mode used to
+ * mutate the live DOM (splitText / insertBefore / removeChild) inside
+ * React-rendered markdown; React's next reconciliation then threw
+ * NotFoundError: removeChild and blanked the workspace — and because the
+ * bad anchor was persisted, the node crashed on every subsequent load.
+ * Marks now render declaratively inside MarkdownRenderer (rehype pass), so
+ * React owns every node and a stale anchor degrades to "not painted".
+ */
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import { X, MessageSquare } from 'lucide-react'
 import type { Highlight } from '@/lib/highlights'
-
-// Inline styles for highlight colors (avoids Tailwind JIT issues with dynamic class application)
-const COLOR_STYLES: Record<string, { background: string; borderBottom: string }> = {
-  amber:  { background: 'rgba(251,191,36,0.30)',  borderBottom: '2px solid rgba(251,191,36,0.70)' },
-  blue:   { background: 'rgba(96,165,250,0.30)',  borderBottom: '2px solid rgba(96,165,250,0.70)' },
-  green:  { background: 'rgba(52,211,153,0.30)',  borderBottom: '2px solid rgba(52,211,153,0.70)' },
-  purple: { background: 'rgba(167,139,250,0.30)', borderBottom: '2px solid rgba(167,139,250,0.70)' },
-}
-
-const COLOR_SWATCHES: Record<string, string> = {
-  amber: '#FBBF24', blue: '#60A5FA', green: '#34D399', purple: '#A78BFA',
-}
+import { HIGHLIGHT_COLOR_STYLES, HIGHLIGHT_COLOR_SWATCHES } from '@/lib/highlight-colors'
 
 interface Props {
   text?: string
@@ -28,137 +32,7 @@ interface Props {
   onReply?: (quotedText: string) => void
 }
 
-// Walk text nodes in a container and apply/remove DOM highlight marks
-function applyHighlightsToDOM(
-  container: HTMLElement,
-  highlights: Highlight[],
-  messageId: string,
-  focusedId: string | null,
-  onHighlightClick: ((id: string) => void) | undefined,
-  onDeleteHighlight: (id: string) => void
-) {
-  // Remove decoration elements FIRST (comment icons, delete buttons) —
-  // unwrapping a mark preserves its children, so anything not purged here
-  // accumulates once per repaint (the runaway 💬💬💬 bug).
-  container.querySelectorAll('[data-hl-decoration]').forEach(el => el.remove())
-  // Remove existing marks and normalize
-  container.querySelectorAll('mark[data-highlight-id]').forEach(mark => {
-    const parent = mark.parentNode!
-    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
-    parent.removeChild(mark)
-  })
-  container.normalize()
-
-  // Diagram pin annotations (selectedText starts with '📍 ') live on the
-  // diagram overlay, not in the prose — never paint them as text marks.
-  const msgHighlights = [...highlights.filter(h => h.messageId === messageId && !h.selectedText.startsWith('📍 '))]
-    .sort((a, b) => a.startOffset - b.startOffset)
-
-  if (msgHighlights.length === 0) return
-
-  function getTextNodes() {
-    const result: Array<{ node: Text; globalStart: number; globalEnd: number }> = []
-    let offset = 0
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-    let node: Text
-    while ((node = walker.nextNode() as Text)) {
-      const len = node.textContent?.length ?? 0
-      result.push({ node, globalStart: offset, globalEnd: offset + len })
-      offset += len
-    }
-    return result
-  }
-
-  function getFullText() {
-    let text = ''
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-    let node: Text
-    while ((node = walker.nextNode() as Text)) text += node.textContent ?? ''
-    return text
-  }
-
-  for (const h of msgHighlights) {
-    const textNodes = getTextNodes()
-    const style = COLOR_STYLES[h.color] ?? COLOR_STYLES.amber
-    const isFocused = focusedId === h.id
-
-    // Verify offset matches stored text — if not, search for the text in the DOM
-    let startOffset = h.startOffset
-    let endOffset = h.endOffset
-    const fullText = getFullText()
-    const textAtOffset = fullText.slice(startOffset, endOffset)
-    if (textAtOffset !== h.selectedText && h.selectedText) {
-      // Offset is stale — find the text by searching
-      const searchIdx = fullText.indexOf(h.selectedText)
-      if (searchIdx >= 0) {
-        startOffset = searchIdx
-        endOffset = searchIdx + h.selectedText.length
-      } else {
-        continue // Text no longer exists in this message — skip
-      }
-    }
-
-    const overlapping = textNodes.filter(n =>
-      n.globalStart < endOffset && n.globalEnd > startOffset
-    )
-
-    for (const { node, globalStart } of overlapping) {
-      const localStart = Math.max(0, startOffset - globalStart)
-      const localEnd = Math.min(node.length, endOffset - globalStart)
-      if (localStart >= localEnd) continue
-
-      let targetNode = node
-      if (localStart > 0) targetNode = node.splitText(localStart)
-      if (localEnd - localStart < targetNode.length) targetNode.splitText(localEnd - localStart)
-
-      const mark = document.createElement('mark')
-      mark.dataset.highlightId = h.id
-      mark.style.background = style.background
-      mark.style.borderBottom = style.borderBottom
-      mark.style.borderRadius = '2px'
-      mark.style.padding = '0 1px'
-      mark.style.cursor = 'pointer'
-      mark.style.display = 'inline'
-      if (isFocused) {
-        mark.style.outline = '2px solid hsl(var(--primary))'
-        mark.style.outlineOffset = '1px'
-      }
-      mark.title = h.comment ? `💬 ${h.comment}` : 'Click to view annotation'
-      if (h.comment) {
-        const icon = document.createElement('span')
-        icon.dataset.hlDecoration = '1'
-        icon.textContent = ' 💬'
-        icon.style.fontSize = '10px'
-        icon.style.opacity = '0.7'
-        mark.appendChild(icon)
-      }
-
-      targetNode.parentNode!.insertBefore(mark, targetNode)
-      mark.insertBefore(targetNode, mark.firstChild)
-
-      mark.addEventListener('click', (e) => { e.stopPropagation(); onHighlightClick?.(h.id) })
-
-      // Hover × delete button
-      let deleteBtn: HTMLButtonElement | null = null
-      mark.addEventListener('mouseenter', () => {
-        if (deleteBtn) return
-        deleteBtn = document.createElement('button')
-        deleteBtn.dataset.hlDecoration = '1'
-        deleteBtn.textContent = '×'
-        deleteBtn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;border-radius:50%;background:rgba(0,0,0,0.2);font-size:10px;line-height:1;cursor:pointer;vertical-align:middle;border:none;color:inherit;'
-        deleteBtn.title = 'Remove highlight'
-        deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); onDeleteHighlight(h.id) })
-        mark.appendChild(deleteBtn)
-      })
-      mark.addEventListener('mouseleave', () => {
-        deleteBtn?.remove()
-        deleteBtn = null
-      })
-    }
-  }
-}
-
-export function HighlightableText({ text, children, messageId, highlights, focusedHighlightId, onAddHighlight, onUpdateHighlight, onDeleteHighlight, onHighlightClick, onReply }: Props) {
+export function HighlightableText({ text, children, messageId, highlights, focusedHighlightId, onAddHighlight, onDeleteHighlight, onHighlightClick, onReply }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const [toolbar, setToolbar] = useState<{ x: number; y: number; start: number; end: number; selectedText: string } | null>(null)
@@ -168,26 +42,15 @@ export function HighlightableText({ text, children, messageId, highlights, focus
   const isTemp = messageId === 'streaming' || messageId.startsWith('archived-') || messageId.startsWith('t-')
   const isWrapMode = children !== undefined
 
-  // Apply DOM highlights whenever highlights or focus changes (wrap mode)
-  useEffect(() => {
-    if (!isWrapMode || !containerRef.current) return
-    applyHighlightsToDOM(
-      containerRef.current,
-      highlights,
-      messageId,
-      focusedHighlightId ?? null,
-      onHighlightClick,
-      onDeleteHighlight
-    )
-  }, [highlights, messageId, focusedHighlightId, isWrapMode, onHighlightClick, onDeleteHighlight])
-
-  // Flash/scroll when focused from panel (text mode)
+  // Flash/scroll when focused from panel (text mode paints its own marks).
   const markRefs = useRef<Record<string, HTMLElement | null>>({})
   useEffect(() => {
-    if (isWrapMode || !focusedHighlightId) return
-    const el = markRefs.current[focusedHighlightId]
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (!focusedHighlightId) return
+    // Wrap mode: the mark is rendered by MarkdownRenderer — find it by id.
+    const el = isWrapMode
+      ? containerRef.current?.querySelector<HTMLElement>(`mark[data-highlight-id="${focusedHighlightId}"]`) ?? null
+      : markRefs.current[focusedHighlightId]
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [focusedHighlightId, isWrapMode])
 
   // Dismiss toolbar when clicking outside — but NOT when interacting with the toolbar itself
@@ -260,7 +123,7 @@ export function HighlightableText({ text, children, messageId, highlights, focus
     dismissToolbar()
   }
 
-  // Text-mode segment rendering (non-wrap mode)
+  // Text-mode segment rendering (plain strings — no markdown involved)
   function renderSegments() {
     if (!text) return null
     const msgHighlights = highlights.filter(h => h.messageId === messageId && !h.selectedText.startsWith('📍 '))
@@ -273,7 +136,7 @@ export function HighlightableText({ text, children, messageId, highlights, focus
     for (const h of sorted) {
       if (h.startOffset < cursor) continue
       if (h.startOffset > cursor) segments.push(<span key={`plain-${cursor}`}>{text.slice(cursor, h.startOffset)}</span>)
-      const style = COLOR_STYLES[h.color] ?? COLOR_STYLES.amber
+      const style = HIGHLIGHT_COLOR_STYLES[h.color] ?? HIGHLIGHT_COLOR_STYLES.amber
       const isFocused = focusedHighlightId === h.id
       segments.push(
         <mark
@@ -318,7 +181,7 @@ export function HighlightableText({ text, children, messageId, highlights, focus
           }}
         >
           <div className="flex items-center gap-1.5">
-            {Object.entries(COLOR_SWATCHES).map(([color, hex]) => (
+            {Object.entries(HIGHLIGHT_COLOR_SWATCHES).map(([color, hex]) => (
               <button
                 key={color}
                 title={`Highlight ${color}`}

@@ -20,6 +20,7 @@ import {
   Maximize2, Download, X, AlertCircle, RefreshCw } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
+import { MessageErrorBoundary } from '@/components/message-error-boundary'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -814,7 +815,20 @@ function WorkspaceInner() {
                           onUpdateHighlight={updateHighlight}
                           onDeleteHighlight={deleteHighlight}
                         >
-                          <MarkdownRenderer content={parts!.text} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                          {/* Keyed by highlight count so deleting a bad
+                              anchor remounts and retries the rich render. */}
+                          <MessageErrorBoundary
+                            key={`${m.id}:${highlights.length}`}
+                            fallbackText={parts!.text}
+                            degradedNote={t('workspace.renderDegraded')}
+                          >
+                            <MarkdownRenderer
+                              content={parts!.text}
+                              imageContext={node ? `${node.title} — ${node.summary}` : ''}
+                              highlights={highlights.filter(h => h.messageId === m.id && !h.selectedText.startsWith('📍 '))}
+                              onDeleteHighlight={deleteHighlight}
+                            />
+                          </MessageErrorBoundary>
                         </HighlightableText>
                         {m.content.includes('[[INCOMPLETE]]') && mi === messages.length - 1 && !streaming && (
                           <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2.5">
@@ -864,7 +878,17 @@ function WorkspaceInner() {
             {streaming && streamText && (
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
-                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0]} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                  {(() => {
+                    const visible = streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0]
+                    return (
+                      /* Keyed by length-bucket so a transient mid-stream parse
+                         failure retries as more text arrives instead of
+                         locking the bubble in plain text. */
+                      <MessageErrorBoundary key={`stream:${Math.floor(visible.length / 400)}`} fallbackText={visible}>
+                        <MarkdownRenderer content={visible} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                      </MessageErrorBoundary>
+                    )
+                  })()}
                   <span className="inline-block w-0.5 h-4 bg-primary animate-pulse rounded-full align-middle ml-0.5" />
                 </div>
               </div>
@@ -1193,7 +1217,9 @@ function WorkspaceInner() {
                 {node?.explainer ? (
                   <div className="text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-72 overflow-y-auto">
                     <div ref={explainerBodyRef}>
-                      <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                      <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
+                        <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                      </MessageErrorBoundary>
                     </div>
                   </div>
                 ) : (
@@ -1362,7 +1388,9 @@ function WorkspaceInner() {
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-3xl mx-auto px-5 py-8 text-[15px] leading-relaxed">
               <div ref={explainerFullRef}>
-                <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
+                  <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                </MessageErrorBoundary>
               </div>
             </div>
           </div>
