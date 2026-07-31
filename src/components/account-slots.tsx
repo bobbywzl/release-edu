@@ -5,14 +5,17 @@
  * - A module-level fetch patch stamps every same-origin /api request with
  *   this tab's slot (`x-account-slot` from sessionStorage) — sessionStorage
  *   is per-tab by definition, so two tabs can act as two different accounts.
- * - <AccountSlotSync /> (mounted in the dashboard layout) binds the tab on
- *   arrival: it adopts the current NextAuth session into a slot cookie once,
- *   after which this tab is immune to logins/logouts in other tabs.
+ * - <AccountSlotGate /> (wrapping the dashboard layout) binds the tab on
+ *   arrival BEFORE any user-data fetch fires: it adopts the current NextAuth
+ *   session into a slot cookie once, then renders the app. Rendering first
+ *   and binding later let the first wave of fetches fall through to the
+ *   MAIN session — briefly showing another tab's account (exactly the
+ *   cross-tab bleed this system exists to prevent).
  * - slotSignOut() logs out ONLY this tab's account: its slot cookie dies
  *   (and the main cookie only when it holds the same account); other tabs
  *   bound to other slots stay signed in.
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 const KEY = 'tree-account-slot'
 
@@ -67,20 +70,31 @@ export async function slotSignOut() {
     }
   } catch { /* cookies may already be gone */ }
   clearSlotBinding()
-  window.location.href = '/login'
+  // ?switch=1 forces the login FORM. A bare /login auto-forwards whenever any
+  // session survives (another tab's account) — which made logging out look
+  // like being silently switched into the other account.
+  window.location.href = '/login?switch=1'
 }
 
-/** Mounted once in the dashboard layout: binds the tab to its account. */
-export function AccountSlotSync() {
+/**
+ * Wrap the dashboard layout: the tab is bound to its account slot BEFORE any
+ * user-data fetch can fire, so every request from first paint onward carries
+ * the right x-account-slot header. Shows a brief spinner on the very first
+ * dashboard load in a fresh tab (one cookie round-trip); already-bound tabs
+ * render instantly.
+ */
+export function AccountSlotGate({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      if (slotBinding() !== null) return
+      if (slotBinding() !== null) { if (!cancelled) setReady(true); return }
       try {
         const res = await fetch('/api/auth/slot', { method: 'POST' })
         if (res.ok) {
           const d = await res.json().catch(() => null)
-          if (!cancelled && Number.isInteger(d?.slot)) bindSlot(d.slot)
+          if (Number.isInteger(d?.slot)) bindSlot(d.slot)
+          if (!cancelled) setReady(true)
           return
         }
         // No main session (a logout elsewhere cleared it) but other accounts
@@ -91,10 +105,23 @@ export function AccountSlotSync() {
         if (!cancelled && first && Number.isInteger(first.slot)) {
           bindSlot(first.slot)
           window.location.reload()
+          return // keep the gate closed while the reload lands
         }
-      } catch { /* offline — the next dashboard mount retries */ }
+        // No sessions anywhere — render; middleware redirects the next nav.
+        if (!cancelled) setReady(true)
+      } catch {
+        // Offline — never brick the app over the binding round-trip.
+        if (!cancelled) setReady(true)
+      }
     })()
     return () => { cancelled = true }
   }, [])
-  return null
+  if (!ready) {
+    return (
+      <div className="app-h w-full flex items-center justify-center bg-background">
+        <div className="w-6 h-6 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin" />
+      </div>
+    )
+  }
+  return <>{children}</>
 }

@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Check, Camera, Loader2, Languages } from 'lucide-react'
+import { Check, Camera, Loader2, Languages, LogOut, UserPlus } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { STAGE_LABELS } from '@/lib/utils'
@@ -67,6 +67,24 @@ export default function SettingsPage() {
   }
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const toast = useToast()
+
+  // THIS TAB's identity (per-tab account slots) — /api/account/me resolves
+  // the x-account-slot header first, so this shows the account THIS tab is
+  // acting as, not the browser's latest login.
+  const [tabAccount, setTabAccount] = useState<{ email: string | null; name: string | null } | null>(null)
+  const [signingOut, setSigningOut] = useState(false)
+  useEffect(() => {
+    fetch('/api/account/me', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.user) setTabAccount({ email: d.user.email ?? null, name: d.user.name ?? null }) })
+      .catch(() => { /* falls back to the profile email below */ })
+  }, [])
+  async function handleLogout() {
+    if (signingOut) return
+    setSigningOut(true)
+    const m = await import('@/components/account-slots')
+    await m.slotSignOut()
+  }
 
   const [notifications, setNotifications] = useState({
     streakReminders: true,
@@ -177,6 +195,37 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {/* THIS TAB'S ACCOUNT — who this tab is signed in as, with the exits.
+          The ONLY logout on thin screens (the desktop side panel is hidden
+          there), so it stays prominent and first. */}
+      <section className="space-y-3">
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.accountAccess')}</h2>
+        <div className="p-4 rounded-xl border border-border space-y-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground truncate">{tabAccount?.email || tabAccount?.name || student.email || '—'}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{t('settings.signedInAs')}</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleLogout}
+              disabled={signingOut}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-destructive/10 border border-destructive/40 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors disabled:opacity-50"
+            >
+              {signingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+              {t('nav.logout')}
+            </button>
+            <button
+              onClick={() => { window.location.href = '/login?switch=1' }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors"
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('nav.switchAccount')}
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{t('settings.logoutHint')}</p>
+        </div>
+      </section>
 
       {/* Language — the app-wide EN/中文 switch. Flips UI + menus instantly and
           every session's future Bob replies (server propagates to all trees). */}

@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import { Sidebar, BottomNav } from '@/components/sidebar'
 import { XpToastProvider } from '@/components/xp-toast'
 import { DailyCheckin } from '@/components/daily-checkin'
-import { AccountSlotSync } from '@/components/account-slots'
+import { AccountSlotGate } from '@/components/account-slots'
 import { TransitionScreen } from '@/components/transition-screen'
 
 // Shared transition flags — any code path that owns a redirect-prone window
@@ -40,31 +40,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // (The legacy curriculum auto-recovery effect is gone with the Tree pivot —
   // a user with no trees simply sees the Tree page's empty state.)
 
-  if (isChrome) {
-    return <>{children}</>
-  }
-
   if (resetActive) {
     return <TransitionScreen variant="reset" />
   }
 
+  // Every path below fetches user data, so it renders behind the slot gate:
+  // the tab binds its account slot FIRST, then the app (and its fetches)
+  // mount with the right x-account-slot header from the very first request.
+  if (isChrome) {
+    return <AccountSlotGate>{children}</AccountSlotGate>
+  }
+
   if (isOnboardingFlow) {
-    return <div className="h-screen overflow-y-auto bg-background">{children}</div>
+    return <AccountSlotGate><div className="h-screen overflow-y-auto bg-background">{children}</div></AccountSlotGate>
   }
 
   return (
-    <div className="flex app-h overflow-hidden bg-background">
-      <Sidebar />
-      <main className={`flex-1 overflow-y-auto ${isChat ? '' : 'pb-16 lg:pb-0'}`}>
-        {/* Spacer clears the fixed mobile hamburger on normal pages. The chat
-            handles that clearance itself (header padding), so skip it there. */}
-        {!isChat && <div className="lg:hidden h-14" />}
-        {children}
-      </main>
-      {!isChat && <BottomNav />}
-      <XpToastProvider />
-      <AccountSlotSync />
-      <DailyCheckin />
-    </div>
+    <AccountSlotGate>
+      <div className="flex app-h overflow-hidden bg-background">
+        <Sidebar />
+        <main className={`flex-1 overflow-y-auto ${isChat ? '' : 'pb-16 lg:pb-0'}`}>
+          {/* Spacer clears the fixed mobile hamburger on normal pages. The chat
+              handles that clearance itself (header padding), so skip it there. */}
+          {!isChat && <div className="lg:hidden h-14" />}
+          {children}
+        </main>
+        {!isChat && <BottomNav />}
+        <XpToastProvider />
+        <DailyCheckin />
+      </div>
+    </AccountSlotGate>
   )
 }
