@@ -45,12 +45,25 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       id: "agent-test",
       name: "Agent Test Login",
-      credentials: { token: { label: "token", type: "password" } },
+      credentials: {
+        token: { label: "token", type: "password" },
+        // One dedicated, wipeable account per QA persona — clean XP/insight
+        // state per simulated learner. Unknown/absent persona → the default
+        // test account.
+        persona: { label: "persona", type: "text" },
+      },
       async authorize(credentials) {
         const expected = process.env.TEST_LOGIN_TOKEN;
         if (!expected || expected.length < 16) return null;
         if (!credentials?.token || credentials.token !== expected) return null;
-        return { id: "agent-test-user", email: "agent-test@tree-edu.internal", name: "Agent Tester" };
+        const persona = (credentials.persona ?? "").toLowerCase().trim();
+        const allowed = ["maya", "david", "xiaoyu", "robert"];
+        const who = allowed.includes(persona) ? persona : "default";
+        return {
+          id: `agent-test-${who}`,
+          email: `${who}@qa.tree-edu.internal`,
+          name: who === "default" ? "Agent Tester" : `QA ${who.charAt(0).toUpperCase()}${who.slice(1)}`,
+        };
       },
     }),
   ],
