@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "rm -rf .next && env -u ANTHROPIC_API_KEY next dev -p 4000",
+    "dev": "rm -rf .next && env -u ANTHROPIC_API_KEY next dev",
     "build": "prisma generate && prisma db push --skip-generate && next build",
     "postinstall": "prisma generate",
     "start": "next start",
