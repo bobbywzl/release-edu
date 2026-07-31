@@ -207,7 +207,10 @@ export default function DashboardPage() {
           >
             <Brain className="w-4 h-4 text-primary flex-shrink-0" />
             <span className="text-sm font-semibold text-foreground flex-1">{t('dashboard.constellation')}</span>
-            <span className="text-[11px] text-muted-foreground tabular-nums">⭐ {starCount ?? insights.length} {t('dashboard.starsEarned')}</span>
+            {/* Plain count — the star/constellation metaphor is gone from
+                this panel (user directive); the badge ladder keeps its
+                themed names, but here it's simply what it is: insights. */}
+            <span className="text-[11px] text-muted-foreground tabular-nums">{starCount ?? insights.length} {t('dashboard.starsEarned')}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showInsights ? 'rotate-180' : ''}`} />
           </button>
           {showInsights && (
