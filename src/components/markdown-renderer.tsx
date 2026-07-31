@@ -11,6 +11,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import { GeneratedVisual } from '@/components/generated-visual'
+import { ResourceCards, parseResources } from '@/components/resource-cards'
 
 const mdComponents = {
   code({ children, className }: { children?: React.ReactNode; className?: string }) {
@@ -74,6 +75,12 @@ export function MarkdownRenderer({ content, imageContext }: { content: string; i
       if (props.className?.includes('language-image')) {
         const prompt = String(props.children ?? '').trim()
         if (prompt) return <GeneratedVisual prompt={prompt} context={imageContext ?? ''} />
+      }
+      // ```resources → clickable link cards (Honest Redirect law): a named
+      // paper/simulation a beginner can actually open, not inert prose.
+      if (props.className?.includes('language-resources')) {
+        const parsed = parseResources(String(props.children ?? ''))
+        if (parsed.length > 0) return <ResourceCards resources={parsed} />
       }
       return mdComponents.code(props)
     },

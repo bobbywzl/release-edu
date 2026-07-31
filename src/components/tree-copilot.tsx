@@ -34,7 +34,7 @@ import type { CopilotAction } from '@/lib/tree-engine'
 interface CopilotTree { id: string; title: string; framing: string | null }
 interface GhostChip { id: string; title: string; summary: string }
 
-export function TreeCopilot({ tree, onChanged, fit, stats }: {
+export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
   tree: CopilotTree
   onChanged: () => Promise<void> | void
   /** Re-fit the canvas; occludeTopPx = viewport pixels (from the canvas top)
@@ -42,6 +42,10 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
   fit: (occludeTopPx?: number) => void
   /** Verified/total branch counts — picks which suggestion chips fit now. */
   stats?: { verified: number; total: number }
+  /** LIST VIEW: the transcript bubbles become read-only pass-through (clicks
+   *  reach the list's search box and rows beneath) and the cloud shows only
+   *  the latest exchange. */
+  listMode?: boolean
 }) {
   const { t, language } = useLanguage()
   const [open, setOpen] = useState(false)
@@ -67,6 +71,29 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
   } = useAttachments()
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Synchronous double-send guard: two Enter events can land in the same
+  // frame, both reading the stale `busy` closure — the ref flips instantly,
+  // so the second one is dropped instead of posting the message twice.
+  const busyRef = useRef(false)
+  // AMBIENT FADE (the copilot must never wall off what's beneath it): any
+  // interaction OUTSIDE the copilot — panning the canvas, scrolling the
+  // list, tapping a node — fades the cloud to a whisper and lets clicks fall
+  // through it. Touching the pill or a fresh turn brings it back.
+  const [faded, setFaded] = useState(false)
+  useEffect(() => {
+    if (open) return
+    const dim = (e: Event) => {
+      const el = ambientRef.current
+      if (el && e.target instanceof Node && el.contains(e.target)) return
+      setFaded(true)
+    }
+    window.addEventListener('pointerdown', dim, true)
+    window.addEventListener('wheel', dim, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('pointerdown', dim, true)
+      window.removeEventListener('wheel', dim, { capture: true } as EventListenerOptions)
+    }
+  }, [open])
   // REACTIVE VIEW ADJUSTER (law): the copilot must never block the tree or a
   // freshly-popped ghost. After every ambient turn/chip the canvas re-fits
   // into the band BELOW the cloud — measured live, so a tall reply pushes the
@@ -113,8 +140,9 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
 
   async function send(preset?: string) {
     const msg = (preset ?? input).trim()
-    if ((!msg && attachments.length === 0) || busy) return
-    setBusy(true); setNote(null)
+    if ((!msg && attachments.length === 0) || busyRef.current) return
+    busyRef.current = true
+    setBusy(true); setNote(null); setFaded(false)
     const payload = attachments
     setThread(t2 => [...t2, { role: 'user', content: attachmentLabel(msg, payload) }])
     setInput(''); clearAttachments()
@@ -164,6 +192,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
     } catch {
       setThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -307,8 +336,17 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
             // canvas: left-20 clears the collapsed nav rail on desktop.
             className="fixed top-16 left-4 lg:left-20 right-4 z-40 max-w-xl flex flex-col gap-2 pointer-events-none"
           >
-            {/* The pill — Spotlight for the tree. Dim invitation until used. */}
-            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5">
+            {/* The pill — Spotlight for the tree. Dim invitation until used;
+                dims further while the student works the surface beneath, and
+                waking it (hover/focus) restores the whole cloud. */}
+            <div
+              onPointerEnter={() => setFaded(false)}
+              onFocusCapture={() => setFaded(false)}
+              className={cn(
+                'pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5 transition-opacity duration-300',
+                faded && 'opacity-50 hover:opacity-100',
+              )}
+            >
               <Bot className="w-5 h-5 text-primary flex-shrink-0" />
               <input
                 value={input}
@@ -341,8 +379,8 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
             {/* The cloud — only the latest exchanges, translucent, so ghost
                 nodes forming on the canvas stay in view behind them. */}
             {/* Empty-state suggestion chips — tap to ask, no typing needed. */}
-            {thread.length === 0 && !busy && (
-              <div className="flex flex-wrap gap-1.5 pointer-events-auto">
+            {thread.length === 0 && !busy && !listMode && (
+              <div className={cn('flex flex-wrap gap-1.5 transition-opacity duration-300', faded ? 'opacity-20 pointer-events-none' : 'pointer-events-auto')}>
                 {chipList.map(c => (
                   <button
                     key={c}
@@ -360,8 +398,16 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
                 sideways. The 3-bubble peek needs no visible bar — trackpad
                 scrolling still works, and the full view has a real one. */}
             {(thread.length > 0 || busy) && (
-              <div className="space-y-1.5 max-h-[30vh] overflow-y-auto pointer-events-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {thread.slice(-3).map((m, i) => (
+              /* TRANSPARENT WHEN THE STUDENT IS WORKING: interacting with the
+                 tree/list beneath fades the transcript and lets clicks pass
+                 straight through it. In list mode the bubbles are ALWAYS
+                 pass-through (they'd otherwise wall off the search box) —
+                 only the chips inside stay tappable. */
+              <div className={cn(
+                'space-y-1.5 max-h-[30vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity duration-300',
+                faded ? 'opacity-20 pointer-events-none' : listMode ? 'pointer-events-none' : 'pointer-events-auto',
+              )}>
+                {thread.slice(listMode ? -2 : -3).map((m, i) => (
                   <div key={thread.length - Math.min(3, thread.length) + i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                     <div className={cn(
                       'rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-lg backdrop-blur-md',
@@ -388,7 +434,10 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
                 {/* Reshape chips — these exist ONLY here, so they must be
                     actionable from the ambient cloud. */}
                 {actions.length > 0 && !busy && actions.map((a, i) => (
-                  <div key={`amb-${a.nodeId}-${i}`} className="rounded-xl border border-primary/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg">
+                  /* Approval chips stay tappable even in list mode (the
+                     surrounding cloud is pass-through there) — but never
+                     while faded, so an invisible chip can't catch a stray tap. */
+                  <div key={`amb-${a.nodeId}-${i}`} className={cn('rounded-xl border border-primary/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg', !faded && 'pointer-events-auto')}>
                     <div className="flex items-start gap-2">
                       <span className="mt-0.5"><ActionIcon type={a.type} /></span>
                       <p className="flex-1 text-[11px] font-bold text-foreground leading-snug">{actionDesc(a)}{a.type === 'edit' && a.newTitle ? ` → ${a.newTitle}` : ''}</p>
@@ -418,7 +467,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats }: {
                 ))}
                 {/* Purpose refinement chip — ambient too. */}
                 {purposeProposal && !busy && (
-                  <div className="rounded-xl border border-emerald-400/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg">
+                  <div className={cn('rounded-xl border border-emerald-400/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg', !faded && 'pointer-events-auto')}>
                     <p className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">{t('tree.copilotPurposeTitle')}</p>
                     <p className="text-[12px] text-foreground leading-snug mt-0.5">{purposeProposal}</p>
                     <div className="flex gap-1.5 mt-1.5">

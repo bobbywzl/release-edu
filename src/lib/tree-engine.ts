@@ -414,6 +414,46 @@ export function sketchTree(nodes: TreeNode[]): string {
   return lines.join('\n')
 }
 
+// ── Node kind is DEPTH, nothing else (small-to-big law) ──────────────────
+// root = the problem · level 1 = solution directions · level 2 = components
+// · deeper = technical-knowledge leaves. Kinds are cosmetic-but-semantic
+// (canvas dot size/color, prompts name them), so a COMPONENT sitting above a
+// SOLUTION after a restructure inverts the whole product model on screen.
+
+export function kindForDepth(depth: number): 'root' | 'solution' | 'component' | 'leaf' {
+  return depth <= 0 ? 'root' : depth === 1 ? 'solution' : depth === 2 ? 'component' : 'leaf'
+}
+
+/**
+ * Recompute EVERY node's kind from its live depth. Structural ops (move,
+ * merge, insert-a-layer adoption, split, spinoff, rebalance, add-child)
+ * change depths, so the tree is re-normalized wholesale after each one —
+ * cheap (one findMany + only the drifted rows written), and it also heals
+ * any inversion left behind by older restructures.
+ */
+export async function normalizeTreeKinds(treeId: string): Promise<void> {
+  try {
+    const nodes = await prisma.treeNode.findMany({
+      where: { treeId },
+      select: { id: true, parentId: true, kind: true },
+    })
+    const parentOf = new Map(nodes.map(n => [n.id, n.parentId]))
+    const depthOf = (id: string): number => {
+      let d = 0
+      let cur = parentOf.get(id) ?? null
+      while (cur && d <= 50) { d++; cur = parentOf.get(cur) ?? null }
+      return d
+    }
+    const fixes = nodes
+      .map(n => ({ id: n.id, want: kindForDepth(depthOf(n.id)), have: n.kind }))
+      .filter(x => x.want !== x.have)
+    if (fixes.length > 0) {
+      await prisma.$transaction(fixes.map(f =>
+        prisma.treeNode.update({ where: { id: f.id }, data: { kind: f.want } })))
+    }
+  } catch { /* non-critical — display-layer semantics, never block the op */ }
+}
+
 /**
  * THE EVIDENCE LOCKER — every real artifact uploaded anywhere on this tree
  * (files live on nodes via LinkedFile workType "tree-node"). Fed to every
@@ -888,13 +928,15 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
   }
 
   const existing = await prisma.treeNode.count({ where: { treeId, parentId: nodeId } })
+  // Kind is DEPTH (small-to-big law) — the model's kind suggestion is ignored.
+  const childKind = kindForDepth(nodePath(tree.nodes, nodeId).length)
   const created: TreeNode[] = []
   for (let i = 0; i < valid.length; i++) {
     const p = valid[i]
     created.push(await prisma.treeNode.create({
       data: {
         treeId, parentId: nodeId,
-        kind: p.kind === 'leaf' ? 'leaf' : 'component',
+        kind: childKind,
         title: p.title.slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
         pending: true, order: existing + i, origin: 'question',
       },
@@ -978,9 +1020,31 @@ export async function copilotTurn(
   if (!tree) throw new Error('Tree not found')
 
   const real = tree.nodes.filter(n => !n.pending)
-  // Stable numeric handles so the model can target ANY parent without
-  // handling raw ids.
-  const indexList = real.map((n, i) =>
+  // CANVAS-MATCHED HANDLES (trust-critical): handle #k is the SAME number the
+  // student's canvas shows on the learning path — a pre-order walk from the
+  // root, siblings in `order` (getTreeWithNodes already sorts by
+  // order,createdAt, the exact canvas comparator). Handle 0 is the root.
+  // Array-index handles used to diverge from the canvas numbering, so
+  // "queued it under #7" pointed the student at a different node than the
+  // one the copilot meant — a hallucination in the student's eyes.
+  const kidsOf = new Map<string, TreeNode[]>()
+  for (const n of real) {
+    if (!n.parentId) continue
+    if (!kidsOf.has(n.parentId)) kidsOf.set(n.parentId, [])
+    kidsOf.get(n.parentId)!.push(n)
+  }
+  const rootNode = real.find(n => n.parentId === null)
+  const handles: TreeNode[] = []
+  if (rootNode) {
+    handles.push(rootNode)
+    const walkHandles = (pid: string) => {
+      for (const c of kidsOf.get(pid) ?? []) { handles.push(c); walkHandles(c.id) }
+    }
+    walkHandles(rootNode.id)
+  }
+  // Defensive: a malformed tree (orphaned rows) must not hide nodes.
+  for (const n of real) if (!handles.includes(n)) handles.push(n)
+  const indexList = handles.map((n, i) =>
     `[#${i}] "${n.title}" (${n.parentId === null ? 'ROOT' : n.status})${n.summary ? ` — ${n.summary.slice(0, 100)}` : ''}`).join('\n')
 
   // The token-light inventory of everything stored for this tree (counts and
@@ -1005,7 +1069,7 @@ export async function copilotTurn(
 PROBLEM (root): "${tree.title}"
 ${tree.framing ? `FRAMING: ${tree.framing}` : ''}
 SESSION PURPOSE: ${tree.purpose ? `"${tree.purpose}"` : '(not yet stated — surfacing it is one of your jobs)'}
-CURRENT TREE (numeric handles for proposing):
+CURRENT TREE (#k here is the EXACT number the student's canvas shows on the learning path — #0 is the root):
 ${indexList}
 
 STORED WORK CATALOG (the student's history you can RECALL on demand — counts only, you do NOT see any of this content until you request it; nodes not listed have no stored work yet):
@@ -1023,7 +1087,11 @@ YOUR FUNCTIONS (all in one box):
 \`\`\`image
 one-sentence description of the diagram/sketch to draw — name every part and label explicitly
 \`\`\`
-The UI renders it as a generated image in place. Never mention the block. At most ONE per reply; it must carry mechanism or a concrete design, never decoration. VISUAL CONFIDENCE (law): if one static generated image cannot CONFIDENTLY deliver the request (animation/interactivity/many interacting elements/precise geometry needed), emit NO block — instead link the best real visual resource (simulation/animation/video) and say explicitly you chose it over generating.
+The UI renders it as a generated image in place. Never mention the block. At most ONE per reply; it must carry mechanism or a concrete design, never decoration. VISUAL CONFIDENCE (law): if one static generated image cannot CONFIDENTLY deliver the request (animation/interactivity/many interacting elements/precise geometry needed), emit NO block — instead link the best real visual resource (simulation/animation/video) and say explicitly you chose it over generating. When you point at real resources — the honest-redirect case above, or ANY time you name a paper, simulation, video or tool the learner should actually open — emit them as a fenced resources block instead of prose, so they render as clickable cards a beginner will actually use:
+\`\`\`resources
+[{"name": "PhET — Gas Properties", "url": "https://phet.colorado.edu/en/simulations/gas-properties", "why": "lets you drop the divider yourself and watch the atoms fill the volume", "look": "Set 100 particles, then remove the barrier"}]
+\`\`\`
+1-3 items, each with a real https URL, a one-line "why this one", and "look" naming exactly what to open/see (figure number, section, control to move). Never leave a recommended resource as plain prose — an inert name is a resource a beginner will never find.
 6. RESHAPE THE TREE (edit / move / delete — approval-gated): when the student asks to rename, rewrite, reorganize or remove nodes — or the conversation shows a node is mistitled, misplaced, or doesn't belong — return "actions". Each ships to the student as an approve/dismiss chip; NOTHING changes until they tap it. Ops:
    {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — sharpen the wording of the SAME concept; include ONLY the field(s) you're changing. An edit never retargets a node to a DIFFERENT concept (its checkpoint history would lie) — for that, propose delete + a new branch.
    {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
@@ -1039,6 +1107,7 @@ The UI renders it as a generated image in place. Never mention the block. At mos
    HOW: instead of a final reply, return ONLY {"contextRequest": {"nodes": [{"node": <handle or "tree">, "kinds": ["chat", …]}], "why": "one short line"}} — max 6 nodes, and only kinds the catalog actually lists for that node. The content arrives immediately and you answer in the SAME turn; you get ONE recall per turn, so request everything you need at once.
 
 RULES:
+- NODE REFERENCES (trust-critical): the #numbers above are the student's own canvas labels. When your reply mentions a node, cite it EXACTLY as mapped — #k "Title" (the root by name). NEVER use a number, title, or node that is not in the map, and never renumber: an invented node reference reads to the student as you hallucinating their tree. If you can't tell which node the student means, ask.
 - ${GOAL_NECESSITY}
 - PLAN BEFORE PROPOSING: before returning proposals or reshape actions, silently work out what the root goal (through the session purpose) actually requires — every proposal traceable to that requirement, every delete/move justified by it.
 - CURIOUS SPECIFICITY (like the grow box): judge each ask yourself; when underspecified, still act under the most likely reading AND end with ONE sharp fork question that would change what you propose. Never a bare "tell me more".
@@ -1160,7 +1229,10 @@ Answer the student NOW, grounded in the content above; quote or reference it con
   const adopted = new Set<string>() // a node can be adopted by ONE ghost per turn
   for (const p of rawProposals) {
     const parentIdx = Number.isInteger(p.parent) ? (p.parent as number) : 0
-    const parent = real[Math.min(Math.max(parentIdx, 0), real.length - 1)] ?? real[0]
+    // An out-of-map handle is a hallucinated node — drop the proposal rather
+    // than clamping it onto an arbitrary real one.
+    if (parentIdx < 0 || parentIdx >= handles.length) continue
+    const parent = handles[parentIdx]
     if (!parent) continue
     // INSERT-A-LAYER: resolve adoptChildren handles → an approval-gated plan
     // stored on the ghost. Excludes the root, the ghost's own parent and its
@@ -1172,8 +1244,8 @@ Answer the student NOW, grounded in the content above; quote or reference it con
       while (cur) { parentAncestors.add(cur); cur = byId.get(cur) ?? null }
     }
     const adopt = (Array.isArray(p.adoptChildren) ? p.adoptChildren : [])
-      .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < real.length)
-      .map(h => real[h as number])
+      .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < handles.length)
+      .map(h => handles[h as number])
       .filter(n => n.parentId !== null && !parentAncestors.has(n.id) && !adopted.has(n.id))
       .slice(0, 12)
     adopt.forEach(n => adopted.add(n.id))
@@ -1181,7 +1253,9 @@ Answer the student NOW, grounded in the content above; quote or reference it con
     created.push(await prisma.treeNode.create({
       data: {
         treeId, parentId: parent.id,
-        kind: p.kind === 'leaf' ? 'leaf' : 'component',
+        // Kind is DEPTH (small-to-big law): parentAncestors.size == parent
+        // depth + 1 == this ghost's depth. The model's kind hint is ignored.
+        kind: kindForDepth(parentAncestors.size),
         title: (p.title as string).slice(0, 120), summary: (p.summary ?? '').slice(0, 500),
         pending: true, order: siblings, origin: 'copilot',
         ...(adopt.length > 0 ? { pendingPlan: JSON.stringify({ adopt: adopt.map(n => n.id) }) } : {}),
@@ -1205,7 +1279,7 @@ Answer the student NOW, grounded in the content above; quote or reference it con
   // would orbit a node into its own subtree is dropped.
   const actions: CopilotAction[] = []
   for (const a of (Array.isArray(parsed?.actions) ? parsed!.actions! : []).slice(0, 8)) {
-    const target = a && Number.isInteger(a.node) && (a.node as number) >= 0 ? real[a.node as number] : undefined
+    const target = a && Number.isInteger(a.node) && (a.node as number) >= 0 ? handles[a.node as number] : undefined
     if (!target) continue
     if (a.op === 'edit') {
       const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
@@ -1213,7 +1287,7 @@ Answer the student NOW, grounded in the content above; quote or reference it con
       if (!newTitle && !newSummary) continue
       actions.push({ type: 'edit', nodeId: target.id, title: target.title, newTitle, newSummary })
     } else if (a.op === 'move') {
-      const parent = Number.isInteger(a.newParent) && (a.newParent as number) >= 0 ? real[a.newParent as number] : undefined
+      const parent = Number.isInteger(a.newParent) && (a.newParent as number) >= 0 ? handles[a.newParent as number] : undefined
       if (!parent || target.parentId === null || parent.id === target.parentId) continue
       if (collectSubtreeIds(tree.nodes, target.id).has(parent.id)) continue
       actions.push({ type: 'move', nodeId: target.id, title: target.title, newParentId: parent.id, newParentTitle: parent.title })
@@ -1221,7 +1295,7 @@ Answer the student NOW, grounded in the content above; quote or reference it con
       if (target.parentId === null) continue
       actions.push({ type: 'delete', nodeId: target.id, title: target.title })
     } else if (a.op === 'merge') {
-      const into = Number.isInteger(a.mergeInto) && (a.mergeInto as number) >= 0 ? real[a.mergeInto as number] : undefined
+      const into = Number.isInteger(a.mergeInto) && (a.mergeInto as number) >= 0 ? handles[a.mergeInto as number] : undefined
       if (!into || target.parentId === null || into.parentId === null || into.id === target.id) continue
       if (collectSubtreeIds(tree.nodes, target.id).has(into.id)) continue
       actions.push({ type: 'merge', nodeId: target.id, title: target.title, mergeIntoId: into.id, mergeIntoTitle: into.title })
@@ -1241,8 +1315,8 @@ Answer the student NOW, grounded in the content above; quote or reference it con
       })
     } else if (a.op === 'reorder') {
       const kids = (Array.isArray(a.children) ? a.children : [])
-        .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < real.length)
-        .map(h => real[h as number])
+        .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < handles.length)
+        .map(h => handles[h as number])
         .filter(n => n.parentId === target.id)
       if (kids.length < 2) continue
       actions.push({
@@ -1311,7 +1385,12 @@ WORKED-EXAMPLE HONESTY (non-negotiable): you do NOT know the student's actual pr
 Nodes marked PENDING in the tree sketch are unapproved proposals — never reference them as siblings the student has learned from or as promised next steps.
 
 Dense, no fluff, no praise-padding. KaTeX ($...$) allowed for math.
-If (and only if) this concept is inherently visual — structure, flow, spatial layout, comparison — include ONE diagram at the point it belongs, as a fenced block the UI renders into a generated image (labels in the session's language, textbook style). VISUAL CONFIDENCE (law): only when one static diagram can CONFIDENTLY deliver it — otherwise link the best real visual resource (simulation/animation/video) instead and say explicitly that you chose it over generating:
+If (and only if) this concept is inherently visual — structure, flow, spatial layout, comparison — include ONE diagram at the point it belongs, as a fenced block the UI renders into a generated image (labels in the session's language, textbook style). VISUAL CONFIDENCE (law): only when one static diagram can CONFIDENTLY deliver it — otherwise link the best real visual resource instead and say explicitly that you chose it over generating. When you point at real resources — the honest-redirect case above, or ANY time you name a paper, simulation, video or tool the learner should actually open — emit them as a fenced resources block instead of prose, so they render as clickable cards a beginner will actually use:
+\`\`\`resources
+[{"name": "PhET — Gas Properties", "url": "https://phet.colorado.edu/en/simulations/gas-properties", "why": "lets you drop the divider yourself and watch the atoms fill the volume", "look": "Set 100 particles, then remove the barrier"}]
+\`\`\`
+1-3 items, each with a real https URL, a one-line "why this one", and "look" naming exactly what to open/see (figure number, section, control to move). Never leave a recommended resource as plain prose — an inert name is a resource a beginner will never find.
+Diagram block form:
 \`\`\`image
 one-sentence description of the labeled diagram to draw
 \`\`\`
