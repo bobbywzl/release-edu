@@ -314,6 +314,11 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [personalStatement, setPersonalStatement] = useState<string>('')
+  // The portfolio is a CACHED artifact people show to others — it must never
+  // present itself as current when the learner has worked since. The status
+  // route reports the real timestamp and whether it has drifted.
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
+  const [stale, setStale] = useState(false)
   const [editingStatement, setEditingStatement] = useState(false)
 
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -329,11 +334,13 @@ export default function PortfolioPage() {
         pollTimer.current = setTimeout(() => { isPollingRef.current = false; pollStatus() }, 5000)
         return
       }
-      const data = await res.json() as { status: string; portfolio?: Portfolio; error?: string }
+      const data = await res.json() as { status: string; portfolio?: Portfolio; error?: string; generatedAt?: string; stale?: boolean }
 
       if (data.status === 'ready' && data.portfolio) {
         setPortfolio(data.portfolio)
         setPersonalStatement(data.portfolio.personalStatement || '')
+        setGeneratedAt(data.generatedAt ?? null)
+        setStale(!!data.stale)
         setLoading(false)
         setError(null)
         if (pollTimer.current) clearTimeout(pollTimer.current)
@@ -413,10 +420,10 @@ export default function PortfolioPage() {
 
   return (
     <div className="p-8 lg:p-12 max-w-4xl space-y-10 portfolio-print-root relative">
-      {/* Release EDU Watermark — visible on screen AND print */}
+      {/* Tree EDU watermark — visible on screen AND print */}
       <div className="absolute top-4 right-4 flex items-center gap-1.5 opacity-30 print:opacity-40 pointer-events-none select-none print:top-6 print:right-6">
         <Zap className="w-3 h-3 text-primary" />
-        <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Release EDU</span>
+        <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Tree EDU</span>
       </div>
 
       {/* Print-only styles & watermark */}
@@ -479,7 +486,7 @@ export default function PortfolioPage() {
           @page {
             margin: 0.5in;
             @bottom-center {
-              content: "Verified by Release EDU · releaseedu.com · Page " counter(page) " of " counter(pages);
+              content: "Verified by Tree EDU · Page " counter(page) " of " counter(pages);
               font-size: 9px;
               color: rgba(0, 0, 0, 0.5);
             }
@@ -614,6 +621,30 @@ export default function PortfolioPage() {
                 </button>
               </div>
             </div>
+
+            {/* Freshness banner — this document is shown to other people, so a
+                drifted cache must announce itself rather than quietly
+                misrepresent the learner's record. */}
+            {stale ? (
+              <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5">
+                <RefreshCw className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <p className="text-xs text-amber-200/90 flex-1 min-w-[220px]">
+                  Your work has changed since this portfolio was generated
+                  {generatedAt ? ` (${new Date(generatedAt).toLocaleString()})` : ''} — refresh it before sharing.
+                </p>
+                <button
+                  onClick={generate}
+                  disabled={loading}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+                >
+                  Refresh now
+                </button>
+              </div>
+            ) : generatedAt ? (
+              <p className="text-[11px] text-muted-foreground">
+                Last generated {new Date(generatedAt).toLocaleString()}
+              </p>
+            ) : null}
 
             {/* Key metrics row */}
             <div className="flex flex-wrap gap-3">
@@ -846,7 +877,7 @@ export default function PortfolioPage() {
           <div className="border-t border-border/50 pt-6">
             <div className="rounded-lg bg-muted/30 border border-border/50 px-4 py-3">
               <p className="text-[11px] text-muted-foreground leading-relaxed italic">
-                This is an AI-generated user portfolio made by Release EDU. It seeks to be objective, transparent, and accurate, but please note that AI may make mistakes.
+                This is an AI-generated user portfolio made by Tree EDU. It seeks to be objective, transparent, and accurate, but please note that AI may make mistakes.
               </p>
             </div>
           </div>
@@ -854,7 +885,7 @@ export default function PortfolioPage() {
           {/* Footer */}
           <div className="text-center pt-2">
             <p className="text-[11px] text-muted-foreground">
-              Generated by Release EDU · AI-powered learning portfolio · {new Date().toLocaleDateString()}
+              Generated by Tree EDU · AI-powered learning portfolio · {generatedAt ? new Date(generatedAt).toLocaleString() : '—'}
             </p>
           </div>
         </div>

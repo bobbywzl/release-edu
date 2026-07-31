@@ -80,6 +80,9 @@ function PortfolioPrintContent() {
   const autoPrint = searchParams.get('autoprint') !== '0'
 
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null)
+  // Real generation timestamp — the footer used to stamp TODAY on a cached
+  // document, so a month-old portfolio claimed to be freshly generated.
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   // Honors band: earned Tree-EDU badges + fully-verified mastered trees —
   // the headline achievements lead the printed document too.
   const [honorBadges, setHonorBadges] = useState<Array<{ id: string; icon: string; tier: string; name: { en: string; zh: string }; earnedAt: string | null }>>([])
@@ -118,11 +121,12 @@ function PortfolioPrintContent() {
           if (!cancelled) setLoadState('error')
           return
         }
-        const data = (await res.json()) as { status: string; portfolio?: Portfolio }
+        const data = (await res.json()) as { status: string; portfolio?: Portfolio; generatedAt?: string }
         if (cancelled) return
         if (data.status === 'ready' && data.portfolio) {
           setPortfolio(data.portfolio)
           setPersonalStatement(data.portfolio.personalStatement || '')
+          if (data.generatedAt) setGeneratedAt(String(data.generatedAt))
           setLoadState('ready')
         } else {
           setLoadState('missing')
@@ -181,7 +185,7 @@ function PortfolioPrintContent() {
           size: letter;
           margin: 0.6in 0.65in 0.75in 0.65in;
           @bottom-left {
-            content: "Release EDU · releaseedu.com";
+            content: "Tree EDU · verified problem mastery";
             font-family: Georgia, 'Times New Roman', serif;
             font-size: 8.5pt;
             color: #666;
@@ -588,7 +592,7 @@ function PortfolioPrintContent() {
 
       {/* Footer */}
       <div className="footer-note">
-        AI-generated portfolio by Release EDU · Generated {new Date().toLocaleDateString('en-US', {
+        AI-generated portfolio by Tree EDU · Generated {new Date(generatedAt ?? Date.now()).toLocaleDateString('en-US', {
           year: 'numeric',
           month: 'long',
           day: 'numeric',

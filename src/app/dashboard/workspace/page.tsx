@@ -17,8 +17,7 @@ import { motion } from 'framer-motion'
 import {
   Bot, Send, ArrowLeft, ShieldCheck, Loader2, StickyNote, Paperclip,
   Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
-  Maximize2, Download, X,
-} from 'lucide-react'
+  Maximize2, Download, X, AlertCircle, RefreshCw } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
 import { useHighlights } from '@/lib/highlights'
@@ -54,7 +53,10 @@ interface QuizPayload {
  * key never reaches the client); a malformed block is dropped entirely so
  * no dead card can render.
  */
-function splitQuiz(content: string): { text: string; quiz: QuizPayload | null } {
+function splitQuiz(raw: string): { text: string; quiz: QuizPayload | null } {
+  // [[INCOMPLETE]] is persisted bookkeeping (it drives the Continue /
+  // Regenerate controls) and must never reach the rendered text.
+  const content = raw.replace(/\n*\[\[INCOMPLETE\]\]/g, '')
   const idx = content.indexOf('[[QUIZ]]')
   if (idx === -1) return { text: content, quiz: null }
   let quiz: QuizPayload | null = null
@@ -129,6 +131,8 @@ function WorkspaceInner() {
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // The turn that produced a cut-off answer — replayed verbatim by Regenerate.
+  const lastTurnRef = useRef<{ text: string; showUser: boolean } | null>(null)
   // SOTA multimodal input — the same capture row as the tree copilot
   // (file / camera photo / video / voice note), staged as chips and analyzed
   // by Gemini server-side before Bob's turn.
@@ -275,8 +279,19 @@ function WorkspaceInner() {
         const { done, value } = await reader.read()
         if (done) break
         full += decoder.decode(value, { stream: true })
-        setStreamText(full)
+        // Never show the machine markers mid-stream.
+        setStreamText(full.replace(/\n*\[\[(DONE|INCOMPLETE)\]\]/g, ''))
       }
+      // ── STREAM COMPLETION CONTRACT (see the chat route) ──
+      // [[DONE]] present  → Bob finished the thought.
+      // [[INCOMPLETE]]    → the model hit the token cap mid-answer.
+      // neither           → the connection/lambda died mid-answer.
+      // In the last two cases the learner gets Continue / Regenerate rather
+      // than a half-explanation they might read as their own failure.
+      const sawDone = full.includes('[[DONE]]')
+      const sawIncomplete = full.includes('[[INCOMPLETE]]')
+      full = full.replace(/\n*\[\[DONE\]\]/g, '')
+      const wasCutOff = sawIncomplete || !sawDone
       // Trailing machine markers ride at the end of the stream, in server
       // order: [[TREE_SUGGEST]] then [[XP]]. Strip back-to-front.
       const xpIdx = full.indexOf('[[XP]]')
@@ -289,7 +304,10 @@ function WorkspaceInner() {
         try { setSuggestion(JSON.parse(full.slice(markerIdx + 16))) } catch { /* malformed — ignore */ }
         full = full.slice(0, markerIdx).trimEnd()
       }
+      if (wasCutOff && !sawIncomplete) full = `${full}\n\n[[INCOMPLETE]]`
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: full }])
+      // Remember what produced this turn so Regenerate can replay it exactly.
+      if (wasCutOff) lastTurnRef.current = { text, showUser }
       // A [[QUIZ]] block inside Bob's own text becomes the interactive
       // checkpoint card (the message keeps the marker; rendering strips it).
       const { quiz } = splitQuiz(full)
@@ -331,6 +349,29 @@ function WorkspaceInner() {
       setStreaming(false)
       setStreamText('')
     }
+  }
+
+  // ── CUT-OFF RECOVERY ──
+  // Continue: Bob resumes exactly where the token cap stopped him (the server
+  // [NODE_CONTINUE] turn appends, never repeats). Regenerate: replay the turn
+  // from scratch. Either way the learner is never stuck holding half an
+  // explanation with no idea whether they misread it or the app broke.
+  async function continueCutOff() {
+    if (streaming) return
+    // Drop the incomplete marker so the controls disappear while it resumes.
+    setMessages(prev => prev.map((m, i) =>
+      i === prev.length - 1 && m.role === 'assistant'
+        ? { ...m, content: m.content.replace(/\n*\[\[INCOMPLETE\]\]/g, '') }
+        : m))
+    await streamFromBob('[NODE_CONTINUE]', false)
+  }
+
+  async function regenerateCutOff() {
+    if (streaming) return
+    const last = lastTurnRef.current
+    // Drop the truncated assistant message; the replay writes a fresh one.
+    setMessages(prev => (prev.length && prev[prev.length - 1].role === 'assistant' ? prev.slice(0, -1) : prev))
+    await streamFromBob(last?.text ?? '[NODE_CONTINUE]', false)
   }
 
   async function send() {
@@ -750,6 +791,25 @@ function WorkspaceInner() {
                         >
                           <MarkdownRenderer content={parts!.text} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
                         </HighlightableText>
+                        {m.content.includes('[[INCOMPLETE]]') && mi === messages.length - 1 && !streaming && (
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2.5">
+                            <span className="text-[11px] text-amber-400 flex items-center gap-1.5">
+                              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {t('workspace.cutOff')}
+                            </span>
+                            <button
+                              onClick={continueCutOff}
+                              className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:bg-primary/90 transition-colors"
+                            >
+                              {t('workspace.continueAnswer')}
+                            </button>
+                            <button
+                              onClick={regenerateCutOff}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                            >
+                              <RefreshCw className="w-3 h-3" /> {t('workspace.regenerateAnswer')}
+                            </button>
+                          </div>
+                        )}
                         {parts!.quiz && !isActiveQuizMsg && (
                           <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50">
                             <HelpCircle className="w-3.5 h-3.5 text-primary flex-shrink-0" />
