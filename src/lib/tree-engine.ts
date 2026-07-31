@@ -1611,8 +1611,16 @@ export async function generateTreeDigest(userId: string, treeId: string, lang?: 
 
   const progressLines = real.flatMap(n => {
     try {
-      const log = JSON.parse(n.progressLog ?? '[]') as Array<{ text: string; createdAt: string }>
-      return log.slice(-5).map(e => `- [${(e.createdAt ?? '').slice(0, 10)}] (${n.title}) ${e.text}`)
+      const log = JSON.parse(n.progressLog ?? '[]') as Array<{ text: string; createdAt: string; evidence?: { kind?: string; name?: string; quote?: string } }>
+      return log.slice(-5).map(e => {
+        // Provenance rides with every entry: cited entries carry their
+        // verbatim quote; legacy/uncited entries are explicitly flagged so
+        // the digest can never launder them into established fact.
+        const cite = e.evidence?.quote
+          ? ` [evidence — ${e.evidence.kind === 'file' ? `file "${e.evidence.name ?? 'attachment'}"` : "the student's own words"}: "${String(e.evidence.quote).slice(0, 160)}"]`
+          : ' [UNCONFIRMED — recorded without cited evidence]'
+        return `- [${(e.createdAt ?? '').slice(0, 10)}] (${n.title}) ${e.text}${cite}`
+      })
     } catch { return [] }
   }).join('\n')
 
@@ -1637,8 +1645,9 @@ Verified: ${real.filter(n => n.status === 'understood').length}/${real.length} n
 NODES:
 ${nodeLines || '(none)'}
 
-BUILD LOG (real-world execution detected in chats):
+BUILD LOG (real-world execution detected in chats; every entry carries its provenance):
 ${progressLines || '(none recorded)'}
+BUILD-LOG RULE (trust-critical): an entry tagged [UNCONFIRMED] must NEVER be restated as an established fact or accomplishment — omit it, or explicitly present it as an unverified self-report. Only entries with cited evidence may appear under Findings/Progress as things that actually happened.
 
 STUDENT NOTES:
 ${notesLines || '(none)'}
