@@ -13,8 +13,12 @@ Read this before making changes.
 
 ## Working style (user preference — important)
 
-- **When you are not sure what the user means, ALWAYS clarify before acting.** Do not
-  guess at ambiguous intent and build the wrong thing. Ask a focused question, then proceed.
+- **ALWAYS ask clarifying questions — every session, every input (user directive,
+  July 2026).** Open every session and every new request by asking the user focused
+  clarification questions (batched, via AskUserQuestion) covering scope, intent, and
+  any decision you would otherwise guess at — then act on the answers. Never build on
+  a guessed interpretation. This applies even when a request looks unambiguous:
+  confirm the key assumptions first, then proceed.
 - Any user-facing text Bob generates (greetings, fallbacks, errors) must respect the
   student's chosen language — never hard-code English where a Chinese (or other) learner
   could see it. Every UI string gets EN + 中文 keys in `src/lib/i18n.tsx`.

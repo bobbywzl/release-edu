@@ -40,7 +40,10 @@ interface Reflection {
   moveToNodeId?: string | null
   moveToTitle?: string | null
   // Concrete real-world execution progress detected in the student's message.
-  projectProgress?: string | null
+  // MUST carry a verbatim citation (validated server-side) — an uncited
+  // claim is dropped, never logged. Older prompts returned a bare string;
+  // that shape is treated as uncited and dropped too.
+  projectProgress?: { text?: string; evidence?: { kind?: string; name?: string; quote?: string } } | string | null
   // A SYSTEMATIC wrong belief (same wrong idea expressed as their model of
   // the world) — needs direct refutation, not more practice (repair theory).
   misconception?: string | null
@@ -96,7 +99,12 @@ Assess and return ONLY JSON:
  "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)",
  "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers AND that is NECESSARY for the root goal (goal-necessity law: if mastering everything else would leave a hole the goal cannot close without this, suggest it; merely related/interesting fields get null): {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
  "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
- "projectProgress": <ONLY if the student's message shows CONCRETE execution progress on building the product / solving the root problem in the real world (ran an experiment, wrote code, built something, measured results — not just asking questions): "one line describing the progress made" — otherwise null>,
+ "projectProgress": <ONLY if there is CITABLE PROOF of CONCRETE, COMPLETED real-world execution (ran an experiment, wrote code, built something, measured results). ALL of these must hold, otherwise null:
+   (a) the student EXPLICITLY reports having done the thing in their own words, OR an attached artifact's ANALYSIS text explicitly demonstrates the completed work;
+   (b) you cite it VERBATIM: evidence.quote is copied EXACTLY from the student's message (kind "message") or from an attachment's analysis (kind "file", name = that attachment's name) — the system verifies the quote character-for-character and silently drops the entry if it does not match;
+   (c) NEVER infer execution from a file merely existing, being uploaded, or being named — only from what its content/analysis actually demonstrates; and if the tutor's last message judged the shared artifact as NOT demonstrating the work, this is null;
+   (d) intentions, plans, and questions are never progress.
+   Shape: {"text": "one line describing the progress made", "evidence": {"kind": "message"|"file", "name": "<file name when kind=file>", "quote": "<verbatim snippet>"}} — otherwise null>,
  "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}
 Write the human-readable strings — suggestNode's "title" and "summary", "projectProgress", and "misconception" — entirely in ${sessionLang === 'zh' ? 'Simplified Chinese (简体中文)' : 'English'} (the session language; these are persisted and shown to the student, e.g. an approved suggestNode becomes a real tree node).`,
       }],
@@ -356,16 +364,45 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         : ''
 
       if (r.projectProgress) {
-        // Flag real execution progress on this node — shown in the list
-        // view and node panel as the project's build log.
-        void (async () => {
-          try {
-            const row = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { progressLog: true } })
-            const log = safeParse<Array<{ text: string; source: string; createdAt: string }>>(row?.progressLog, [])
-            log.push({ text: r.projectProgress!.slice(0, 300), source: 'chat', createdAt: new Date().toISOString() })
-            await prisma.treeNode.update({ where: { id: nodeId }, data: { progressLog: JSON.stringify(log.slice(-30)) } })
-          } catch { /* non-critical */ }
-        })()
+        // ── BUILD-LOG EVIDENCE GATE (trust-critical) ──
+        // The build log feeds the Tree Digest and, through it, the
+        // portfolio — surfaces that certify the learner actually DID
+        // things. A fabricated entry ("set up a profiler on a real
+        // device") is a credibility-destroying failure, so a progress
+        // claim is written ONLY when its citation verifies against this
+        // turn's actual inputs: a verbatim quote from the student's own
+        // message, or from an attachment's Gemini analysis (the vision
+        // judgement) — never from a file merely existing. Everything
+        // else is dropped, loudly.
+        const pp = r.projectProgress
+        const claim = typeof pp === 'object' && pp !== null ? pp : null
+        const text = (claim?.text ?? '').trim()
+        const quote = (claim?.evidence?.quote ?? '').trim()
+        const norm = (s: string) => s.replace(/\s+/g, ' ').toLowerCase()
+        let evidence: { kind: 'message' | 'file'; name?: string; quote: string } | null = null
+        if (text && quote.length >= 8) {
+          if (claim?.evidence?.kind === 'message' && norm(msgText).includes(norm(quote))) {
+            evidence = { kind: 'message', quote: quote.slice(0, 300) }
+          } else if (claim?.evidence?.kind === 'file') {
+            const hit = analyses.find(a => norm(a.analysis).includes(norm(quote)))
+            if (hit) evidence = { kind: 'file', name: hit.name.slice(0, 120), quote: quote.slice(0, 300) }
+          }
+        }
+        if (evidence) {
+          const cited = evidence
+          void (async () => {
+            try {
+              const row = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { progressLog: true } })
+              const log = safeParse<Array<{ text: string; source: string; createdAt: string; evidence?: unknown }>>(row?.progressLog, [])
+              log.push({ text: text.slice(0, 300), source: 'chat', createdAt: new Date().toISOString(), evidence: cited })
+              await prisma.treeNode.update({ where: { id: nodeId }, data: { progressLog: JSON.stringify(log.slice(-30)) } })
+            } catch { /* non-critical */ }
+          })()
+        } else {
+          console.warn('[tree] progress claim DROPPED — citation failed verification', {
+            nodeId, text: text.slice(0, 120), kind: claim?.evidence?.kind ?? (typeof pp === 'string' ? 'legacy-string' : 'missing'),
+          })
+        }
       }
       // Discovery cards are gated for timing (simulation findings):
       // never two turns in a row (card fatigue at peak cognitive load), no
@@ -515,7 +552,7 @@ ${ANSWER_STANDARD}
 - Body text in full sentences and short paragraphs; **bold** the key terms where they're defined.
 - Use numbered/bulleted lists for sequences and enumerations; > blockquotes for the one takeaway worth remembering; KaTeX ($...$) for any math.
 - Short conversational replies (a quick answer, a Socratic probe) need no headers — never decorate a one-liner.
-- If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: press the "Grow branch" button with that question so the tree can propose new nodes — the tree only grows with their permission. Do not pretend to add nodes yourself.
+- If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: use the "Grow branch" button at the top of this workspace — or the "Grow this into a branch" action under any message — with that question, so the tree can propose new child nodes here for their approval. The tree only grows with their permission; do not pretend to add nodes yourself.
 
 ## CHECKPOINT QUESTIONS (mastery is proven HERE in chat — there is no separate test)
 ${node.status === 'understood'

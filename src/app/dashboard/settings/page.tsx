@@ -1,9 +1,8 @@
 'use client'
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Check, Camera, Loader2, Languages } from 'lucide-react'
+import { Check, Camera, Loader2, Languages, LogOut, UserPlus } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
-import { STAGE_LABELS } from '@/lib/utils'
 import { useToast } from '@/components/toast'
 import { useStudentData, refreshStudentData, setDisplayName } from '@/lib/student-data'
 import { useLanguage, translate, type Language } from '@/lib/i18n'
@@ -24,12 +23,8 @@ export default function SettingsPage() {
   const [organization, setOrganization] = useState('')
   const [education, setEducation] = useState('')
   const [avatarUrl, setAvatarUrl] = useState<string | null>(student.avatar ?? null)
-
-  // Mentor & parent info
-  const [mentorName, setMentorName] = useState('')
-  const [mentorEmail, setMentorEmail] = useState('')
-  const [parentName, setParentName] = useState('')
-  const [parentEmail, setParentEmail] = useState('')
+  // (The Release EDU mentor/parent "curriculum review" block is gone — that
+  // whole approval model died with the July 2026 pivot.)
 
   // Load profile data once — only after initial data load, never again
   const hasInitialized = useRef(false)
@@ -48,10 +43,6 @@ export default function SettingsPage() {
       if (meta.timezone) setTimezone(meta.timezone)
       if (meta.organization) setOrganization(meta.organization)
       if (meta.education) setEducation(meta.education)
-      if (meta.mentorName) setMentorName(meta.mentorName)
-      if (meta.mentorEmail) setMentorEmail(meta.mentorEmail)
-      if (meta.parentName) setParentName(meta.parentName)
-      if (meta.parentEmail) setParentEmail(meta.parentEmail)
       if (meta.notifications) setNotifications(prev => ({ ...prev, ...meta.notifications }))
       if (meta.learningPrefs) setLearningPrefs(prev => ({ ...prev, ...meta.learningPrefs }))
     }).catch(() => {}).finally(() => { loadedRef.current = true })
@@ -68,13 +59,31 @@ export default function SettingsPage() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const toast = useToast()
 
+  // THIS TAB's identity (per-tab account slots) — /api/account/me resolves
+  // the x-account-slot header first, so this shows the account THIS tab is
+  // acting as, not the browser's latest login.
+  const [tabAccount, setTabAccount] = useState<{ email: string | null; name: string | null } | null>(null)
+  const [signingOut, setSigningOut] = useState(false)
+  useEffect(() => {
+    fetch('/api/account/me', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.user) setTabAccount({ email: d.user.email ?? null, name: d.user.name ?? null }) })
+      .catch(() => { /* falls back to the profile email below */ })
+  }, [])
+  async function handleLogout() {
+    if (signingOut) return
+    setSigningOut(true)
+    const m = await import('@/components/account-slots')
+    await m.slotSignOut()
+  }
+
+  // Tree EDU notifications only — the Release EDU rows (collaborator
+  // activity on projects, mentor messages) are gone with the pivot.
   const [notifications, setNotifications] = useState({
     streakReminders: true,
     weeklyProgress: true,
     aiSessions: false,
     achievements: true,
-    projectUpdates: true,
-    mentorMessages: true,
   })
 
   const [learningPrefs, setLearningPrefs] = useState({
@@ -118,13 +127,9 @@ export default function SettingsPage() {
     birthdate: birthdate || null,
     timezone,
     education: education || null,
-    mentorName: mentorName.trim() || null,
-    mentorEmail: mentorEmail.trim() || null,
-    parentName: parentName.trim() || null,
-    parentEmail: parentEmail.trim() || null,
     notifications,
     learningPrefs,
-  }), [name, organization, birthdate, timezone, education, mentorName, mentorEmail, parentName, parentEmail, notifications, learningPrefs])
+  }), [name, organization, birthdate, timezone, education, notifications, learningPrefs])
 
   const lastSavedRef = useRef<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -177,6 +182,37 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {/* THIS TAB'S ACCOUNT — who this tab is signed in as, with the exits.
+          The ONLY logout on thin screens (the desktop side panel is hidden
+          there), so it stays prominent and first. */}
+      <section className="space-y-3">
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.accountAccess')}</h2>
+        <div className="p-4 rounded-xl border border-border space-y-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground truncate">{tabAccount?.email || tabAccount?.name || student.email || '—'}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{t('settings.signedInAs')}</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleLogout}
+              disabled={signingOut}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-destructive/10 border border-destructive/40 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors disabled:opacity-50"
+            >
+              {signingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+              {t('nav.logout')}
+            </button>
+            <button
+              onClick={() => { window.location.href = '/login?switch=1' }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors"
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('nav.switchAccount')}
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{t('settings.logoutHint')}</p>
+        </div>
+      </section>
 
       {/* Language — the app-wide EN/中文 switch. Flips UI + menus instantly and
           every session's future Bob replies (server propagates to all trees). */}
@@ -239,7 +275,10 @@ export default function SettingsPage() {
           </button>
           <div>
             <div className="font-medium text-foreground">{student.name}</div>
-            <div className="text-sm text-muted-foreground">{t('common.level')} {student.level} · {STAGE_LABELS[student.stage]}</div>
+            {/* Level only — the learning-journey RANK lives on the dashboard
+                XP panel; the old Release EDU stage line ("Motivation &
+                Inspiration") was a second, contradictory rank system. */}
+            <div className="text-sm text-muted-foreground">{t('common.level')} {student.level}</div>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="text-xs text-primary hover:underline mt-0.5"
@@ -330,76 +369,11 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Mentor & Parent */}
-      <section className="space-y-4">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.mentorParent')}</h2>
-        <p className="text-xs text-muted-foreground">{t('settings.mentorParentDesc')}</p>
-
-        <div className="p-4 rounded-lg border border-border space-y-3">
-          <p className="text-xs font-medium text-foreground">{t('settings.mentor')}</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.name')}</label>
-              <input
-                value={mentorName}
-                onChange={e => setMentorName(e.target.value)}
-                placeholder={t('settings.mentorPlaceholder')}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.email')}</label>
-              <input
-                value={mentorEmail}
-                onChange={e => setMentorEmail(e.target.value)}
-                placeholder="mentor@email.com"
-                type="email"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              />
-            </div>
-          </div>
-          {!mentorEmail && (
-            <p className="text-[10px] text-muted-foreground">{t('settings.noMentor')}</p>
-          )}
-        </div>
-
-        <div className="p-4 rounded-lg border border-border space-y-3">
-          <p className="text-xs font-medium text-foreground">{t('settings.parent')}</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.name')}</label>
-              <input
-                value={parentName}
-                onChange={e => setParentName(e.target.value)}
-                placeholder={t('settings.parentPlaceholder')}
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] text-muted-foreground block mb-1">{t('settings.email')}</label>
-              <input
-                value={parentEmail}
-                onChange={e => setParentEmail(e.target.value)}
-                placeholder="parent@email.com"
-                type="email"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              />
-            </div>
-          </div>
-          {!parentEmail && (
-            <p className="text-[10px] text-muted-foreground">{t('settings.noParent')}</p>
-          )}
-        </div>
-      </section>
-
-
-
-
       {/* Notifications */}
       <section className="space-y-4">
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t('settings.notifications')}</h2>
         {([
-          'streakReminders', 'weeklyProgress', 'aiSessions', 'achievements', 'projectUpdates', 'mentorMessages',
+          'streakReminders', 'weeklyProgress', 'aiSessions', 'achievements',
         ] as const).map((key, i) => (
           <div key={key}>
             {i > 0 && <Separator className="mb-4" />}
@@ -417,8 +391,9 @@ export default function SettingsPage() {
       {/* Account */}
       <section className="space-y-1">
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">{t('settings.account')}</h2>
+        {/* No "Change Password" — accounts are Google-only; the password
+            page was Release EDU leftover. */}
         {[
-          { key: 'password', href: '/dashboard/settings/password' },
           { key: 'connected', href: '/dashboard/settings/connected-accounts' },
           { key: 'export', href: '/dashboard/settings/export-data' },
           { key: 'privacy', href: '/dashboard/settings/privacy' },

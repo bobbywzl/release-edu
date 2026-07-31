@@ -20,6 +20,8 @@ import {
   Maximize2, Download, X, AlertCircle, RefreshCw } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
+import { MessageErrorBoundary } from '@/components/message-error-boundary'
+import { GrowBranchDialog } from '@/components/grow-branch'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -133,11 +135,20 @@ function WorkspaceInner() {
   const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
+  // GROW BRANCH (FOUNDATION: the tree grows through the learner's own
+  // questions) — null = closed; a string opens the dialog with that seed
+  // question ('' = blank). Approved children attach under THIS node.
+  const [growSeed, setGrowSeed] = useState<string | null>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
-  // The chat's own scroll container — scrolling is done on it directly
-  // (scrollTop), not via scrollIntoView, so only the chat moves and never
-  // the page around it.
-  const chatScrollRef = useRef<HTMLDivElement>(null)
+  // Auto-scroll that actually works: scroll the CONTAINER directly (an
+  // interruptible smooth scrollIntoView lost every race against streaming
+  // re-renders and late layout — KaTeX/diagram loads — so sends left the
+  // viewport on old content and reopened nodes started at the top).
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  // Pinned-to-bottom unless the user scrolls up to read — never hijack.
+  const stickToBottomRef = useRef(true)
+  // First paint of a (re)loaded conversation jumps to the LATEST content.
+  const initialScrollRef = useRef(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const streamingRef = useRef(false)
@@ -231,19 +242,28 @@ function WorkspaceInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeId, nodeId])
 
-  // AUTO-SCROLL. A new turn (sent message, landed reply, armed checkpoint
-  // card) always pins the chat to the bottom — that's where the action is.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
   useEffect(() => {
-    const el = chatScrollRef.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-  }, [messages, activeQuiz?.question, suggestion])
-  // While Bob streams, keep following the tail — but ONLY if the reader is
-  // already near the bottom. Scrolling up to re-read must never be hijacked.
+    if (messages.length === 0) return
+    if (initialScrollRef.current) {
+      initialScrollRef.current = false
+      stickToBottomRef.current = true
+      // Repeat past the late layout passes (KaTeX fonts, generated visuals)
+      // that used to leave a 5,000-word transcript parked at the top.
+      scrollToBottom()
+      requestAnimationFrame(scrollToBottom)
+      const t1 = setTimeout(scrollToBottom, 150)
+      const t2 = setTimeout(scrollToBottom, 600)
+      return () => { clearTimeout(t1); clearTimeout(t2) }
+    }
+    if (stickToBottomRef.current) scrollToBottom()
+  }, [messages, scrollToBottom])
   useEffect(() => {
-    const el = chatScrollRef.current
-    if (!el) return
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight
-  }, [streamText])
+    if (stickToBottomRef.current) scrollToBottom()
+  }, [streamText, activeQuiz, suggestion, quizResult, scrollToBottom])
   useEffect(() => { setHintShown(false) }, [activeQuiz?.question])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
@@ -264,7 +284,9 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setGrowSeed(null)
+    initialScrollRef.current = true
+    stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
@@ -424,12 +446,15 @@ function WorkspaceInner() {
     if (!treeId || !nodeId || node?.explainer || explainerLoading) return
     setExplainerLoading(true)
     try {
-      await fetch(`/api/tree/${treeId}/node/${nodeId}/explainer`, {
+      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/explainer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lang: language }),
       })
       await loadTree()
+      // Fullscreen IS the reading surface — a freshly generated explainer
+      // opens straight into it instead of a palm-sized scroll box.
+      if (res.ok) setExplainerFull(true)
     } finally {
       setExplainerLoading(false)
     }
@@ -743,6 +768,15 @@ function WorkspaceInner() {
           <p className="text-sm font-bold text-foreground truncate">{node?.title ?? '…'}</p>
           <p title={tree?.title} className="text-[11px] text-muted-foreground truncate">{tree?.displayTitle || tree?.title}</p>
         </div>
+        {/* GROW BRANCH — the workspace growth affordance Bob's prompt
+            references; curiosity happens here, not on the canvas. */}
+        <button
+          onClick={() => setGrowSeed('')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors flex-shrink-0"
+          title={t('workspace.growSub')}
+        >
+          <Sprout className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('workspace.growBranch')}</span>
+        </button>
         {node?.status === 'understood' ? (
           /* THE verified signature — same state the chat's verdicts report
              (node.status, reconciled server-side against the coverage tally),
@@ -792,7 +826,16 @@ function WorkspaceInner() {
       <div className="flex-1 flex min-h-0">
         {/* Chat column — retains the Bob chat look */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div
+            ref={scrollerRef}
+            onScroll={() => {
+              const el = scrollerRef.current
+              if (!el) return
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+            }}
+            style={{ overflowAnchor: 'none' }}
+            className="flex-1 overflow-y-auto p-4 space-y-4"
+          >
             {messages.length === 0 && !streaming && (
               <div className="text-center py-10 space-y-2">
                 <Bot className="w-8 h-8 text-primary mx-auto" />
@@ -811,7 +854,7 @@ function WorkspaceInner() {
                 <motion.div
                   key={m.id}
                   initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                  className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
+                  className={cn('group/turn flex flex-col', m.role === 'user' ? 'items-end' : 'items-start')}
                 >
                   <div className={cn(
                     'rounded-2xl px-4 py-3 text-[15px] leading-relaxed',
@@ -828,7 +871,20 @@ function WorkspaceInner() {
                           onUpdateHighlight={updateHighlight}
                           onDeleteHighlight={deleteHighlight}
                         >
-                          <MarkdownRenderer content={parts!.text} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                          {/* Keyed by highlight count so deleting a bad
+                              anchor remounts and retries the rich render. */}
+                          <MessageErrorBoundary
+                            key={`${m.id}:${highlights.length}`}
+                            fallbackText={parts!.text}
+                            degradedNote={t('workspace.renderDegraded')}
+                          >
+                            <MarkdownRenderer
+                              content={parts!.text}
+                              imageContext={node ? `${node.title} — ${node.summary}` : ''}
+                              highlights={highlights.filter(h => h.messageId === m.id && !h.selectedText.startsWith('📍 '))}
+                              onDeleteHighlight={deleteHighlight}
+                            />
+                          </MessageErrorBoundary>
                         </HighlightableText>
                         {m.content.includes('[[INCOMPLETE]]') && mi === messages.length - 1 && !streaming && (
                           <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2.5">
@@ -863,22 +919,47 @@ function WorkspaceInner() {
                           </div>
                         )}
                         {parts!.quiz && !isActiveQuizMsg && (
-                          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50">
-                            <HelpCircle className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                            <span className="truncate">{parts!.quiz.question}</span>
-                            {wasAnswered && <span className="ml-auto flex-shrink-0 text-emerald-400">✓ {t('workspace.quizAnswered')}</span>}
+                          /* RETIRED checkpoint chip — every dead card names
+                             its state explicitly (answered vs superseded);
+                             only the live card at the bottom is answerable. */
+                          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50 opacity-70">
+                            <HelpCircle className="w-3.5 h-3.5 text-primary/60 flex-shrink-0" />
+                            <span className="truncate line-through decoration-muted-foreground/40">{parts!.quiz.question}</span>
+                            {wasAnswered
+                              ? <span className="ml-auto flex-shrink-0 text-emerald-400">✓ {t('workspace.quizAnswered')}</span>
+                              : <span className="ml-auto flex-shrink-0 text-muted-foreground/80">{t('workspace.quizSuperseded')}</span>}
                           </div>
                         )}
                       </>
                     )}
                   </div>
+                  {/* Grow-this-turn: any exchange can become a branch — the
+                      seed question is the turn's text, editable before
+                      sending. Faded until hover on pointers; always visible
+                      (and tappable) on touch. */}
+                  <button
+                    onClick={() => setGrowSeed((m.role === 'assistant' ? (parts?.text ?? m.content) : m.content).trim().slice(0, 500))}
+                    className="mt-1 inline-flex items-center gap-1 text-[10px] text-emerald-300/50 hover:text-emerald-300 sm:opacity-0 sm:group-hover/turn:opacity-100 transition-opacity"
+                  >
+                    <Sprout className="w-3 h-3" /> {t('workspace.growThisTurn')}
+                  </button>
                 </motion.div>
               )
             })}
             {streaming && streamText && (
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
-                  <MarkdownRenderer content={streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0]} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                  {(() => {
+                    const visible = streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0]
+                    return (
+                      /* Keyed by length-bucket so a transient mid-stream parse
+                         failure retries as more text arrives instead of
+                         locking the bubble in plain text. */
+                      <MessageErrorBoundary key={`stream:${Math.floor(visible.length / 400)}`} fallbackText={visible}>
+                        <MarkdownRenderer content={visible} imageContext={node ? `${node.title} — ${node.summary}` : ''} />
+                      </MessageErrorBoundary>
+                    )
+                  })()}
                   <span className="inline-block w-0.5 h-4 bg-primary animate-pulse rounded-full align-middle ml-0.5" />
                 </div>
               </div>
@@ -945,6 +1026,14 @@ function WorkspaceInner() {
                     </button>
                   )
                 )}
+                {/* A checkpoint can seed growth too: the question that stumps
+                    you is often the branch you need. */}
+                <button
+                  onClick={() => setGrowSeed(activeQuiz.question.trim().slice(0, 500))}
+                  className="inline-flex items-center gap-1 text-[10px] text-emerald-300/60 hover:text-emerald-300 transition-colors"
+                >
+                  <Sprout className="w-3 h-3" /> {t('workspace.growThisTurn')}
+                </button>
                 {/* Metacognitive calibration — confident-wrong answers get the
                     hypercorrection treatment from the judge. */}
                 <div className="flex items-center gap-1.5">
@@ -1205,10 +1294,32 @@ function WorkspaceInner() {
                   )}
                 </div>
                 {node?.explainer ? (
-                  <div className="text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-72 overflow-y-auto">
-                    <div ref={explainerBodyRef}>
-                      <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                  <div className="space-y-2">
+                    {/* Preview only — fullscreen is the DEFAULT reading
+                        surface (the old ~290px scroll box demoted a full
+                        textbook chapter to a peephole). Clicking anywhere
+                        opens the full view. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setExplainerFull(true)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExplainerFull(true) } }}
+                      className="relative w-full text-left text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-44 overflow-hidden cursor-pointer hover:border-primary/40 transition-colors"
+                      title={t('workspace.explainerOpenFull')}
+                    >
+                      <div ref={explainerBodyRef} className="pointer-events-none">
+                        <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
+                          <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                        </MessageErrorBoundary>
+                      </div>
+                      <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-card to-transparent rounded-b-xl pointer-events-none" />
                     </div>
+                    <button
+                      onClick={() => setExplainerFull(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium py-2.5 hover:bg-primary/20 transition-colors"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" /> {t('workspace.explainerOpenFull')}
+                    </button>
                   </div>
                 ) : (
                   <button
@@ -1347,6 +1458,19 @@ function WorkspaceInner() {
         )}
       </div>
 
+      {/* Grow-branch dialog — proposals are pending ghosts; approved
+          children attach under THIS node (permission-based, per FOUNDATION). */}
+      {growSeed !== null && node && treeId && nodeId && (
+        <GrowBranchDialog
+          treeId={treeId}
+          nodeId={nodeId}
+          nodeTitle={node.title}
+          seedQuestion={growSeed}
+          onClose={() => setGrowSeed(null)}
+          onGrown={loadTree}
+        />
+      )}
+
       {/* Fullscreen explainer — the same rendered content at reading width,
           with PDF export. Esc or ✕ closes. */}
       {explainerFull && node?.explainer && (
@@ -1376,7 +1500,9 @@ function WorkspaceInner() {
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-3xl mx-auto px-5 py-8 text-[15px] leading-relaxed">
               <div ref={explainerFullRef}>
-                <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
+                  <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                </MessageErrorBoundary>
               </div>
             </div>
           </div>

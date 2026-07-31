@@ -34,7 +34,7 @@ import type { CopilotAction } from '@/lib/tree-engine'
 interface CopilotTree { id: string; title: string; framing: string | null }
 interface GhostChip { id: string; title: string; summary: string }
 
-export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
+export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pendingIds }: {
   tree: CopilotTree
   onChanged: () => Promise<void> | void
   /** Re-fit the canvas; occludeTopPx = viewport pixels (from the canvas top)
@@ -46,10 +46,21 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
    *  reach the list's search box and rows beneath) and the cloud shows only
    *  the latest exchange. */
   listMode?: boolean
+  /** LIVE pending-ghost ids from the tree — the single truth for "awaiting
+   *  approval": ghosts approved/rejected ANYWHERE (canvas, list, grow box)
+   *  drop out of the copilot's chips and status line immediately. */
+  pendingIds?: Set<string>
 }) {
   const { t, language } = useLanguage()
   const [open, setOpen] = useState(false)
   const [thread, setThread] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
+  // Turns exchanged in THIS visit — the ambient cloud shows only these.
+  // Rehydrated history belongs to the full view; painting it over the canvas
+  // on every page load made the overlay feel undismissable.
+  const [liveTurns, setLiveTurns] = useState(0)
+  // Cloud dismissal: hides the current bubbles/chips overlay until the next
+  // exchange (the pill stays). Reset on send.
+  const [cloudDismissed, setCloudDismissed] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -138,11 +149,27 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
       .catch(() => { /* fresh thread */ })
   }, [loaded, tree.id])
 
+  // Ghost chips reconciled against the LIVE tree: approving/rejecting on the
+  // canvas or list retires them here too — no immortal "Proposed 3 —
+  // awaiting your approval", no re-offering already-added nodes.
+  const displayGhosts = pendingIds ? ghosts.filter(g => pendingIds.has(g.id)) : ghosts
+  useEffect(() => {
+    if (pendingIds && ghosts.some(g => !pendingIds.has(g.id))) {
+      setGhosts(g => g.filter(x => pendingIds.has(x.id)))
+      // The "Proposed n" status note describes the ghost set — drop it the
+      // moment the set it described no longer exists.
+      setNote(n => (n?.tone === 'ok' ? null : n))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingIds])
+
   async function send(preset?: string) {
     const msg = (preset ?? input).trim()
     if ((!msg && attachments.length === 0) || busyRef.current) return
     busyRef.current = true
     setBusy(true); setNote(null); setFaded(false)
+    setCloudDismissed(false)
+    setLiveTurns(n => n + 1)
     const payload = attachments
     setThread(t2 => [...t2, { role: 'user', content: attachmentLabel(msg, payload) }])
     setInput(''); clearAttachments()
@@ -154,10 +181,12 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) {
+        setLiveTurns(n => n + 1)
         setThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
         return
       }
       const reply = typeof body.reply === 'string' && body.reply.trim() ? body.reply.trim() : t('tree.proposeFailed')
+      setLiveTurns(n => n + 1)
       setThread(t2 => [...t2, { role: 'assistant', content: reply }])
       const proposals = Array.isArray(body.proposals) ? body.proposals : []
       if (proposals.length > 0) {
@@ -190,6 +219,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
       if (!open) setTimeout(fitAvoidingCloud, 200)
       else if (proposals.length > 0) setTimeout(() => fit(0), 150)
     } catch {
+      setLiveTurns(n => n + 1)
       setThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
     } finally {
       busyRef.current = false
@@ -283,6 +313,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
         body: JSON.stringify({ action: 'set_purpose', purpose: purposeProposal }),
       })
       if (res.ok) {
+        setLiveTurns(n => n + 1)
         setThread(t2 => [...t2, { role: 'assistant', content: `${t('tree.copilotPurposeApplied')} — ${purposeProposal}` }])
         setPurposeProposal(null)
         await onChanged()
@@ -320,7 +351,8 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
     <>
       {/* AMBIENT MODE — the Spotlight pill + cloud of recent bubbles.
           pointer-events pass through the empty column; only the bubbles and
-          the pill catch clicks, so the canvas stays fully interactive. */}
+          the pill catch clicks, so the canvas stays fully interactive.
+          List view: pass-through bubbles + latest exchange only (listMode). */}
       <AnimatePresence>
         {!open && (
           <motion.div
@@ -376,8 +408,10 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
               </button>
             </div>
 
-            {/* The cloud — only the latest exchanges, translucent, so ghost
-                nodes forming on the canvas stay in view behind them. */}
+            {/* The cloud — only THIS VISIT's exchanges, translucent, so ghost
+                nodes forming on the canvas stay in view behind them.
+                Rehydrated history lives in the full view only, and ✕ hides
+                the cloud until the next exchange. */}
             {/* Empty-state suggestion chips — tap to ask, no typing needed. */}
             {thread.length === 0 && !busy && !listMode && (
               <div className={cn('flex flex-wrap gap-1.5 transition-opacity duration-300', faded ? 'opacity-20 pointer-events-none' : 'pointer-events-auto')}>
@@ -397,18 +431,33 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
                 out as bubbles stream shifts the right-aligned user bubbles
                 sideways. The 3-bubble peek needs no visible bar — trackpad
                 scrolling still works, and the full view has a real one. */}
-            {(thread.length > 0 || busy) && (
+            {!cloudDismissed && (liveTurns > 0 || busy) && (
               /* TRANSPARENT WHEN THE STUDENT IS WORKING: interacting with the
                  tree/list beneath fades the transcript and lets clicks pass
                  straight through it. In list mode the bubbles are ALWAYS
                  pass-through (they'd otherwise wall off the search box) —
-                 only the chips inside stay tappable. */
+                 only the chips inside stay tappable. Shows only THIS visit's
+                 exchanges (rehydrated history lives in the full view), and
+                 the ✕ hides the cloud until the next exchange. */
               <div className={cn(
                 'space-y-1.5 max-h-[30vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity duration-300',
                 faded ? 'opacity-20 pointer-events-none' : listMode ? 'pointer-events-none' : 'pointer-events-auto',
               )}>
-                {thread.slice(listMode ? -2 : -3).map((m, i) => (
-                  <div key={thread.length - Math.min(3, thread.length) + i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                {/* Dismiss the cloud — the pill stays; the conversation is
+                    intact behind the expand button. Tappable in list mode too. */}
+                {!faded && (
+                  <div className="flex justify-end pointer-events-auto">
+                    <button
+                      onClick={() => setCloudDismissed(true)}
+                      className="inline-flex items-center gap-1 rounded-full border border-border/50 bg-card/70 backdrop-blur-md text-[10px] text-muted-foreground hover:text-foreground px-2 py-0.5 shadow transition-colors"
+                      aria-label={t('common.dismiss')}
+                    >
+                      <X className="w-3 h-3" /> {t('common.dismiss')}
+                    </button>
+                  </div>
+                )}
+                {thread.slice(-Math.min(listMode ? 2 : 3, liveTurns)).map((m, i) => (
+                  <div key={thread.length - Math.min(listMode ? 2 : 3, liveTurns) + i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                     <div className={cn(
                       'rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-lg backdrop-blur-md',
                       m.role === 'user'
@@ -425,10 +474,11 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
                   </div>
                 )}
                 {/* Ghosts land as dashed nodes ON the canvas (approve there);
-                    a one-line note keeps the cloud aware without duplicating. */}
-                {ghosts.length > 0 && !busy && (
+                    a one-line note keeps the cloud aware without duplicating.
+                    Counts the LIVE pending set — approvals anywhere retire it. */}
+                {displayGhosts.length > 0 && !busy && (
                   <p className="text-[11px] text-emerald-300/90 flex items-center gap-1.5 px-1">
-                    <Sprout className="w-3 h-3" /> {t('tree.proposedN').replace('{n}', String(ghosts.length))} — {t('tree.awaitingApproval')}
+                    <Sprout className="w-3 h-3" /> {t('tree.proposedN').replace('{n}', String(displayGhosts.length))} — {t('tree.awaitingApproval')}
                   </p>
                 )}
                 {/* Reshape chips — these exist ONLY here, so they must be
@@ -571,13 +621,15 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false }: {
                   </div>
                 )}
 
-                {/* Proposed ghosts — approvable right here (the canvas is behind us) */}
-                {ghosts.length > 0 && !busy && (
+                {/* Proposed ghosts — approvable right here (the canvas is
+                    behind us). Only ghosts still pending on the LIVE tree:
+                    already-added nodes are never re-offered. */}
+                {displayGhosts.length > 0 && !busy && (
                   <div className="max-w-[92%] border border-dashed border-emerald-400/40 bg-emerald-500/[0.05] rounded-2xl rounded-bl-sm px-4 py-3 space-y-2">
                     <p className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
                       <Sprout className="w-3.5 h-3.5" /> {t('tree.awaitingApproval')}
                     </p>
-                    {ghosts.map(g => (
+                    {displayGhosts.map(g => (
                       <div key={g.id} className="rounded-lg border border-dashed border-emerald-400/40 bg-background/60 px-3 py-2">
                         <p className="text-xs font-bold text-foreground leading-snug">{g.title}</p>
                         {g.summary && <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{g.summary}</p>}

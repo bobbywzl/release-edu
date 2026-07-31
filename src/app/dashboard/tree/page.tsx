@@ -206,26 +206,9 @@ export default function TreePage() {
     setTrees(prev => prev?.filter(tr => tr.id !== id) ?? prev)
   }
 
-  // ── Consolidation: the learner closes out a tree ──
-  // The panel plays a golden "settling" pulse, then keeps the consolidated
-  // (amber) look permanently. Trees also auto-complete when every node
-  // verifies; this button is the deliberate hand-on-the-cover moment.
-  const [consolidating, setConsolidating] = useState<string | null>(null)
-  async function markComplete(id: string) {
-    if (consolidating || !confirm(t('tree.completeConfirm'))) return
-    setConsolidating(id)
-    try {
-      await fetch(`/api/tree/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'completed' }),
-      })
-    } catch { /* transient — the animation still resolves; reload reflects truth */ }
-    setTimeout(() => {
-      setTrees(prev => prev?.map(tr => (tr.id === id ? { ...tr, status: 'completed' } : tr)) ?? prev)
-      setConsolidating(null)
-    }, 950)
-  }
+  // Manual "Mark as complete" is GONE (user decision, Jul 2026): mastery is
+  // AI-verified only — a tree completes when its ROOT verifies, which the
+  // engine grants at verification time (markNodeVerified). No self-marking.
 
   // ── Tree Digest: the session's status report, built from tree state ──
   // Key numbers (strictly from real evidence), findings, progress made,
@@ -600,24 +583,14 @@ export default function TreePage() {
         {trees?.map(tree => {
           const pct = tree.nodeCount > 0 ? Math.round((tree.understoodCount / tree.nodeCount) * 100) : 0
           const consolidated = tree.status === 'completed'
-          const settling = consolidating === tree.id
           return (
             <Link key={tree.id} href={`/dashboard/tree/${tree.id}`} className="block group">
               <motion.div
-                animate={settling ? {
-                  scale: [1, 1.03, 1],
-                  boxShadow: [
-                    '0 0 0px rgba(251,191,36,0)',
-                    '0 0 42px rgba(251,191,36,0.5)',
-                    '0 0 0px rgba(251,191,36,0)',
-                  ],
-                } : {}}
-                transition={{ duration: 0.95, ease: 'easeInOut' }}
                 className={cn(
                   'border rounded-xl p-4 transition-colors',
-                  // Consolidated trees settle into a golden panel — done,
-                  // sealed, and worth coming back to review.
-                  consolidated || settling
+                  // Completed (root-verified) trees settle into a golden
+                  // panel — done, sealed, and worth coming back to review.
+                  consolidated
                     ? 'border-amber-400/45 bg-amber-500/[0.07] hover:border-amber-400/70'
                     : 'border-border bg-card hover:border-primary/40',
                 )}
@@ -655,17 +628,7 @@ export default function TreePage() {
                       {reviewBusy === tree.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                       {t('tree.review')}
                     </button>
-                  ) : (
-                    <button
-                      onClick={e => { e.preventDefault(); markComplete(tree.id) }}
-                      disabled={settling}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground text-[11px] font-medium hover:text-amber-300 hover:border-amber-400/40 hover:bg-amber-500/10 transition-colors flex-shrink-0 disabled:opacity-50"
-                      title={t('tree.markCompleteHint')}
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      {t('tree.markComplete')}
-                    </button>
-                  )}
+                  ) : null}
                   <button
                     onClick={e => { e.preventDefault(); deleteTree(tree.id) }}
                     className="p-1.5 rounded-md text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors flex-shrink-0"

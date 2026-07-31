@@ -183,7 +183,15 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
   }
   if (!raw) return fallback
   try {
-    const p = JSON.parse(raw) as Partial<QuizState>
+    let parsed: unknown = JSON.parse(raw)
+    // Tolerate a double-encoded payload (a JSON string containing JSON —
+    // seen in the wild on quizState): unwrap instead of silently zeroing
+    // the whole mastery tally.
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed) } catch { return fallback }
+    }
+    if (!parsed || typeof parsed !== 'object') return fallback
+    const p = parsed as Partial<QuizState>
     const facets = Array.isArray(p.facets)
       ? p.facets
         .filter(f => f && typeof f.name === 'string' && f.name.trim())
