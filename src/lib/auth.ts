@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
 
 // ── Vercel PREVIEW deployments: pin OAuth to the STABLE branch URL ──
 // Without NEXTAUTH_URL, NextAuth v4 falls back to VERCEL_URL — the
@@ -31,6 +32,25 @@ export const authOptions: NextAuthOptions = {
           access_type: "offline",
           prompt: "select_account",
         },
+      },
+    }),
+    // ── AGENT TEST LOGIN — env-gated, OFF by default ──
+    // Exists so an automated QA agent (browser-driving user simulation) can
+    // sign in WITHOUT Google OAuth. Completely inert unless TEST_LOGIN_TOKEN
+    // is set in the environment (min 16 chars); signing in requires that
+    // exact token. Never rendered on the login page (custom /login has no
+    // credentials form) — used programmatically via
+    // signIn("agent-test", { token }). Always lands on the SAME dedicated
+    // test user, so QA data stays in one wipeable account.
+    CredentialsProvider({
+      id: "agent-test",
+      name: "Agent Test Login",
+      credentials: { token: { label: "token", type: "password" } },
+      async authorize(credentials) {
+        const expected = process.env.TEST_LOGIN_TOKEN;
+        if (!expected || expected.length < 16) return null;
+        if (!credentials?.token || credentials.token !== expected) return null;
+        return { id: "agent-test-user", email: "agent-test@tree-edu.internal", name: "Agent Tester" };
       },
     }),
   ],
