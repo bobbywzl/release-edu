@@ -234,14 +234,16 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
         />
       </div>
 
-      {/* Learning path: numbered stop, and THE next recommended node. */}
-      {!n.pending && n.parentId !== null && n.status !== 'understood' && data.pathIndex != null && (
+      {/* Learning path: numbered stop, and THE next recommended node.
+          Verified nodes keep their (dimmer) number too — the copilot cites
+          nodes by these exact #labels, so every real node must wear one. */}
+      {!n.pending && n.parentId !== null && data.pathIndex != null && (
         data.isNext ? (
           <span className="mt-0.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 text-[9px] font-bold animate-pulse whitespace-nowrap">
             ▶ {t('tree.startHere')} · #{data.pathIndex}
           </span>
         ) : (
-          <span className="mt-0.5 text-[9px] text-muted-foreground/70 font-semibold">#{data.pathIndex}</span>
+          <span className={cn('mt-0.5 text-[9px] font-semibold', n.status === 'understood' ? 'text-emerald-400/60' : 'text-muted-foreground/70')}>#{data.pathIndex}</span>
         )
       )}
 
@@ -361,7 +363,9 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-3xl mx-auto p-4 lg:p-6 space-y-3">
+      {/* pt clears the copilot pill floating over the viewport's top-left —
+          the search box and first rows must never start underneath it. */}
+      <div className="max-w-3xl mx-auto p-4 lg:p-6 pt-20 lg:pt-20 space-y-3">
         {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -819,8 +823,9 @@ function TreeCanvasInner() {
           setSettling(false)
           // Mount-time fitView ran before the organic layout settled, which
           // left first-run trees as a tiny corner cluster — refit now so the
-          // tree greets the user centered and readable.
-          setTimeout(() => { try { flow.fitView({ padding: 0.25, maxZoom: 1.5, duration: 500 }) } catch { /* non-critical */ } }, 30)
+          // tree greets the user centered and readable. Generous padding +
+          // capped zoom so the ROOT's title never clips at the bottom edge.
+          setTimeout(() => { try { flow.fitView({ padding: 0.28, maxZoom: 1.2, duration: 500 }) } catch { /* non-critical */ } }, 30)
         }, 950)
       }, 60)
     } else {
@@ -972,13 +977,27 @@ function TreeCanvasInner() {
               onPaneClick={() => setSelectedId(null)}
               fitView
               fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-              minZoom={0.15}
+              // FLUID NAVIGATION (the canvas is the signature surface — it
+              // must never feel stuck): drag empty space to pan, trackpad
+              // two-finger scroll pans (Figma-style), pinch or Ctrl/Cmd+wheel
+              // zooms. Double-click zoom off — it fires on accidental
+              // double-taps of nodes.
+              panOnDrag
+              panOnScroll
+              zoomOnPinch
+              zoomOnScroll={false}
+              zoomActivationKeyCode={['Meta', 'Control']}
+              zoomOnDoubleClick={false}
+              minZoom={0.1}
+              maxZoom={2.5}
               proOptions={{ hideAttribution: true }}
               nodesDraggable
               nodesConnectable={false}
             >
               <Background gap={24} size={1} />
-              <Controls showInteractive={false} />
+              {/* The fit button must actually FIT: generous padding, capped
+                  zoom, and a smooth glide instead of a teleport. */}
+              <Controls showInteractive={false} fitViewOptions={{ padding: 0.28, maxZoom: 1.2, duration: 400 }} />
             </ReactFlow>
             {/* The ground the tree grows from */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-emerald-500/[0.08] to-transparent" />
@@ -1123,6 +1142,7 @@ function TreeCanvasInner() {
       <TreeCopilot
         tree={tree}
         onChanged={load}
+        listMode={view === 'list'}
         stats={{ verified: understood, total }}
         // REACTIVE VIEW ADJUSTER (law: the copilot must never block the tree
         // or a ghost popping up): after each copilot turn the canvas re-fits

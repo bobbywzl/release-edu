@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
-import { collectSubtreeIds } from '@/lib/tree-engine'
+import { collectSubtreeIds, normalizeTreeKinds } from '@/lib/tree-engine'
 import { parseQuizState, masteryMet, type QuizState } from '@/lib/mastery'
 
 export async function PATCH(
@@ -63,6 +63,9 @@ export async function PATCH(
           }
         }
       } catch { /* malformed plan — the plain approval stands */ }
+      // KIND = DEPTH (small-to-big law): an insert-a-layer adoption shifts
+      // whole subtrees one level down — re-derive every kind from live depth.
+      await normalizeTreeKinds(id)
       return NextResponse.json({ ok: true })
     }
     case 'split': {
@@ -106,6 +109,7 @@ export async function PATCH(
           }
         }
       } catch { /* non-critical — conversation move is best-effort */ }
+      await normalizeTreeKinds(id)
       return NextResponse.json({ ok: true, node: created })
     }
     case 'merge': {
@@ -178,6 +182,8 @@ export async function PATCH(
         },
       })
       await prisma.treeNode.delete({ where: { id: nodeId } })
+      // The merged node's children re-parented under the target — re-derive kinds.
+      await normalizeTreeKinds(id)
       return NextResponse.json({ ok: true })
     }
     case 'spinoff': {
@@ -204,6 +210,8 @@ export async function PATCH(
       })
       await prisma.treeNode.updateMany({ where: { id: { in: subtree }, treeId: id }, data: { treeId: newTree.id } })
       await prisma.treeNode.update({ where: { id: nodeId }, data: { parentId: null, kind: 'root' } })
+      // The spun-off subtree's depths all shifted up — re-derive its kinds.
+      await normalizeTreeKinds(newTree.id)
       return NextResponse.json({ ok: true, newTreeId: newTree.id })
     }
     case 'rebalance': {
@@ -238,6 +246,7 @@ export async function PATCH(
         where: { id: nodeId },
         data: { quizState: JSON.stringify({ ...qs, facets: remaining }) },
       })
+      await normalizeTreeKinds(id)
       return NextResponse.json({ ok: true, node: created })
     }
     case 'reorder': {
@@ -280,6 +289,7 @@ export async function PATCH(
           pending: false, order: siblings, origin: 'manual',
         },
       })
+      await normalizeTreeKinds(id)
       return NextResponse.json({ ok: true, node: created })
     }
     case 'edit': {
@@ -325,6 +335,8 @@ export async function PATCH(
       }
       const siblings = await prisma.treeNode.count({ where: { parentId: newParentId } })
       await prisma.treeNode.update({ where: { id: nodeId }, data: { parentId: newParentId, order: siblings } })
+      // The whole moved subtree changed depth — re-derive kinds.
+      await normalizeTreeKinds(id)
       return NextResponse.json({ ok: true })
     }
     case 'delete': {
