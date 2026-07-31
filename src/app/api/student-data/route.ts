@@ -1,8 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { getSlotAwareSession } from '@/lib/session-slots'
 import { dbStore } from '@/lib/db-store'
 import prisma from '@/lib/prisma'
 
@@ -23,7 +22,7 @@ function safeParseJSON<T>(val: string | null | undefined, fallback: T): T {
 export async function GET() {
   // Login is required product-wide (demo mode is gone). Middleware already
   // 401s unauthenticated callers; this is the in-route backstop.
-  const session = await getServerSession(authOptions)
+  const session = await getSlotAwareSession()
   if (!session?.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

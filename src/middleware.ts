@@ -42,9 +42,18 @@ export async function middleware(request: NextRequest) {
   // Authenticated-caller gate for the user-data APIs (a 401, never a redirect
   // — these are fetch() targets). /api/teacher/* additionally enforces admin
   // in its handlers; here we only require a signed-in caller.
+  // PER-TAB ACCOUNTS: a tab bound to an account slot sends x-account-slot;
+  // the header only SELECTS which signed slot cookie to verify — the cookie
+  // signature stays the sole credential. Unbound tabs use the main session.
   if (isUserApi) {
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-    if (!token) {
+    const secret = process.env.NEXTAUTH_SECRET
+    const slotHeader = request.headers.get('x-account-slot')
+    let authed = false
+    if (slotHeader && /^[0-4]$/.test(slotHeader)) {
+      authed = !!(await getToken({ req: request, secret, cookieName: `tree-session-slot-${slotHeader}` }))
+    }
+    if (!authed) authed = !!(await getToken({ req: request, secret }))
+    if (!authed) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     return NextResponse.next()
@@ -88,9 +97,15 @@ export async function middleware(request: NextRequest) {
 
   // Student dashboard — a signed-in session is required, no exceptions
   // (demo mode is gone; the web app is unusable without logging in).
-  const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-
-  if (!token) {
+  // Page navigations can't carry the slot header, so ANY live session —
+  // the main cookie or any account slot — passes the gate; the page's own
+  // fetches then resolve the tab's bound identity.
+  const secret = process.env.NEXTAUTH_SECRET
+  let anySession = !!(await getToken({ req: request, secret }))
+  for (let i = 0; i < 5 && !anySession; i++) {
+    anySession = !!(await getToken({ req: request, secret, cookieName: `tree-session-slot-${i}` }))
+  }
+  if (!anySession) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   return NextResponse.next()

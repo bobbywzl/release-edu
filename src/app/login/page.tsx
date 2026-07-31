@@ -40,6 +40,15 @@ export default function LoginPage() {
   // re-opens Google's account chooser — the "jumping around / back to login".
   useEffect(() => {
     let cancelled = false
+    // "Switch account" entry point: an explicit /login?switch=1 visit must
+    // SHOW the form even with a live session — the whole point is adding a
+    // different account for THIS tab (per-tab account slots).
+    try {
+      if (new URLSearchParams(window.location.search).has('switch')) {
+        setCheckingSession(false)
+        return () => { cancelled = true }
+      }
+    } catch { /* SSR-safe: effect only runs client-side anyway */ }
     fetch('/api/auth/session')
       .then(r => (r.ok ? r.json() : null))
       .then(s => {
@@ -53,12 +62,16 @@ export default function LoginPage() {
 
   const handleSignUp = async () => {
     setSignUpLoading(true)
+    // This tab is choosing a (possibly new) account — drop its old slot
+    // binding so it adopts whoever completes the OAuth flow.
+    try { sessionStorage.removeItem('tree-account-slot') } catch { /* private mode */ }
     // Always go to /dashboard — it checks isOnboarded and routes accordingly
     await signIn('google', { callbackUrl: '/dashboard' })
   }
 
   const handleSignIn = async () => {
     setSignInLoading(true)
+    try { sessionStorage.removeItem('tree-account-slot') } catch { /* private mode */ }
     await signIn('google', { callbackUrl: '/dashboard' })
   }
 
