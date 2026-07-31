@@ -54,8 +54,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Ownership check up front (copilotTurn re-checks, but attachments are
   // analyzed before the turn — never burn Gemini calls for a foreign tree).
-  const tree = await prisma.problemTree.findFirst({ where: { id, userId }, select: { id: true, title: true, purpose: true } })
+  const tree = await prisma.problemTree.findFirst({ where: { id, userId }, select: { id: true, title: true, purpose: true, language: true } })
   if (!tree) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // PER-USER DAILY BUDGET — same gate as the node chat (the two expensive
+  // doors). Fail-open on telemetry errors.
+  try {
+    const { checkDailyBudget, budgetMessage } = await import('@/lib/ai-budget')
+    const budget = await checkDailyBudget(userId)
+    if (!budget.ok) {
+      return NextResponse.json({ error: budgetMessage((tree.language ?? body.lang) === 'zh') }, { status: 429 })
+    }
+  } catch { /* fail-open */ }
 
   // ── Analyze attachments (image / audio / video / pdf / text) ──
   // Shared pipeline with the node workspace chat (src/lib/attachments.ts):

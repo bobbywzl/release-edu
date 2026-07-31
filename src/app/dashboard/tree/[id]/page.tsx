@@ -572,6 +572,111 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
   )
 }
 
+// ── THE ROOT ANSWER (side-panel doc on the root node) ───────────────────
+// The assembled resolution of the root problem, built from the verified
+// nodes' digests — generated automatically on tree completion, and on
+// demand from here once anything is verified. Claim tags name the node
+// that proved each point; an honest-boundary section covers the rest.
+
+function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified: boolean }) {
+  const { t, language } = useLanguage()
+  const [answer, setAnswer] = useState<string | null>(null)
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/tree/${treeId}/answer`, { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d) return
+        setAnswer(typeof d.answer === 'string' && d.answer.trim() ? d.answer : null)
+        setGeneratedAt(d.generatedAt ?? null)
+      })
+      .catch(() => { /* panel just shows the generate button */ })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [treeId])
+
+  async function generate() {
+    if (generating) return
+    setGenerating(true); setNote(null)
+    try {
+      const res = await fetch(`/api/tree/${treeId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang: language }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && typeof body.answer === 'string') {
+        setAnswer(body.answer)
+        setGeneratedAt(body.generatedAt ?? new Date().toISOString())
+        setExpanded(true)
+      } else {
+        setNote(typeof body.error === 'string' ? body.error : t('tree.actionFailed'))
+      }
+    } catch {
+      setNote(t('tree.actionFailed'))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  if (loading) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+  if (!answer && !hasVerified) return null
+  return (
+    <div className="border border-amber-400/30 rounded-xl p-3 space-y-2 bg-amber-500/[0.04]">
+      <p className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+        <FileText className="w-3.5 h-3.5" /> {t('tree.rootAnswerTitle')}
+      </p>
+      {answer ? (
+        <>
+          <div className={cn('text-[13px] leading-relaxed overflow-hidden relative', !expanded && 'max-h-48')}>
+            <MarkdownRenderer content={answer} />
+            {!expanded && <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />}
+          </div>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="w-full rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent py-1.5 transition-colors"
+          >
+            {expanded ? t('tree.rootAnswerCollapse') : t('tree.rootAnswerExpand')}
+          </button>
+          <div className="flex items-center gap-2">
+            {generatedAt && (
+              <span className="text-[10px] text-muted-foreground/70 flex-1">
+                {new Date(generatedAt).toLocaleString()}
+              </span>
+            )}
+            <button
+              onClick={generate}
+              disabled={generating}
+              className="inline-flex items-center gap-1 rounded-lg border border-amber-400/40 text-amber-300 text-[11px] px-2 py-1 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
+            >
+              {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : null} {t('tree.rootAnswerRegen')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.rootAnswerHint')}</p>
+          <button
+            onClick={generate}
+            disabled={generating}
+            className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-medium py-2 hover:bg-amber-500/25 transition-colors disabled:opacity-50"
+          >
+            {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+            {generating ? t('tree.rootAnswerGenerating') : t('tree.rootAnswerGenerate')}
+          </button>
+        </>
+      )}
+      {note && <p className="text-[11px] text-amber-400">{note}</p>}
+    </div>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────
 
 function TreeCanvasInner() {
@@ -1053,7 +1158,13 @@ function TreeCanvasInner() {
 
               {!selected.pending && (
                 <>
-                  {selected.parentId === null ? null : (
+                  {selected.parentId === null ? (
+                    /* THE ROOT ANSWER — the root has no workspace by law, but
+                       it now carries the tree's payoff artifact: the assembled
+                       resolution of the problem, built from every verified
+                       node's digest. */
+                    <RootAnswerPanel treeId={tree.id} hasVerified={understood > 0} />
+                  ) : (
                   <button
                     onClick={() => {
                       try {

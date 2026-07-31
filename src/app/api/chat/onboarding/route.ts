@@ -24,6 +24,7 @@ Cover these topics, in whatever order flows naturally — EXCEPT the last one, w
 2. What they're passionate about and what they want to build, achieve, or become
 3. The LEVEL of depth/rigor they want — beginner, intermediate, advanced, or professional/expert. Ask this directly and explicitly (e.g. "How deep should this go — a friendly introduction, a solid intermediate footing, an advanced/rigorous treatment, or full professional/expert depth?"). This calibrates every explainer they will ever read, so do NOT skip it or guess it — confirm it in their words.
 4. FINAL QUESTION — always last, always on its own, always bolded exactly like this: **What is the specific problem you want to master?** Explain in one sentence first that this problem becomes the ROOT of their first learning tree — the more specific, the better ("how do I grow consistently sweet strawberries" beats "botany"). Their answer to THIS question is the single most important thing you collect.
+5. THE PURPOSE — immediately after they name the problem, ONE follow-up: what will they DO with mastery of it (fix a real thing they own, pass an exam, build a product, teach someone, pure understanding…)? This defines what "relevant" means for their whole session — every branch and answer is calibrated against it. If their earlier answers already made the purpose obvious, confirm it in one clause instead of re-asking. Only after this is answered do you summarize and emit [PROFILE_COMPLETE].
 
 If one answer covers multiple items, skip ahead — do NOT ask questions you already have answers to. After they answer the final problem question, give a one-sentence summary and IMMEDIATELY output [PROFILE_COMPLETE] followed by the JSON block in the SAME message.
 
@@ -48,10 +49,11 @@ Once done, output [PROFILE_COMPLETE]:
   "personalityTraits": ["trait1", "trait2"],
   "aspirations": "what they want to become or build",
   "advancementLevel": "one of: beginner | intermediate | advanced | professional — the depth/rigor the student asked for",
-  "problem": "the student's answer to the final question — the specific problem they want to master, in their own words"
+  "problem": "the student's answer to the final question — the specific problem they want to master, in their own words",
+  "purpose": "what they will DO with mastery of this problem — 1-2 sentences in their own words; this defines relevance for their whole session"
 }
 
-Only output [PROFILE_COMPLETE] once the final problem question has been answered — "problem" is required.
+Only output [PROFILE_COMPLETE] once the final problem question AND the purpose follow-up have been answered — "problem" and "purpose" are both required.
 
 ---
 

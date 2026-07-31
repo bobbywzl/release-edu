@@ -182,7 +182,10 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
       const body = await res.json().catch(() => ({}))
       if (!res.ok) {
         setLiveTurns(n => n + 1)
-        setThread(t2 => [...t2, { role: 'assistant', content: t('tree.proposeFailed') }])
+        // 429 = the daily AI budget — the server's message is localized and
+        // actionable; anything else keeps the generic line.
+        const budgetNote = res.status === 429 && typeof body?.error === 'string' && body.error.trim() ? body.error : null
+        setThread(t2 => [...t2, { role: 'assistant', content: budgetNote ?? t('tree.proposeFailed') }])
         return
       }
       const reply = typeof body.reply === 'string' && body.reply.trim() ? body.reply.trim() : t('tree.proposeFailed')

@@ -172,8 +172,18 @@ export interface QuizState {
   facets?: SyllabusFacet[] | null
   /** Consecutive CORRECT answers on a contract-bearing node whose facet tag
    *  could not be resolved (missing / unmatched / ambiguous). Legit facet
-   *  credit resets it; at 2 the gated anti-stall backstop fires. */
+   *  credit resets it; at 2 the anti-stall directive to Bob fires (a
+   *  directive only — coverage NEVER advances without a resolved facet). */
   untaggedStreak?: number
+  /** Consecutive WRONG checkpoint answers — the app's own ground truth for
+   *  wheel-spinning. The chat route reads max(this, reflection.streakWrong),
+   *  so the analogy bridge / prerequisite chain / intervention switch fire
+   *  from judged answers, not only from typed confusion. */
+  wrongStreak?: number
+  /** A missed checkpoint whose law-mandated full remediation ([NODE_REMEDIATE])
+   *  has not happened yet — the debt survives tab closes and node switches;
+   *  the workspace fires the turn on mount and the chat route clears it. */
+  remediationOwed?: string | null
 }
 
 export function parseQuizState(raw: string | null | undefined): QuizState {
@@ -214,6 +224,8 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
       // treat as absent so the static fallback governs.
       facets: facets && facets.length >= 2 ? facets : null,
       untaggedStreak: Math.max(0, p.untaggedStreak ?? 0),
+      wrongStreak: Math.max(0, p.wrongStreak ?? 0),
+      remediationOwed: typeof p.remediationOwed === 'string' && p.remediationOwed.trim() ? p.remediationOwed.slice(0, 400) : null,
     }
   } catch {
     return fallback
