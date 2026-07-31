@@ -188,7 +188,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const isReview = msgText === '[NODE_REVIEW]'
   const isCheckpoint = msgText === '[NODE_CHECKPOINT]'
   const isRemediate = msgText === '[NODE_REMEDIATE]'
-  const isTrigger = isIntro || isReview || isCheckpoint || isRemediate
+  // [NODE_CONTINUE] — the learner tapped Continue on an answer that was cut
+  // off mid-sentence. Bob resumes exactly where he stopped; nothing about
+  // this is a student utterance, so it never feeds insight extraction.
+  const isContinue = msgText === '[NODE_CONTINUE]'
+  const isTrigger = isIntro || isReview || isCheckpoint || isRemediate || isContinue
 
   // One conversation per node, found by context tag. The window must be the
   // LATEST 40 messages (desc + reverse to chronological) — an ascending take
@@ -580,7 +584,12 @@ Write a full, TEXTBOOK-STYLE explainer of that specific piece of understanding �
 3. Draw the line explicitly between the misconception and the correct model — the exact point where their reasoning diverges from what's true.
 4. Optionally, one contrasting case that would trip the same misconception again, so the difference is felt, not just stated.
 Everything here obeys the Answer Standard above (Relevant to exactly this gap, never a field survey) and Per-Node Redundancy Avoidance — if the ALREADY COVERED section shows an ancestor already taught something this touches, reference it in one clause, never re-teach it.
-Close with ONE short, conversational, inviting question checking they're following ("does that land?" / "want me to walk the [specific piece] again a different way?") — plain prose only. Do NOT ask a new checkpoint this turn, do NOT offer to quiz them, and do NOT emit a [[QUIZ]] block — they need room to actually absorb this before being tested on it again. Asking resumes once they re-engage.` : ''}${reflectionBlock}`
+Close with ONE short, conversational, inviting question checking they're following ("does that land?" / "want me to walk the [specific piece] again a different way?") — plain prose only. Do NOT ask a new checkpoint this turn, do NOT offer to quiz them, and do NOT emit a [[QUIZ]] block — they need room to actually absorb this before being tested on it again. Asking resumes once they re-engage.` : ''}${isContinue ? `
+## THIS TURN: CONTINUE A CUT-OFF ANSWER
+Your previous reply was cut off mid-thought by a length limit — the student is looking at a half-finished explanation. Resume EXACTLY where it stopped and finish the thought.
+- Do NOT greet, do NOT apologise, do NOT recap, do NOT restate anything you already wrote. The student sees your earlier text directly above; your output is appended to it.
+- If the cut landed mid-sentence (or mid-formula), begin with the exact continuation of that sentence so the two halves read as one.
+- Finish what you were saying, then stop. Emit a [[QUIZ]] block ONLY if the cut-off turn was itself building to a checkpoint (never on a remediation turn).` : ''}${reflectionBlock}`
 
   const history = (conv!.messages ?? [])
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -604,6 +613,10 @@ Close with ONE short, conversational, inviting question checking they're followi
       // possible marker start ever leaves before we know what it is.
       const MARK_HOLD = Math.max(QUIZ_MARK.length, SYL_MARK.length)
       let sentLen = 0
+      // TRUNCATION: set when the model was guillotined by the token cap.
+      // A half-finished explanation is worse than none — the learner
+      // cannot tell whether they misread it or the app broke.
+      let truncated = false
       const forwardSafe = () => {
         const idxs = [full.indexOf(QUIZ_MARK), full.indexOf(SYL_MARK)].filter(i => i !== -1)
         const firstMark = idxs.length ? Math.min(...idxs) : -1
@@ -618,7 +631,10 @@ Close with ONE short, conversational, inviting question checking they're followi
         const client = new Anthropic({ apiKey })
         const response = client.messages.stream({
           model,
-          max_tokens: 2000,
+          // Long remediation turns were hitting the old 2000 cap and getting
+          // cut off mid-sentence (mid-LaTeX, even). Give real teaching room;
+          // the truncation marker below still catches the tail cases.
+          max_tokens: 3200,
           ...NO_THINKING,
           system: systemPrompt,
           messages: [...history, { role: 'user' as const, content: msgText || '(see the attachments above)' }],
@@ -632,6 +648,8 @@ Close with ONE short, conversational, inviting question checking they're followi
         // Cost telemetry for the streamed turn.
         try {
           const final = await response.finalMessage()
+          // stop_reason 'max_tokens' = the answer was cut off mid-thought.
+          if (final.stop_reason === 'max_tokens') truncated = true
           const { recordAnthropicUsage } = await import('@/lib/usage')
           recordAnthropicUsage(final.usage, { userId, model, feature: 'node-chat' })
         } catch { /* non-critical */ }
@@ -950,6 +968,17 @@ Return ONLY JSON: {"recitable": true|false}`,
         try { controller.enqueue(encoder.encode(`\n\n[[XP]]${JSON.stringify(turnXp)}`)) } catch { /* closed */ }
       }
 
+      // ── STREAM COMPLETION CONTRACT ──
+      // [[INCOMPLETE]] is PERSISTED: it survives reload so a half-written
+      // answer always carries its Continue/Regenerate controls, instead of
+      // reading as something the learner failed to understand.
+      // [[DONE]] is transient — its ABSENCE tells the client the connection
+      // dropped mid-answer (a dead socket produces no marker at all).
+      if (truncated) {
+        try { controller.enqueue(encoder.encode('\n\n[[INCOMPLETE]]')) } catch { /* closed */ }
+        persistContent = `${persistContent}\n\n[[INCOMPLETE]]`
+      }
+
       if (persistContent) {
         await store.addMessage(convId, 'assistant', persistContent).catch(() => null)
         // Keep the insight moat: background extraction every ~5th message.
@@ -987,6 +1016,9 @@ Return ONLY JSON: {"recitable": true|false}`,
           }
         } catch { /* non-critical */ }
       }
+      // Final handshake: a stream that ends WITHOUT this marker was cut off
+      // by the network/lambda, and the client offers Continue/Regenerate.
+      try { controller.enqueue(encoder.encode('\n\n[[DONE]]')) } catch { /* closed */ }
       try { controller.close() } catch { /* already closed */ }
     },
   })

@@ -85,9 +85,13 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
   const convByNodeId = new Map(nodeConvs.map(c => [c.context!.slice('tree-node:'.length), c]))
 
   // Evidence files attached to nodes in this product.
+  // Evidence files attached ANYWHERE in this product: per-node uploads
+  // (workType 'tree-node') AND files shared with the Tree Copilot at tree
+  // level (workType 'tree'). Counting only the former reported "0 evidence
+  // files" to learners who had genuinely uploaded their work.
   const nodeFiles = await prisma.linkedFile.findMany({
-    where: { userId, workType: 'tree-node' },
-    select: { name: true, workId: true, addedAt: true },
+    where: { userId, workType: { in: ['tree-node', 'tree'] } },
+    select: { name: true, workId: true, addedAt: true, workType: true },
   })
 
   // Root nodes (the problem statements) auto-flip to 'understood' on tree
@@ -125,6 +129,7 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
       metrics: { completionRate: 0, averagePace: 'Not enough data yet', consistencyScore: 0, qualityIndicators: [] },
       personalStatement: 'I am just beginning my journey on Tree EDU. This portfolio will grow with every problem I master.',
       insufficientData: true,
+      snapshot: { verifiedNodes: verifiedNodes.length, trees: trees.length, files: nodeFiles.length },
     }
     await prisma.portfolioCache.update({
       where: { userId },
@@ -139,7 +144,7 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
     const verified = nodes.filter(n => n.status === 'understood')
     const nodeLines = nodes.slice(0, 25).map(n => {
       const annotations = safeParse<Array<{ text: string }>>(n.annotations, [])
-      const files = nodeFiles.filter(f => f.workId === n.id)
+      const files = nodeFiles.filter(f => f.workType === 'tree-node' && f.workId === n.id)
       const conv = convByNodeId.get(n.id)
       return `  - [${n.kind}, ${n.status}] "${n.title}" — ${n.summary.slice(0, 100)}`
         + (n.notes ? `\n    Student's notes: "${n.notes.replace(/\s+/g, ' ').slice(0, 180)}"` : '')
@@ -151,6 +156,10 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
 ${t.framing ? `Framing: ${t.framing.slice(0, 220)}` : ''}
 ${t.personalContext ? `Student's stated background for this problem: "${t.personalContext.slice(0, 220)}"` : ''}
 Progress: ${verified.length}/${nodes.length} nodes verified as understood (AI-tested, not self-marked)
+${(() => {
+  const treeLevel = nodeFiles.filter(f => f.workType === 'tree' && f.workId === t.id)
+  return treeLevel.length ? `Evidence shared with the tree copilot: ${treeLevel.map(f => f.name).join(', ')}` : ''
+})()}
 Nodes:
 ${nodeLines}`
   }).join('\n\n')
@@ -183,6 +192,8 @@ Use ONLY the session data below. Do NOT reference, assume, or import anything fr
 2. **Numerical transparency**: real numbers — nodes verified, trees completed, verification rate. No vague praise.
 3. **Honest limitations**: unverified nodes and abandoned trees are stated plainly.
 4. **The problems ARE the résumé**: each completed tree is presented as a mastered problem with the solution path they came to understand.
+5. **No session may be omitted**: EVERY session listed below must appear somewhere in the portfolio — as a mastered problem, as work in progress, or as an honest limitation. Silently dropping a session the student actually worked on is a fabrication by omission.
+6. **Never state XP, streak, or "days" counts**: those are live numbers rendered elsewhere in the app and would contradict this document the moment they change. Describe consistency qualitatively or not at all.
 
 ## Student
 Name: ${name}
@@ -249,6 +260,14 @@ Return ONLY valid JSON.`,
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text]
     const portfolio = JSON.parse(jsonMatch[1] || text)
     portfolio.version = PORTFOLIO_VERSION
+    // SNAPSHOT: what this document was actually built from. /api/portfolio/status
+    // compares it against live counts so a portfolio that has drifted since
+    // generation says so instead of quietly misrepresenting the learner.
+    portfolio.snapshot = {
+      verifiedNodes: verifiedNodes.length,
+      trees: trees.length,
+      files: nodeFiles.length,
+    }
     await prisma.portfolioCache.update({
       where: { userId },
       data: { data: JSON.stringify(portfolio), status: 'ready', generatedAt: new Date(), errorMessage: null },

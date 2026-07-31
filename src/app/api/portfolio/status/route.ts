@@ -38,7 +38,27 @@ export async function GET() {
     if ((portfolio?.version ?? 0) < 2) {
       return NextResponse.json({ status: 'none' })
     }
-    return NextResponse.json({ status: 'ready', portfolio, generatedAt: cache.generatedAt })
+    // STALENESS: the portfolio is a cached AI artifact, so it silently drifts
+    // from reality as the learner keeps working — and it is the document they
+    // show other people. Compare the live counts against what the cache was
+    // built from; the client shows "last generated" + a refresh prompt when
+    // they disagree.
+    let stale = false
+    let live: { verifiedNodes: number; trees: number; files: number } | null = null
+    try {
+      const [verifiedNodes, treeCount, files] = await Promise.all([
+        prisma.treeNode.count({ where: { tree: { userId }, pending: false, parentId: { not: null }, status: 'understood' } }),
+        prisma.problemTree.count({ where: { userId } }),
+        prisma.linkedFile.count({ where: { userId, workType: { in: ['tree-node', 'tree'] } } }),
+      ])
+      live = { verifiedNodes, trees: treeCount, files }
+      const snap = portfolio?.snapshot as { verifiedNodes?: number; trees?: number; files?: number } | undefined
+      stale = !snap
+        || snap.verifiedNodes !== verifiedNodes
+        || snap.trees !== treeCount
+        || snap.files !== files
+    } catch { /* non-critical — treat as fresh rather than nag wrongly */ }
+    return NextResponse.json({ status: 'ready', portfolio, generatedAt: cache.generatedAt, stale, live })
   } catch {
     return NextResponse.json({ status: 'error', error: 'Stored portfolio is corrupted' })
   }
