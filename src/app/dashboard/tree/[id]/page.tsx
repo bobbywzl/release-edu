@@ -113,12 +113,42 @@ function layoutTree(nodes: TreeNodeData[]): { pos: Map<string, { x: number; y: n
   return { pos, depth: depthMap }
 }
 
-/** BFS depth order for the list view. */
-function depthOrder(nodes: TreeNodeData[]): Array<{ node: TreeNodeData; depth: number }> {
-  const { depth } = layoutTree(nodes)
-  return nodes
-    .map(node => ({ node, depth: depth.get(node.id) ?? 0 }))
-    .sort((a, b) => a.depth - b.depth || a.node.title.localeCompare(b.node.title))
+/**
+ * THE LEARNING PATH — the one ordering for canvas numbers AND the list
+ * view: a deterministic pre-order walk (parent before children — the
+ * redundancy law's direction), siblings by copilot-set `order`. The list
+ * used to sort alphabetically within depth, which buried "Start here #1"
+ * fifth; both surfaces now read the identical sequence.
+ */
+function learningPath(nodes: TreeNodeData[]): {
+  sequence: Array<{ node: TreeNodeData; depth: number; index: number | null }>
+  nextId: string | null
+} {
+  const real = nodes.filter(n => !n.pending)
+  const root = real.find(n => n.parentId === null)
+  if (!root) return { sequence: [], nextId: null }
+  const kids = new Map<string, TreeNodeData[]>()
+  for (const n of real) {
+    if (!n.parentId) continue
+    if (!kids.has(n.parentId)) kids.set(n.parentId, [])
+    kids.get(n.parentId)!.push(n)
+  }
+  kids.forEach(list => list.sort((a, b) =>
+    (a.order ?? 0) - (b.order ?? 0) || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')))
+  const sequence: Array<{ node: TreeNodeData; depth: number; index: number | null }> = [{ node: root, depth: 0, index: null }]
+  let i = 0
+  const walk = (id: string, depth: number) => {
+    for (const c of kids.get(id) ?? []) {
+      sequence.push({ node: c, depth, index: ++i })
+      walk(c.id, depth + 1)
+    }
+  }
+  walk(root.id, 1)
+  let nextId: string | null = null
+  for (const s of sequence) {
+    if (s.index !== null && s.node.status !== 'understood') { nextId = s.node.id; break }
+  }
+  return { sequence, nextId }
 }
 
 // ── Cursive branch edge — a swept cubic curve, thick at the trunk ───────
@@ -302,7 +332,7 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
   const [records, setRecords] = useState<Record<string, NodeRecord>>({})
   const [ghostBusy, setGhostBusy] = useState<string | null>(null)
 
-  const ordered = useMemo(() => depthOrder(tree.nodes.filter(n => !n.pending)), [tree.nodes])
+  const { sequence: ordered, nextId } = useMemo(() => learningPath(tree.nodes), [tree.nodes])
   // Proposals must be visible and actionable HERE too — the list is the
   // tree's only workable view on a phone, and invisible ghosts read as
   // "growing did nothing".
@@ -332,12 +362,12 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
     }
   }
   const q = query.trim().toLowerCase()
-  const filtered = q
+  const filtered = (q
     ? ordered.filter(({ node }) =>
         node.title.toLowerCase().includes(q)
         || node.summary.toLowerCase().includes(q)
         || (node.notes ?? '').toLowerCase().includes(q))
-    : ordered
+    : ordered)
 
   async function toggle(nodeId: string) {
     setExpanded(prev => {
@@ -359,8 +389,6 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
     }
   }
 
-  let lastDepth = -1
-
   return (
     <div className="h-full overflow-y-auto">
       {/* pt clears the copilot pill floating over the viewport's top-left —
@@ -381,20 +409,15 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
           <p className="text-sm text-muted-foreground text-center py-8">{t('tree.searchEmpty')}</p>
         )}
 
-        {filtered.map(({ node, depth }) => {
-          const showHeader = depth !== lastDepth
-          lastDepth = depth
+        {filtered.map(({ node, depth, index }) => {
           const isOpen = expanded.has(node.id)
           const rec = records[node.id]
           const annotations = parseArr<{ text: string; createdAt: string }>(node.annotations)
           const progress = parseArr<{ text: string; source: string; createdAt: string }>(node.progressLog)
           return (
-            <div key={node.id}>
-              {showHeader && !q && (
-                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mt-4 mb-2">
-                  {depth === 0 ? t('tree.levelRoot') : `${t('tree.levelLabel')} ${depth}`}
-                </p>
-              )}
+            /* Learning-path order + depth indent — the same walk as the
+               canvas numbers, so "Start here · #1" is literally first. */
+            <div key={node.id} style={{ marginLeft: q ? 0 : Math.min(depth, 4) * 14 }}>
               <div className="border border-border rounded-xl bg-card overflow-hidden">
                 <button
                   onClick={() => toggle(node.id)}
@@ -402,6 +425,15 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
                 >
                   {isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
                   <StatusDot status={node.status} />
+                  {index !== null && (
+                    node.id === nextId ? (
+                      <span className="flex-shrink-0 px-1.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 text-[9px] font-bold whitespace-nowrap">
+                        ▶ {t('tree.startHere')} · #{index}
+                      </span>
+                    ) : (
+                      <span className="flex-shrink-0 text-[10px] text-muted-foreground/70 font-semibold tabular-nums">#{index}</span>
+                    )
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-foreground truncate">{node.title}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{node.summary}</p>
@@ -595,36 +627,13 @@ function TreeCanvasInner() {
     collapsed.forEach(id => { if (tree.nodes.some(n => n.id === id && !hidden.has(id))) mark(id) })
     return hidden
   }, [tree, collapsed])
-  // LEARNING PATH: deterministic pre-order walk — parent before children
-  // (the redundancy law's direction), siblings by copilot-set `order`. The
-  // first unverified stop wears the "start here" pill.
+  // LEARNING PATH: the shared pre-order walk (learningPath — same sequence
+  // the list view renders). The first unverified stop wears the pill.
   const { pathIndex, nextOnPath } = useMemo(() => {
-    const empty = { pathIndex: new Map<string, number>(), nextOnPath: null as string | null }
-    if (!tree) return empty
-    const realNodes = tree.nodes.filter(n => !n.pending)
-    const root = realNodes.find(n => n.parentId === null)
-    if (!root) return empty
-    const kids = new Map<string, TreeNodeData[]>()
-    for (const n of realNodes) {
-      if (!n.parentId) continue
-      if (!kids.has(n.parentId)) kids.set(n.parentId, [])
-      kids.get(n.parentId)!.push(n)
-    }
-    kids.forEach(list => list.sort((a, b) =>
-      (a.order ?? 0) - (b.order ?? 0) || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')))
+    const { sequence, nextId } = learningPath(tree?.nodes ?? [])
     const idx = new Map<string, number>()
-    let i = 0
-    const walk = (id: string) => {
-      for (const c of kids.get(id) ?? []) { idx.set(c.id, ++i); walk(c.id) }
-    }
-    walk(root.id)
-    let next: string | null = null
-    for (const [nid, k] of Array.from(idx.entries()).sort((a, b) => a[1] - b[1])) {
-      void k
-      const n = realNodes.find(x => x.id === nid)
-      if (n && n.status !== 'understood') { next = nid; break }
-    }
-    return { pathIndex: idx, nextOnPath: next }
+    for (const s of sequence) if (s.index !== null) idx.set(s.node.id, s.index)
+    return { pathIndex: idx, nextOnPath: nextId }
   }, [tree])
 
   const load = useCallback(async () => {
@@ -1144,6 +1153,9 @@ function TreeCanvasInner() {
         onChanged={load}
         listMode={view === 'list'}
         stats={{ verified: understood, total }}
+        // LIVE pending set — approvals/rejections anywhere (canvas, list,
+        // grow box) retire the copilot's ghost chips and status line.
+        pendingIds={new Set(tree.nodes.filter(n => n.pending).map(n => n.id))}
         // REACTIVE VIEW ADJUSTER (law: the copilot must never block the tree
         // or a ghost popping up): after each copilot turn the canvas re-fits
         // into the region BELOW the ambient cloud. Exact viewport math: fit

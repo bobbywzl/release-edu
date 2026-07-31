@@ -21,6 +21,7 @@ const stagger = { visible: { transition: { staggerChildren: 0.04 } } }
 interface TreeSummary {
   id: string
   title: string
+  displayTitle: string | null
   status: string
   nodeCount: number
   understoodCount: number
@@ -32,19 +33,12 @@ export default function DashboardPage() {
   const [trees, setTrees] = useState<TreeSummary[] | null>(null)
   const [insights, setInsights] = useState<Array<{ id: string; type: string; content: string; timesObserved: number; lastConfirmedAt?: string }>>([])
   const [showInsights, setShowInsights] = useState(false)
-  // ENDOWMENT: the constellation count animates up — stars they EARNED
-  // accumulating in front of them, not a static stat.
-  const [starCount, setStarCount] = useState(0)
-  useEffect(() => {
-    const target = insights.length
-    if (target <= 0) { setStarCount(0); return }
-    let i = 0
-    const timer = setInterval(() => {
-      i += Math.max(1, Math.ceil(target / 20))
-      if (i >= target) { setStarCount(target); clearInterval(timer) } else setStarCount(i)
-    }, 40)
-    return () => clearInterval(timer)
-  }, [insights.length])
+  // The star counter shows the TRUE constellation size from the API (the
+  // visible list is ranked and capped at 24 — counting it made the number
+  // wander 3 → 13 → 24 → 20 across loads). Shown directly, no count-up
+  // animation: a stat that settles on a different number each visit reads
+  // as broken, not earned.
+  const [starCount, setStarCount] = useState<number | null>(null)
 
   useEffect(() => {
     fetch('/api/tree', { cache: 'no-store' })
@@ -53,7 +47,11 @@ export default function DashboardPage() {
       .catch(() => {})
     fetch('/api/insights', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (d?.insights) setInsights(d.insights) })
+      .then(d => {
+        if (d?.insights) setInsights(d.insights)
+        if (typeof d?.total === 'number') setStarCount(d.total)
+        else if (d?.insights) setStarCount(d.insights.length)
+      })
       .catch(() => {})
   }, [])
 
@@ -69,7 +67,12 @@ export default function DashboardPage() {
     .filter(i => i.lastConfirmedAt && new Date(i.lastConfirmedAt).getTime() >= weekAgo)
     .slice(0, 3)
 
-  const activeTrees = trees?.filter(tr => tr.status !== 'archived') ?? []
+  // ONE counting convention (the counters used to disagree across
+  // surfaces): "active" means status 'active' only — a mastered tree is
+  // counted once, under problems mastered, never also as active. Node
+  // counts everywhere exclude the root and pending ghosts (the API's
+  // convention), same as the canvas header.
+  const activeTrees = trees?.filter(tr => tr.status === 'active') ?? []
   const completedTrees = trees?.filter(tr => tr.status === 'completed') ?? []
   const totalNodes = activeTrees.reduce((s, tr) => s + tr.nodeCount, 0)
   const understoodNodes = activeTrees.reduce((s, tr) => s + tr.understoodCount, 0)
@@ -173,8 +176,8 @@ export default function DashboardPage() {
             <Link key={tree.id} href={`/dashboard/tree/${tree.id}`} className="block">
               <div className="border border-border/50 rounded-lg p-4 hover:border-border transition-colors">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-foreground truncate flex-1">
-                    {tree.title}
+                  <p title={tree.title} className="text-sm font-medium text-foreground truncate flex-1">
+                    {tree.displayTitle || tree.title}
                     {tree.status === 'completed' && <CheckCircle2 className="inline w-3.5 h-3.5 text-emerald-400 ml-1.5 -mt-0.5" />}
                   </p>
                   <span className="text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
@@ -204,7 +207,7 @@ export default function DashboardPage() {
           >
             <Brain className="w-4 h-4 text-primary flex-shrink-0" />
             <span className="text-sm font-semibold text-foreground flex-1">{t('dashboard.constellation')}</span>
-            <span className="text-[11px] text-muted-foreground tabular-nums">⭐ {starCount} {t('dashboard.starsEarned')}</span>
+            <span className="text-[11px] text-muted-foreground tabular-nums">⭐ {starCount ?? insights.length} {t('dashboard.starsEarned')}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showInsights ? 'rotate-180' : ''}`} />
           </button>
           {showInsights && (

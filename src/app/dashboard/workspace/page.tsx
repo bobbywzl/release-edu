@@ -140,10 +140,15 @@ function WorkspaceInner() {
   // question ('' = blank). Approved children attach under THIS node.
   const [growSeed, setGrowSeed] = useState<string | null>(null)
   const [suggestionBusy, setSuggestionBusy] = useState(false)
-  // The chat's own scroll container — scrolling is done on it directly
-  // (scrollTop), not via scrollIntoView, so only the chat moves and never
-  // the page around it.
-  const chatScrollRef = useRef<HTMLDivElement>(null)
+  // Auto-scroll that actually works: scroll the CONTAINER directly (an
+  // interruptible smooth scrollIntoView lost every race against streaming
+  // re-renders and late layout — KaTeX/diagram loads — so sends left the
+  // viewport on old content and reopened nodes started at the top).
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  // Pinned-to-bottom unless the user scrolls up to read — never hijack.
+  const stickToBottomRef = useRef(true)
+  // First paint of a (re)loaded conversation jumps to the LATEST content.
+  const initialScrollRef = useRef(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const streamingRef = useRef(false)
@@ -237,19 +242,28 @@ function WorkspaceInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeId, nodeId])
 
-  // AUTO-SCROLL. A new turn (sent message, landed reply, armed checkpoint
-  // card) always pins the chat to the bottom — that's where the action is.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
   useEffect(() => {
-    const el = chatScrollRef.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-  }, [messages, activeQuiz?.question, suggestion])
-  // While Bob streams, keep following the tail — but ONLY if the reader is
-  // already near the bottom. Scrolling up to re-read must never be hijacked.
+    if (messages.length === 0) return
+    if (initialScrollRef.current) {
+      initialScrollRef.current = false
+      stickToBottomRef.current = true
+      // Repeat past the late layout passes (KaTeX fonts, generated visuals)
+      // that used to leave a 5,000-word transcript parked at the top.
+      scrollToBottom()
+      requestAnimationFrame(scrollToBottom)
+      const t1 = setTimeout(scrollToBottom, 150)
+      const t2 = setTimeout(scrollToBottom, 600)
+      return () => { clearTimeout(t1); clearTimeout(t2) }
+    }
+    if (stickToBottomRef.current) scrollToBottom()
+  }, [messages, scrollToBottom])
   useEffect(() => {
-    const el = chatScrollRef.current
-    if (!el) return
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight
-  }, [streamText])
+    if (stickToBottomRef.current) scrollToBottom()
+  }, [streamText, activeQuiz, suggestion, quizResult, scrollToBottom])
   useEffect(() => { setHintShown(false) }, [activeQuiz?.question])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
@@ -271,6 +285,8 @@ function WorkspaceInner() {
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
     setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setGrowSeed(null)
+    initialScrollRef.current = true
+    stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
@@ -416,12 +432,15 @@ function WorkspaceInner() {
     if (!treeId || !nodeId || node?.explainer || explainerLoading) return
     setExplainerLoading(true)
     try {
-      await fetch(`/api/tree/${treeId}/node/${nodeId}/explainer`, {
+      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/explainer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lang: language }),
       })
       await loadTree()
+      // Fullscreen IS the reading surface — a freshly generated explainer
+      // opens straight into it instead of a palm-sized scroll box.
+      if (res.ok) setExplainerFull(true)
     } finally {
       setExplainerLoading(false)
     }
@@ -793,7 +812,16 @@ function WorkspaceInner() {
       <div className="flex-1 flex min-h-0">
         {/* Chat column — retains the Bob chat look */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div
+            ref={scrollerRef}
+            onScroll={() => {
+              const el = scrollerRef.current
+              if (!el) return
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+            }}
+            style={{ overflowAnchor: 'none' }}
+            className="flex-1 overflow-y-auto p-4 space-y-4"
+          >
             {messages.length === 0 && !streaming && (
               <div className="text-center py-10 space-y-2">
                 <Bot className="w-8 h-8 text-primary mx-auto" />
@@ -877,10 +905,15 @@ function WorkspaceInner() {
                           </div>
                         )}
                         {parts!.quiz && !isActiveQuizMsg && (
-                          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50">
-                            <HelpCircle className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                            <span className="truncate">{parts!.quiz.question}</span>
-                            {wasAnswered && <span className="ml-auto flex-shrink-0 text-emerald-400">✓ {t('workspace.quizAnswered')}</span>}
+                          /* RETIRED checkpoint chip — every dead card names
+                             its state explicitly (answered vs superseded);
+                             only the live card at the bottom is answerable. */
+                          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground border border-border rounded-lg px-2.5 py-1.5 bg-background/50 opacity-70">
+                            <HelpCircle className="w-3.5 h-3.5 text-primary/60 flex-shrink-0" />
+                            <span className="truncate line-through decoration-muted-foreground/40">{parts!.quiz.question}</span>
+                            {wasAnswered
+                              ? <span className="ml-auto flex-shrink-0 text-emerald-400">✓ {t('workspace.quizAnswered')}</span>
+                              : <span className="ml-auto flex-shrink-0 text-muted-foreground/80">{t('workspace.quizSuperseded')}</span>}
                           </div>
                         )}
                       </>
@@ -1247,12 +1280,32 @@ function WorkspaceInner() {
                   )}
                 </div>
                 {node?.explainer ? (
-                  <div className="text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-72 overflow-y-auto">
-                    <div ref={explainerBodyRef}>
-                      <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
-                        <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
-                      </MessageErrorBoundary>
+                  <div className="space-y-2">
+                    {/* Preview only — fullscreen is the DEFAULT reading
+                        surface (the old ~290px scroll box demoted a full
+                        textbook chapter to a peephole). Clicking anywhere
+                        opens the full view. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setExplainerFull(true)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExplainerFull(true) } }}
+                      className="relative w-full text-left text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-44 overflow-hidden cursor-pointer hover:border-primary/40 transition-colors"
+                      title={t('workspace.explainerOpenFull')}
+                    >
+                      <div ref={explainerBodyRef} className="pointer-events-none">
+                        <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
+                          <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
+                        </MessageErrorBoundary>
+                      </div>
+                      <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-card to-transparent rounded-b-xl pointer-events-none" />
                     </div>
+                    <button
+                      onClick={() => setExplainerFull(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium py-2.5 hover:bg-primary/20 transition-colors"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" /> {t('workspace.explainerOpenFull')}
+                    </button>
                   </div>
                 ) : (
                   <button
