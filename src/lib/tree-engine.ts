@@ -1542,10 +1542,14 @@ export async function markNodeVerified(
     const { markStrugglesResolved } = await import('@/lib/insight-memory')
     await markStrugglesResolved(userId, node.title)
   } catch { /* non-critical */ }
-  // A fully-understood tree completes the problem. The ROOT is the problem
-  // statement, not a masterable pain point — it is excluded from the
-  // requirement (verifying "your own question" was an unreachable dead-end)
-  // and flips green automatically as the crown once every branch verifies.
+  // MASTERY = ROOT VERIFIED (user decision, Jul 2026 — manual "mark as
+  // complete" is gone): the tree completes exactly when its root flips to
+  // 'understood'. The ROOT is the problem statement, not a masterable pain
+  // point — it is excluded from the requirement (verifying "your own
+  // question" was an unreachable dead-end) and the engine verifies it as
+  // the crown once every branch is proven; tree completion rides on that
+  // same flip, so the only path to "problem mastered" runs through
+  // AI-verified checkpoints.
   try {
     const remaining = await prisma.treeNode.count({
       where: { treeId, pending: false, parentId: { not: null }, status: { not: 'understood' } },

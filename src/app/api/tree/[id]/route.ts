@@ -76,8 +76,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ ok: true })
   }
 
+  // 'completed' is NOT settable here (user decision, Jul 2026): mastery is
+  // AI-verified only — the engine flips a tree to completed exactly when its
+  // root verifies (markNodeVerified). Manual status changes cover archiving
+  // and reactivation only; a reactivated completed tree returns to 'active'.
   const status = body.status
-  if (!status || !['active', 'completed', 'archived'].includes(status)) {
+  if (!status || !['active', 'archived'].includes(status)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
   }
   const updated = await prisma.problemTree.updateMany({ where: { id, userId }, data: { status } })
