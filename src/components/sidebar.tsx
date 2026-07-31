@@ -6,8 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Bot,
   Settings, Zap, ChevronRight,
-  Menu, X, ChevronLeft, LogOut, Award, Pin, PinOff, Sprout,
-} from 'lucide-react'
+  Menu, X, ChevronLeft, LogOut, Award, Pin, PinOff, Sprout, UserPlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { TreeLogo } from '@/components/tree-logo'
 import { useStudentData } from '@/lib/student-data'
@@ -201,7 +200,7 @@ export function Sidebar() {
                 </div>
               </Link>
               <button
-                onClick={() => { import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
+                onClick={() => { import('@/components/account-slots').then(m => m.slotSignOut()) }}
                 className="w-7 h-7 rounded-md hover:bg-destructive/20 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                 title={t("nav.logout")}
               >
@@ -221,12 +220,20 @@ export function Sidebar() {
               </Link>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => { import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
+                  onClick={() => { import('@/components/account-slots').then(m => m.slotSignOut()) }}
                   className="flex-1 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md px-2 py-1.5 transition-colors"
                   title={t("nav.logout")}
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   {t("nav.logout")}
+                </button>
+                <button
+                  onClick={() => { window.location.href = '/login?switch=1' }}
+                  className="flex-1 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md px-2 py-1.5 transition-colors"
+                  title={t("nav.switchAccount")}
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  {t("nav.switchAccount")}
                 </button>
               </div>
             </div>
@@ -283,10 +290,16 @@ export function Sidebar() {
                 </div>
               </div>
               <button
-                onClick={() => { import('next-auth/react').then(m => m.signOut({ callbackUrl: '/login' })) }}
+                onClick={() => { import('@/components/account-slots').then(m => m.slotSignOut()) }}
                 className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-colors"
               >
                 <LogOut className="w-3.5 h-3.5" /> {t("nav.logout")}
+              </button>
+              <button
+                onClick={() => { window.location.href = '/login?switch=1' }}
+                className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors mt-2"
+              >
+                <UserPlus className="w-3.5 h-3.5" /> {t("nav.switchAccount")}
               </button>
             </div>
           </motion.aside>

@@ -31,7 +31,16 @@ Read this before making changes.
 - **Database**: PostgreSQL (Supabase) via Prisma 6
 - **Auth**: NextAuth 4 with Google OAuth — login is REQUIRED product-wide
   (demo mode was removed July 2026; middleware 401s every unauthenticated
-  user-data API call and redirects /dashboard to /login)
+  user-data API call and redirects /dashboard to /login). PER-TAB ACCOUNT
+  SLOTS (`src/lib/session-slots.ts` + `src/components/account-slots.tsx` +
+  `/api/auth/slot`): up to 5 parallel sessions live in signed httpOnly
+  cookies `tree-session-slot-N`; each tab binds its slot in sessionStorage
+  and stamps `x-account-slot` on /api fetches (patched window.fetch). The
+  header only SELECTS which signed cookie to verify — never a credential.
+  Identity resolves slot-first then main NextAuth session via
+  `getSlotAwareSession()`; ALWAYS go through it (or getUserId/getUserInfo) in
+  user-data routes — a raw getServerSession ignores the tab's account.
+  Logout = slotSignOut() (per-tab); "Switch account" = /login?switch=1.
 - **AI**: Anthropic SDK — the teaching tier (tree seeding, node explainers, workspace
   chat, grow-box proposals) and judging tier (checkpoint judging) resolve through
   `src/lib/model-resolver.ts`, which auto-adopts the NEWEST Opus/Sonnet release from

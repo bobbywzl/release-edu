@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { getSlotAwareSession } from '@/lib/session-slots'
 import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'
 
@@ -13,7 +12,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No categories selected' }, { status: 400 })
     }
 
-    const session = await getServerSession(authOptions)
+    const session = await getSlotAwareSession()
     const userId = await getUserId()
     const store = dbStore.forUser(userId)
 

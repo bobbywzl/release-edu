@@ -12,9 +12,8 @@
  * otherwise a list of known image models is tried in order.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { getSlotAwareSession } from '@/lib/session-slots'
 import { createHash } from 'crypto'
-import { authOptions } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 
 // Image generation can take 10–20s — give it headroom on Vercel.
@@ -36,7 +35,7 @@ const IMAGE_MODELS = [
 export async function POST(req: NextRequest) {
   // Gate the expensive endpoint to authenticated users (login is required
   // product-wide — demo mode is gone).
-  const session = await getServerSession(authOptions)
+  const session = await getSlotAwareSession()
   if (!session?.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

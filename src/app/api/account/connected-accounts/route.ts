@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { getSlotAwareSession } from '@/lib/session-slots'
 
 export async function GET() {
-  const session = await getServerSession(authOptions)
+  const session = await getSlotAwareSession()
 
   // Return connected accounts based on current auth state
   const accounts = []

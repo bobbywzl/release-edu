@@ -3,8 +3,7 @@
  * Separate from the main /api/chat endpoint to avoid polluting the tutoring conversation.
  */
 import { NextRequest } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { getSlotAwareSession } from '@/lib/session-slots'
 import { dbStore } from '@/lib/db-store'
 import { getUserId } from '@/lib/get-user-id'
 import { NO_THINKING } from '@/lib/chat-model-router'
@@ -116,7 +115,7 @@ export async function POST(req: NextRequest) {
   const { message } = body
   let { conversationId } = body
 
-  const session = await getServerSession(authOptions)
+  const session = await getSlotAwareSession()
 
   if (!session?.user) {
     return new Response('Unauthorized', { status: 401 })
