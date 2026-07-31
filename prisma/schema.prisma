@@ -64,6 +64,11 @@ model ProblemTree {
   // Cached tree digest (markdown) + generation stamp — regenerated on demand.
   digest      String?
   digestAt    DateTime?
+  // THE ROOT ANSWER — the assembled resolution of the root problem, built
+  // from the verified nodes' digests on completion (and on demand). The
+  // completion payoff artifact; regenerable from the tree page.
+  rootAnswer   String?
+  rootAnswerAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   nodes       TreeNode[]

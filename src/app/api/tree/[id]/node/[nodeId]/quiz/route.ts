@@ -198,20 +198,22 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // from the base state each CAS attempt, so the flags match the tally that
   // actually landed.
   let coverageAdvanced = false
-  let coverageOutcome: 'credit' | 'deepening' | 'unresolved' | 'backstop' | 'nocontract' = 'nocontract'
+  let coverageOutcome: 'credit' | 'deepening' | 'unresolved' | 'nocontract' = 'nocontract'
   const applyOutcome = (tally: ReturnType<typeof parseQuizState>) => {
     tally.attempts += 1
     if (correct) {
       tally.correct += 1
       tally.combo += 1
+      tally.wrongStreak = 0
       if (quiz.kind === 'short') tally.shortCorrect += 1
       // Syllabus coverage — TRUTHFUL crediting: a facet flips `done` ONLY when
       // a checkpoint that actually targeted it is answered correctly. A tag on
       // an already-done facet is a deepening question (no coverage change); a
-      // missing/ambiguous tag never blind-credits an unprobed facet. The old
-      // "credit the first undone facet" fallback let a node verify with
-      // promises never tested — its one legit job (a model that SYSTEMATICALLY
-      // drops tags must not stall forever) is preserved as a gated N=2 backstop.
+      // missing/ambiguous tag NEVER credits an unprobed facet — not even as a
+      // backstop. (The old N=2 auto-flip silently certified promises no
+      // question ever tested; the anti-stall job now belongs to a DIRECTIVE:
+      // the chat prompt orders Bob to re-tag exactly, and the learner sees an
+      // honest "coverage didn't move" note below.)
       if (Array.isArray(tally.facets) && tally.facets.length > 0) {
         const r = resolveFacetCredit(tally.facets, quiz.facet)
         coverageOutcome = r.kind
@@ -226,15 +228,19 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
           // The tag itself was fine, so untaggedStreak is untouched.
         } else {
           tally.untaggedStreak = (tally.untaggedStreak ?? 0) + 1
-          if (tally.untaggedStreak >= 2) {
-            const first = tally.facets.find(f => !f.done)
-            if (first) { first.done = true; coverageAdvanced = true; coverageOutcome = 'backstop' }
-            tally.untaggedStreak = 0
-          }
         }
       }
     } else {
       tally.combo = 0
+      // The app's own ground truth for wheel-spinning — read by the chat
+      // route as max(reflection.streakWrong, wrongStreak) so the analogy
+      // bridge / prerequisite chain / intervention switch fire from judged
+      // answers, not only from typed confusion.
+      tally.wrongStreak = (tally.wrongStreak ?? 0) + 1
+      // The law-mandated full remediation is now a PERSISTED debt: if the
+      // client's follow-up turn dies with the tab, the workspace fires
+      // [NODE_REMEDIATE] on next mount and the chat route clears this.
+      tally.remediationOwed = quiz.question.slice(0, 400)
     }
     // Confidence calibration: sure-but-wrong is the node's blind spot (future
     // checkpoints target it); sure-and-right is healthy calibration.
@@ -322,11 +328,16 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // workspace can never durably disagree.
   let verified = false
   let treeCompleted = false
+  // Every branch verified but the tree never grew past its seed: the trophy
+  // is withheld (completion gate) and the client asks the honest question —
+  // "is the problem actually answered?" — with the Copilot gap-check as CTA.
+  let seedComplete = false
   if (!isVerifiedNode && masteryMet(tally)) {
     verified = true
     try {
       const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
       treeCompleted = r.treeCompleted
+      seedComplete = r.seedOnly ?? false
       xp.push(...r.xp)
     } catch (err) {
       console.error('[tree] markNodeVerified failed (status will reconcile on next tree read):', err)
@@ -384,6 +395,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     // that's already done — the review is ONE question, not a chain).
     alreadyVerified: isVerifiedNode,
     treeCompleted,
+    seedComplete,
     review: isReview,
   })
 }

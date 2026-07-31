@@ -15,9 +15,9 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import {
-  Bot, Send, ArrowLeft, ShieldCheck, Loader2, StickyNote, Paperclip,
+  Bot, Send, ArrowLeft, ArrowRight, ShieldCheck, Loader2, StickyNote, Paperclip,
   Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
-  Maximize2, Download, X, AlertCircle, RefreshCw } from 'lucide-react'
+  Maximize2, Download, X, AlertCircle, RefreshCw, Trophy } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
 import { MessageErrorBoundary } from '@/components/message-error-boundary'
@@ -56,10 +56,12 @@ interface QuizPayload {
  * no dead card can render.
  */
 function splitQuiz(raw: string): { text: string; quiz: QuizPayload | null } {
-  // [[INCOMPLETE]] / [[QUIZ_OFFER]] are persisted bookkeeping (they drive the
-  // Continue/Regenerate controls and the in-chat "Quiz me" invitation) and
-  // must never reach the rendered text.
-  const content = raw.replace(/\n*\[\[(INCOMPLETE|QUIZ_OFFER)\]\]/g, '')
+  // [[INCOMPLETE]] / [[QUIZ_OFFER]] / [[NEXT_NODE]]{…} are persisted
+  // bookkeeping (cut-off controls, the "Quiz me" invitation, the next-node
+  // button) and must never reach the rendered text.
+  const content = raw
+    .replace(/\n*\[\[(INCOMPLETE|QUIZ_OFFER)\]\]/g, '')
+    .replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}/g, '')
   const idx = content.indexOf('[[QUIZ]]')
   if (idx === -1) return { text: content, quiz: null }
   let quiz: QuizPayload | null = null
@@ -96,6 +98,15 @@ function WorkspaceInner() {
   // actually proven) opens at zero width and reads as missing. (Client-only
   // component under Suspense, so window is available at first render.)
   const [showNotes, setShowNotes] = useState<boolean>(() => (typeof window === 'undefined' ? true : window.innerWidth >= 1024))
+  // Esc closes the phone-width notes overlay (it covers the whole chat there).
+  useEffect(() => {
+    if (!showNotes) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && window.innerWidth < 1024) setShowNotes(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showNotes])
   const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files' | 'log'>('notes')
   const [explainerLoading, setExplainerLoading] = useState(false)
   // Explainer fullscreen overlay + PDF export state. The PDF is rasterized
@@ -135,6 +146,13 @@ function WorkspaceInner() {
   const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
   // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
+  // Tree-level outcome of the answer that just verified this node:
+  // 'completed' = the whole tree (crown + trophy) · 'seedComplete' = every
+  // seeded branch verified but the tree never grew — the honest question
+  // card ("is the problem actually answered?") renders instead of a trophy.
+  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | null>(null)
+  // One facet-growth call in flight at a time (the ⬆ grow-into-branch chips).
+  const [facetGrowBusy, setFacetGrowBusy] = useState<string | null>(null)
   // GROW BRANCH (FOUNDATION: the tree grows through the learner's own
   // questions) — null = closed; a string opens the dialog with that seed
   // question ('' = blank). Approved children attach under THIS node.
@@ -231,6 +249,11 @@ function WorkspaceInner() {
           // syllabus-style hook. Triggered once; the saved reply prevents
           // re-runs.
           void streamFromBob('[NODE_INTRO]', false)
+        } else if (d.remediationOwed && !d.pending) {
+          // A wrong answer's law-mandated full remediation never ran (the
+          // tab closed before the follow-up turn) — the persisted debt fires
+          // it now, so the teaching a miss earns can't evaporate.
+          void streamFromBob('[NODE_REMEDIATE]', false)
         }
       })
       .catch(() => {})
@@ -284,7 +307,7 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setGrowSeed(null)
+    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
     initialScrollRef.current = true
     stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -311,6 +334,22 @@ function WorkspaceInner() {
         signal: abortRef.current.signal,
         body: JSON.stringify({ message: text, lang: language, attachments: atts }),
       })
+      // Message too long (server 413): show the actionable reason, not the
+      // generic "trouble connecting" that invites retrying the same doomed
+      // paste. Drop the optimistic user bubble (it was never persisted).
+      if (res.status === 413) {
+        if (showUser) setMessages(prev => prev.filter(m => m.content !== text || m.role !== 'user'))
+        setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.messageTooLong') }])
+        return
+      }
+      // Daily AI budget reached (server 429): show the server's localized
+      // message — actionable and honest, never the generic connect error.
+      if (res.status === 429) {
+        const budgetNote = await res.text().catch(() => '')
+        if (showUser) setMessages(prev => prev.filter(m => m.content !== text || m.role !== 'user'))
+        setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: budgetNote || t('workspace.connectError') }])
+        return
+      }
       if (!res.ok || !res.body) throw new Error('stream error')
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -320,7 +359,7 @@ function WorkspaceInner() {
         if (done) break
         full += decoder.decode(value, { stream: true })
         // Never show the machine markers mid-stream.
-        setStreamText(full.replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, ''))
+        setStreamText(full.replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, '').replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}?/g, ''))
       }
       // ── STREAM COMPLETION CONTRACT (see the chat route) ──
       // [[DONE]] present  → Bob finished the thought.
@@ -422,6 +461,12 @@ function WorkspaceInner() {
     if (streaming) return
     const text = input.trim()
     if (!text && attachments.length === 0) return
+    // Pre-check the server's 8000-char cap so an over-length paste is caught
+    // before the round-trip (the server still enforces it as the backstop).
+    if (text.length > 8000) {
+      setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.messageTooLong') }])
+      return
+    }
     const atts = attachments
     setInput('')
     clearAttachments()
@@ -709,6 +754,13 @@ function WorkspaceInner() {
         if (!verified) {
           if (!wasCorrect) void streamFromBob('[NODE_REMEDIATE]', false)
           else if (!alreadyVerified) void streamFromBob('[NODE_CHECKPOINT]', false)
+        } else {
+          // The payoff moment gets an AUTHOR (deep-audit §7): Bob restates
+          // what was proven as capabilities, ties it to the root, and names
+          // the next stop — the [[NEXT_NODE]] button rides his reply. The
+          // tree-level outcome (completed / seed-complete) renders as a card.
+          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.seedComplete ? 'seedComplete' : null)
+          void streamFromBob('[NODE_VERIFIED]', false)
         }
       }, verified ? 2200 : 1500)
     } catch (err) {
@@ -904,6 +956,27 @@ function WorkspaceInner() {
                             </button>
                           </div>
                         )}
+                        {/* The verified turn's NEXT-NODE button (persisted
+                            marker → survives reload): the payoff moment
+                            routes somewhere instead of dead-ending. */}
+                        {(() => {
+                          const nn = m.content.match(/\[\[NEXT_NODE\]\](\{[^}]*\})/)
+                          if (!nn) return null
+                          try {
+                            const p = JSON.parse(nn[1]) as { nodeId?: string; title?: string }
+                            if (!p.nodeId || !p.title) return null
+                            return (
+                              <div className="mt-2.5 border-t border-border/60 pt-2.5">
+                                <button
+                                  onClick={() => router.push(`/dashboard/workspace?tree=${treeId}&node=${p.nodeId}`)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-semibold hover:bg-emerald-500/25 transition-colors"
+                                >
+                                  <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.nextNodeBtn')}: {p.title}
+                                </button>
+                              </div>
+                            )
+                          } catch { return null }
+                        })()}
                         {parts!.quiz && !isActiveQuizMsg && (
                           /* RETIRED checkpoint chip — every dead card names
                              its state explicitly (answered vs superseded);
@@ -1078,6 +1151,49 @@ function WorkspaceInner() {
               </div>
             )}
 
+            {/* Tree-level outcome of the verifying answer: the trophy when
+                the whole tree is proven, or the HONEST QUESTION when only the
+                seed is — a 3-node seed is a plan, not a mastered problem. */}
+            {treeOutcome && !streaming && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className={cn(
+                  'max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 border',
+                  treeOutcome === 'completed'
+                    ? 'border-amber-400/50 bg-amber-500/[0.08]'
+                    : 'border-emerald-400/40 bg-emerald-500/[0.06]',
+                )}
+              >
+                {treeOutcome === 'completed' ? (
+                  <>
+                    <p className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Trophy className="w-3.5 h-3.5" /> {t('workspace.treeCompleteTitle')}
+                    </p>
+                    <p className="text-sm text-foreground mt-1.5">{t('workspace.treeCompleteBody')}</p>
+                    <button
+                      onClick={() => router.push(`/dashboard/tree/${treeId}`)}
+                      className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.treeCompleteCta')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sprout className="w-3.5 h-3.5" /> {t('workspace.seedCompleteTitle')}
+                    </p>
+                    <p className="text-sm text-foreground mt-1.5">{t('workspace.seedCompleteBody')}</p>
+                    <button
+                      onClick={() => router.push(`/dashboard/tree/${treeId}`)}
+                      className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-semibold hover:bg-emerald-500/30 transition-colors"
+                    >
+                      <Bot className="w-3.5 h-3.5" /> {t('workspace.seedCompleteCta')}
+                    </button>
+                  </>
+                )}
+              </motion.div>
+            )}
+
             {/* Discovery card — Bob found a hole worth a new node, or the
                 discussion belongs elsewhere. Nothing happens without a click. */}
             {suggestion && (
@@ -1178,7 +1294,20 @@ function WorkspaceInner() {
             tabs. Inline column on desktop; a right-side overlay on phones so it
             never squeezes the chat to zero width. */}
         {showNotes && (
+          <>
+          {/* Below lg the panel is a full-width overlay covering the chat —
+              it MUST have exits (deep-audit §15: one tap hid the only place
+              mastery can be proven, with no way back): a backdrop tap, a
+              visible ✕, and Esc all close it. */}
+          <div className="lg:hidden fixed inset-0 z-30 bg-black/40" onClick={() => setShowNotes(false)} />
           <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl bg-card lg:static lg:z-auto lg:w-96 lg:max-w-none lg:shadow-none lg:bg-card/40 flex-shrink-0 border-l border-border overflow-y-auto">
+            <button
+              onClick={() => setShowNotes(false)}
+              aria-label={t('common.dismiss')}
+              className="lg:hidden absolute top-3 right-3 z-10 p-2 rounded-lg bg-background/80 border border-border text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
             <div className="p-4 space-y-4">
               {/* VERIFICATION — the workspace's authoritative status card,
                   rendered from the SAME server state (node.status + the
@@ -1233,9 +1362,40 @@ function WorkspaceInner() {
                         {qs.facets?.length ? (
                           <ul className="space-y-1">
                             {qs.facets.map((f, i) => (
-                              <li key={i} className="flex items-start gap-1.5 text-[12px] leading-snug">
+                              <li key={i} className="group flex items-start gap-1.5 text-[12px] leading-snug">
                                 <span className="flex-shrink-0">{f.done ? '✅' : '⬜'}</span>
-                                <span className={f.done ? 'text-foreground/80' : 'text-muted-foreground'}>{f.name}</span>
+                                <span className={cn('flex-1', f.done ? 'text-foreground/80' : 'text-muted-foreground')}>{f.name}</span>
+                                {/* FACETS BECOME BRANCHES (the vision's own
+                                    words: the sub-points "form the further
+                                    branches of the trees") — one tap grows an
+                                    unproven facet into its own child node;
+                                    the facet moves out of this contract via
+                                    the rebalance machinery. Needs ≥2 unproven
+                                    left so this node always keeps a promise. */}
+                                {!f.done && (qs.facets?.filter(x => !x.done).length ?? 0) >= 2 && (
+                                  <button
+                                    onClick={async () => {
+                                      if (facetGrowBusy || !treeId || !nodeId) return
+                                      setFacetGrowBusy(f.name)
+                                      try {
+                                        const res = await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
+                                          method: 'PATCH',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ action: 'rebalance', title: f.name.slice(0, 120), facets: [f.name] }),
+                                        }).catch(() => null)
+                                        if (res?.ok) await loadTree()
+                                      } finally {
+                                        setFacetGrowBusy(null)
+                                      }
+                                    }}
+                                    disabled={facetGrowBusy !== null}
+                                    title={t('workspace.facetGrow')}
+                                    className="flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-emerald-400/40 text-emerald-300 text-[10px] hover:bg-emerald-500/15 transition-all disabled:opacity-40"
+                                  >
+                                    {facetGrowBusy === f.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sprout className="w-3 h-3" />}
+                                    {t('workspace.facetGrowBtn')}
+                                  </button>
+                                )}
                               </li>
                             ))}
                             <li className="flex items-start gap-1.5 text-[12px] leading-snug">
@@ -1441,6 +1601,7 @@ function WorkspaceInner() {
               )}
             </div>
           </div>
+          </>
         )}
       </div>
 

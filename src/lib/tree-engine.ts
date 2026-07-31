@@ -135,16 +135,30 @@ function responseText(result: { content: Array<{ type?: string; text?: string }>
     .join('\n')
 }
 
-/** Student grounding for calibrated output (level, interests, memory). */
-async function studentGrounding(userId: string): Promise<string> {
+/** Student grounding for calibrated output (level, interests, memory).
+ *  Exported: the node chat and copilot prompts call it too — the insight
+ *  moat is useless if it only reaches the seed and the one-time explainer
+ *  (the two surfaces a learner sees least). Token-light: ≤8 insight rows +
+ *  ≤3 misconceptions, all clamped upstream. */
+export async function studentGrounding(userId: string): Promise<string> {
   try {
     const { getStudentContext } = await import('@/lib/student-context')
     const ctx = await getStudentContext(null, userId)
+    // STANDING MISCONCEPTION BLOCK: systematic wrong beliefs were write-only
+    // (created/reinforced/resolved but never read back by a teaching prompt).
+    // Repair theory's whole claim is that these survive ordinary practice —
+    // so every teaching surface now sees the active ones.
+    let misconceptions: Array<{ content: string }> = []
+    try {
+      const { getTopInsights } = await import('@/lib/insight-memory')
+      misconceptions = await getTopInsights(userId, { limit: 3, types: ['misconception'] })
+    } catch { /* non-critical */ }
     const parts = [
       ctx.profile.advancementLevel ? `Target level: ${ctx.profile.advancementLevel}` : '',
       ctx.profile.occupation ? `Background: ${ctx.profile.occupation}` : '',
       ctx.interests.length ? `Interests: ${ctx.interests.slice(0, 5).join(', ')}` : '',
       ctx.insights.length ? `Known about the student:\n${ctx.insights.slice(0, 8).map(i => `- [${i.type}] ${i.content}`).join('\n')}\nWhere natural, build explanations as analogies from their [knowledge] and [strength] entries — connect new concepts to what they verifiably already understand.` : '',
+      misconceptions.length ? `ACTIVE MISCONCEPTIONS (systematic wrong beliefs on record — if this material touches one, refute it directly and memorably BEFORE building anything on top of it; never assume it self-corrected):\n${misconceptions.map(m => `- ${m.content}`).join('\n')}` : '',
     ].filter(Boolean)
     return parts.length ? `\n## About this student\n${parts.join('\n')}` : ''
   } catch {
@@ -471,20 +485,34 @@ export async function evidenceLocker(
     const nodeIds = nodes.filter(n => !n.pending && n.id !== excludeNodeId).map(n => n.id)
     if (nodeIds.length === 0) return ''
     const titleById = new Map(nodes.map(n => [n.id, n.title]))
-    const files = await prisma.linkedFile.findMany({
-      where: { userId, workType: 'tree-node', workId: { in: nodeIds } },
-      select: { name: true, content: true, workId: true },
+    // SPLIT FETCH: media rows (data: URIs) can be multi-MB of base64 that was
+    // being pulled over the wire on every chat turn/explainer/digest purely to
+    // be listed by name — fetch their Gemini `analysis` instead (that's the
+    // legible evidence: photos ARE the dominant artifact), and pull `content`
+    // only for text rows.
+    const media = await prisma.linkedFile.findMany({
+      where: { userId, workType: 'tree-node', workId: { in: nodeIds }, content: { startsWith: 'data:' } },
+      select: { name: true, workId: true, mimeType: true, analysis: true },
       orderBy: { addedAt: 'desc' },
       take: maxFiles,
     })
-    if (files.length === 0) return ''
-    return `\n## TREE EVIDENCE LOCKER (real artifacts uploaded across this tree — ground every number and claim in these; NEVER invent measurements when evidence exists)\n` + files.map(f => {
-      const isText = !(f.content ?? '').startsWith('data:')
-      const at = titleById.get(f.workId ?? '') ?? 'tree'
-      return isText
-        ? `### ${f.name} (at "${at}")\n${(f.content ?? '').slice(0, excerpt)}${(f.content ?? '').length > excerpt ? '\n…(truncated)' : ''}`
-        : `### ${f.name} (at "${at}") — binary/image, content not inlined`
-    }).join('\n\n')
+    const textFiles = await prisma.linkedFile.findMany({
+      where: { userId, workType: 'tree-node', workId: { in: nodeIds }, NOT: { content: { startsWith: 'data:' } } },
+      select: { name: true, workId: true, content: true, addedAt: true },
+      orderBy: { addedAt: 'desc' },
+      take: maxFiles,
+    })
+    const rows = [
+      ...textFiles.map(f => ({ at: titleById.get(f.workId ?? '') ?? 'tree', text: `### ${f.name} (at "${titleById.get(f.workId ?? '') ?? 'tree'}")\n${(f.content ?? '').slice(0, excerpt)}${(f.content ?? '').length > excerpt ? '\n…(truncated)' : ''}` })),
+      ...media.map(f => ({
+        at: titleById.get(f.workId ?? '') ?? 'tree',
+        text: f.analysis?.trim()
+          ? `### ${f.name} (at "${titleById.get(f.workId ?? '') ?? 'tree'}" — ${f.mimeType ?? 'media'}, Gemini analysis)\n${f.analysis.slice(0, excerpt)}${f.analysis.length > excerpt ? '\n…(truncated)' : ''}`
+          : `### ${f.name} (at "${titleById.get(f.workId ?? '') ?? 'tree'}") — ${f.mimeType ?? 'binary'}, analysis pending`,
+      })),
+    ].slice(0, maxFiles)
+    if (rows.length === 0) return ''
+    return `\n## TREE EVIDENCE LOCKER (real artifacts uploaded across this tree — ground every number and claim in these; NEVER invent measurements when evidence exists)\n` + rows.map(r => r.text).join('\n\n')
   } catch {
     return ''
   }
@@ -1046,6 +1074,11 @@ export async function copilotTurn(
   // names only — content arrives ONLY via an explicit contextRequest recall).
   const catalog = await buildContextCatalog(userId, treeId, real)
 
+  // The insight moat rides into tree-level planning too: verified knowledge
+  // grounds proposals-as-analogies, and active misconceptions must never be
+  // built into the tree's shape.
+  const grounding = await studentGrounding(userId)
+
   const history = (opts.history ?? []).slice(-10).map(h => ({
     role: h.role === 'assistant' ? 'assistant' as const : 'user' as const,
     content: String(h.content ?? '').slice(0, 1500),
@@ -1069,6 +1102,7 @@ ${indexList}
 
 STORED WORK CATALOG (the student's history you can RECALL on demand — counts only, you do NOT see any of this content until you request it; nodes not listed have no stored work yet):
 ${catalog || '(no stored work yet beyond the tree itself)'}
+${grounding}
 ${attachBlock}
 
 YOUR FUNCTIONS (all in one box):
@@ -1507,12 +1541,13 @@ export interface XpAwardLite { awarded: number; label: string; levelUp: boolean;
  */
 export async function markNodeVerified(
   userId: string, treeId: string, nodeId: string, lang?: string,
-): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean }> {
+): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean; seedOnly?: boolean }> {
   const node = await prisma.treeNode.findUnique({ where: { id: nodeId } })
   if (!node) throw new Error('Node not found')
   const zh = lang === 'zh'
   const xp: XpAwardLite[] = []
   let treeCompleted = false
+  let seedOnly = false
 
   await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'understood' } })
   // Node mastery is the small-step reward of the Tree product.
@@ -1555,6 +1590,25 @@ export async function markNodeVerified(
       where: { treeId, pending: false, parentId: { not: null }, status: { not: 'understood' } },
     })
     if (remaining === 0) {
+      // COMPLETION GATE (deep-audit A3/2): a tree that never grew past its
+      // 1-3 seeded branches is a plan, not a mastered problem — certifying
+      // it hands out the trophy for ~15 answers and every incentive then
+      // points away from growth. The seed is depth-capped BY DESIGN, so
+      // completion requires at least one learner-driven node (copilot /
+      // question / manual origin). Legacy trees predating the origin column
+      // (all-null origins) are exempt — they can't be distinguished.
+      const grown = await prisma.treeNode.findMany({
+        where: { treeId, pending: false, parentId: { not: null } },
+        select: { origin: true },
+      })
+      const hasOriginData = grown.some(g => g.origin !== null)
+      const grewPastSeed = grown.some(g => g.origin === 'copilot' || g.origin === 'question' || g.origin === 'manual')
+      if (hasOriginData && !grewPastSeed) {
+        // Every seeded branch is verified but the tree never grew: no crown,
+        // no trophy — the quiz route surfaces "is the problem actually
+        // answered?" with the Copilot gap-check as the next step instead.
+        seedOnly = true
+      } else {
       await prisma.treeNode.updateMany({
         where: { treeId, parentId: null },
         data: { status: 'understood' },
@@ -1573,6 +1627,15 @@ export async function markNodeVerified(
         if (a) xp.push(a)
       }
       treeCompleted = true
+      // THE ROOT ANSWER (the founding paragraph's missing artifact): on
+      // completion, assemble the resolution from the verified nodes' digests
+      // — the answer the learner came for, not a status report. Backgrounded;
+      // the tree page offers it (and regeneration) once it lands.
+      try {
+        const { inBackground } = await import('@/lib/background')
+        inBackground(generateRootAnswer(userId, treeId, lang))
+      } catch { /* non-critical */ }
+      }
     }
   } catch { /* non-critical */ }
 
@@ -1585,7 +1648,64 @@ export async function markNodeVerified(
     inBackground(refreshNodeContextSummary(userId, treeId, nodeId, lang))
   } catch { /* non-critical */ }
 
-  return { xp, treeCompleted }
+  return { xp, treeCompleted, seedOnly }
+}
+
+// ── THE ROOT ANSWER (the artifact the founding paragraph promises) ───────
+
+/**
+ * Assemble the full resolution of the ROOT problem from the verified nodes'
+ * distilled digests — in the session's language, calibrated to its purpose
+ * and depth, each claim traceable to the node that proved it, with an honest
+ * boundary naming what is still unproven. Cached on the tree (rootAnswer /
+ * rootAnswerAt); regenerated on demand from the tree page. This is the
+ * completion payoff: "here is the answer you came for", not a status report.
+ */
+export async function generateRootAnswer(userId: string, treeId: string, lang?: string): Promise<string | null> {
+  try {
+    const tree = await getTreeWithNodes(userId, treeId)
+    if (!tree) return null
+    const real = tree.nodes.filter(n => !n.pending && n.parentId !== null)
+    const proven = real.filter(n => n.status === 'understood')
+    if (proven.length === 0) return null
+    const open = real.filter(n => n.status !== 'understood')
+    const zh = (tree.language ?? lang) === 'zh'
+    const provenBlock = proven.map(n =>
+      `### "${n.title}"\n${(n.contextSummary?.trim() || n.summary || '').slice(0, 1200)}`).join('\n\n')
+    const client = await anthropic()
+    const model = await getTeachingModel()
+    const result = await client.messages.create({
+      model, max_tokens: 3000, ...NO_THINKING,
+      system: `You write THE ANSWER — the document that resolves a learner's root problem, assembled ONLY from what they have verifiably proven. ${ANSWER_STANDARD}`,
+      messages: [{
+        role: 'user',
+        content: `ROOT PROBLEM: "${tree.title}"
+${tree.framing ? `FRAMING: ${tree.framing}` : ''}
+${tree.purpose ? `THE LEARNER'S PURPOSE (defines what "answered" means here): ${tree.purpose}` : ''}
+
+WHAT THE LEARNER HAS PROVEN, node by node (their verified understanding — the ONLY source you may draw claims from):
+${provenBlock.slice(0, 14000)}
+${open.length > 0 ? `\nSTILL UNPROVEN (never present these as established): ${open.map(n => `"${n.title}"`).join(', ')}` : ''}
+
+Write THE ANSWER to the root problem as one coherent markdown document (\`##\`/\`###\` structure), entirely in ${zh ? 'Simplified Chinese (简体中文)' : 'English'}:
+1. Open with the resolution itself — the direct, complete answer to the root problem, synthesized across the proven nodes (not a node-by-node tour).
+2. Then the mechanism: WHY that answer holds, woven from the proven material; tag each major claim to the node that proved it with a short parenthetical (e.g. ${zh ? '（已在「节点名」验证）' : '(proven at "node title")'}).
+3. ${open.length > 0 ? 'Close with an HONEST BOUNDARY section naming exactly what remains unproven and what it would change.' : 'Close with the single most important takeaway.'}
+Ground every claim in the proven material above — NOTHING invented, no generic field lecture. This document is what the learner shows someone who asks "so, what's the answer?".`,
+      }],
+    })
+    void recordUsage(result, userId, model, 'tree-digest')
+    const answer = responseText(result).trim().slice(0, 20000)
+    if (!answer) return null
+    await prisma.problemTree.update({
+      where: { id: treeId },
+      data: { rootAnswer: answer, rootAnswerAt: new Date() },
+    })
+    return answer
+  } catch (err) {
+    console.error('[tree] root answer generation failed:', err)
+    return null
+  }
 }
 
 // ── Tree Digest (the project's status report, built from tree state) ─────

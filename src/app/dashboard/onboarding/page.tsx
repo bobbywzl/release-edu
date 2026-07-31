@@ -678,7 +678,7 @@ export default function OnboardingPage() {
   // Shared: plant the student's FIRST problem tree from their final answer,
   // then redirect to it. Sets the `onboarding-completing` session flag for
   // the full window so the layout's redirect guard stands down.
-  async function generateAndRedirect(body: { problem?: string; difficulty?: string; personalContext?: string }) {
+  async function generateAndRedirect(body: { problem?: string; difficulty?: string; personalContext?: string; purpose?: string }) {
     setStage('generating')
     setPhase(4)
     try { sessionStorage.setItem('onboarding-completing', String(Date.now())) } catch { /* SSR safe */ }
@@ -711,7 +711,7 @@ export default function OnboardingPage() {
       const res = await fetch('/api/tree', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ problem: body.problem, lang: language, difficulty: body.difficulty, personalContext: body.personalContext }),
+        body: JSON.stringify({ problem: body.problem, lang: language, difficulty: body.difficulty, personalContext: body.personalContext, purpose: body.purpose }),
       })
       clearTimeout(timeoutId)
       if (!res.ok) throw new Error('Seeding failed')
@@ -752,6 +752,9 @@ export default function OnboardingPage() {
       problem: profile.problem,
       difficulty: profile.advancementLevel,
       personalContext: [profile.aspirations, (profile.strengths || []).slice(0, 3).join(', ')].filter(Boolean).join(' — '),
+      // The sentence that defines RELEVANT for the whole session — the first
+      // tree ran without one for every account until now (deep-audit §12).
+      purpose: typeof (profile as { purpose?: string }).purpose === 'string' ? (profile as { purpose?: string }).purpose : undefined,
     })
   }
 
