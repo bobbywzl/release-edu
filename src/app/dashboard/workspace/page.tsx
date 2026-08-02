@@ -323,6 +323,10 @@ function WorkspaceInner() {
     // instantly, so the second can never post the message twice.
     if (streamingRef.current || streaming || !treeId || !nodeId) return
     streamingRef.current = true
+    // A turn the student initiated (send, Quiz-me, an armed trigger) always
+    // pins the chat to the bottom — that's where the action lands. Passive
+    // updates still respect a reader who scrolled up.
+    stickToBottomRef.current = true
     if (showUser) setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'user', content: attachmentLabel(text, atts) }])
     setStreaming(true)
     setStreamText('')
@@ -666,6 +670,9 @@ function WorkspaceInner() {
     if (!activeQuiz || quizBusy || quizResult || !treeId || !nodeId) return
     const answer = activeQuiz.kind === 'mcq' ? quizSel : quizText.trim()
     if (answer === null || answer === '') return
+    // Answering a checkpoint is a student-initiated turn — pin to the bottom
+    // so the verdict and feedback bubbles land in view.
+    stickToBottomRef.current = true
     setQuizBusy(true)
     setQuizError(false) // clear any prior "connect error" so a retry starts clean
     setQuizErrorDetail(null)
