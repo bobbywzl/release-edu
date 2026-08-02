@@ -28,6 +28,7 @@ import {
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { TreeCopilot } from '@/components/tree-copilot'
 import { useLanguage } from '@/lib/i18n'
+import { parseQuizState, masteryFilled, masteryTarget } from '@/lib/mastery'
 import { cn } from '@/lib/utils'
 
 interface TreeNodeData {
@@ -51,6 +52,12 @@ interface TreeNodeData {
   pendingPlan?: string | null
   // Sibling learning-path position (copilot reorder writes it).
   order?: number
+  // Sanitized checkpoint tally (facets / pending question / missed — no
+  // answer keys) — powers the side panel's progress + resume card.
+  quizState?: string | null
+  // The node's distilled learning digest (Haiku-refreshed) — the "so far
+  // here" narrative on the side panel.
+  contextSummary?: string | null
 }
 
 interface TreeData {
@@ -568,6 +575,109 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// ── NODE PROGRESS + RESUME (side panel) ─────────────────────────────────
+// One glance answers "how far am I here, and where did I leave off?" — the
+// motivation read before opening the workspace. Built entirely from data the
+// tree GET already ships (sanitized quizState + contextSummary): zero AI
+// calls, zero extra fetches.
+
+function timeAgoLabel(iso: string | undefined, t: (k: string) => string): string | null {
+  if (!iso) return null
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return null
+  const min = Math.floor(ms / 60_000)
+  if (min < 2) return t('time.justNow')
+  if (min < 60) return t('time.minAgo').replace('{n}', String(min))
+  const h = Math.floor(min / 60)
+  if (h < 24) return t('time.hourAgo').replace('{n}', String(h))
+  const d = Math.floor(h / 24)
+  if (d <= 14) return t('time.dayAgo').replace('{n}', String(d))
+  return new Date(iso).toLocaleDateString()
+}
+
+function NodeProgressCard({ node }: { node: TreeNodeData }) {
+  const { t } = useLanguage()
+  const qs = parseQuizState(node.quizState)
+  const target = masteryTarget(qs)
+  const filled = Math.min(masteryFilled(qs), target)
+  const verified = node.status === 'understood'
+  // Goal gradient: a completely untouched node shows NOTHING here — the
+  // first proven point makes the card appear, already partly full.
+  const touched = qs.attempts > 0 || (qs.facets?.some(f => f.done) ?? false) || !!node.contextSummary
+  if (verified || !touched) return null
+
+  // The resume line — the most actionable "where you left off", in priority:
+  // an unanswered card > a queued walkthrough > a miss awaiting retest > the
+  // next unproven point.
+  const nextFacet = qs.facets?.find(f => !f.done)?.name
+  const lastMissed = qs.missed.length > 0 ? qs.missed[qs.missed.length - 1].question : null
+  const resume = qs.pending?.question
+    ? { label: t('tree.leftOffPending'), detail: qs.pending.question }
+    : qs.remediationOwed
+      ? { label: t('tree.leftOffRemediation'), detail: qs.remediationOwed }
+      : lastMissed
+        ? { label: t('tree.leftOffMissed'), detail: lastMissed }
+        : nextFacet
+          ? { label: t('tree.leftOffNext'), detail: nextFacet }
+          : null
+
+  // The narrative "so far here" — the node's distilled digest, de-markdowned
+  // and clamped to a glance.
+  const soFar = (node.contextSummary ?? '').replace(/[#*_`>-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+  const when = timeAgoLabel(node.updatedAt, t)
+
+  return (
+    <div className="border border-primary/25 bg-primary/[0.04] rounded-xl p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <p className="text-[11px] font-bold text-foreground uppercase tracking-wider flex-1">{t('tree.progressTitle')}</p>
+        {when && <span className="text-[10px] text-muted-foreground/70">{t('tree.lastTouched').replace('{when}', when)}</span>}
+      </div>
+      {/* Coverage bar — the at-a-glance read. */}
+      {filled > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${(filled / Math.max(1, target)) * 100}%` }} />
+          </div>
+          <span className="text-[11px] tabular-nums text-emerald-300 font-semibold">{filled}/{target}</span>
+        </div>
+      )}
+      {/* Facet pips — which promises are already proven. */}
+      {qs.facets && qs.facets.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {qs.facets.map((f, i) => (
+            <span
+              key={i}
+              title={f.name}
+              className={cn(
+                'max-w-full truncate px-1.5 py-0.5 rounded-md text-[10px] border',
+                f.done ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300' : 'border-border text-muted-foreground/80',
+              )}
+            >
+              {f.done ? '✓ ' : ''}{f.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Where you left off — the hook back in. */}
+      {resume && (
+        <div className="border-l-2 border-primary/50 pl-2">
+          <p className="text-[10px] font-bold text-primary uppercase tracking-wider">{t('tree.leftOffTitle')}</p>
+          <p className="text-[11px] text-foreground/90 leading-snug mt-0.5">
+            {resume.label} <span className="text-muted-foreground">“{resume.detail.slice(0, 110)}{resume.detail.length > 110 ? '…' : ''}”</span>
+          </p>
+        </div>
+      )}
+      {/* So far here — what's already banked (loss-aversion works FOR us). */}
+      {soFar && (
+        <div>
+          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{t('tree.soFarTitle')}</p>
+          <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{soFar}{(node.contextSummary ?? '').length > 200 ? '…' : ''}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -1165,6 +1275,10 @@ function TreeCanvasInner() {
                        node's digest. */
                     <RootAnswerPanel treeId={tree.id} hasVerified={understood > 0} />
                   ) : (
+                  <>
+                  {/* Glanceable progress + "where you left off" — the
+                      motivation read BEFORE the button. */}
+                  <NodeProgressCard node={selected} />
                   <button
                     onClick={() => {
                       try {
@@ -1175,8 +1289,12 @@ function TreeCanvasInner() {
                     className="flex items-center justify-center gap-2 w-full rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors"
                   >
                     <MessageSquare className="w-4 h-4" />
-                    {t('tree.openWorkspace')}
+                    {/* An in-progress node invites CONTINUING, not opening. */}
+                    {selected.status !== 'understood' && parseQuizState(selected.quizState).attempts > 0
+                      ? t('tree.continueWorkspace')
+                      : t('tree.openWorkspace')}
                   </button>
+                  </>
                   )}
                   {selected.status === 'understood' && (
                     <p className="text-xs text-emerald-400 flex items-center gap-1.5">

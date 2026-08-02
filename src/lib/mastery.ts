@@ -139,6 +139,10 @@ export function sanitizeQuizStateForClient(raw: string | null | undefined): stri
     shortCorrect: qs.shortCorrect, sureWrong: qs.sureWrong, sureRight: qs.sureRight,
     missed: qs.missed, reviewedAt: qs.reviewedAt ?? null,
     facets: qs.facets ?? null,
+    // The queued-remediation flag (its text is a missed QUESTION — already
+    // client-visible via `missed`; no key material) — powers the tree panel's
+    // "where you left off" resume line.
+    remediationOwed: qs.remediationOwed ?? null,
     pending: sanitizePending(qs.pending),
   }
   return JSON.stringify(safe)
