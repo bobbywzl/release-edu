@@ -66,9 +66,10 @@ interface XpAwardResult {
   newTotal: number
   levelUp: boolean
   newLevel: number
-  // Rank progression: rankUp = crossed a division or tier boundary; tierUp =
-  // reached a whole new tier (the epic celebration). rank carries the new
-  // rank so the client can theme the overlay + escalate the sound.
+  // Rank progression: rankUp = the level-up brought a NEW TITLE (every level
+  // has its own, so every level-up celebrates); tierUp = reached a whole new
+  // tier family (the epic ceremony). rank carries the new rank so the client
+  // can theme the overlay + escalate the sound.
   rankUp: boolean
   tierUp: boolean
   rank: RankInfo
@@ -141,13 +142,13 @@ const XP_TABLE: Record<XpSource, { base: number; label: string }> = {
 // (~2 quiz answers + 1 objective), so "goal met" is a daily habit, not a chore.
 export const DAILY_GOAL_XP = 60
 
-// FPS-style competitive rank ladder (Valorant/CS grammar): 8 escalating
-// TIERS, each split into 3 divisions (III→II→I) so a promotion — the dopamine
-// hit — is always within a level or two. The top tier (Radiant) is
-// undivided. Every tier carries its own color + emblem + a `vfx` intensity
-// (0..1) that drives how grand the rank-up sound and animation get: climbing
-// the ladder should *feel* louder and shinier. Ranks derive purely from level
-// (no schema), and appear on the dashboard and the portfolio.
+// Rank ladder: 10 escalating TIER FAMILIES. There are NO numbered divisions
+// (no "Seeker II" — user directive, Aug 2026): every LEVEL wears its own
+// unique title from LEVEL_TITLES below, and the tier supplies the color +
+// emblem + a `vfx` intensity (0..1) that drives how grand the rank-up sound
+// and animation get: climbing the ladder should *feel* louder and shinier.
+// Ranks derive purely from level (no schema), and appear on the dashboard
+// and the portfolio.
 export interface RankTier {
   key: string
   minLevel: number
@@ -183,9 +184,9 @@ const TIERS: RankTier[] = [
 export interface RankInfo {
   key: string
   tier: number       // index in TIERS (0..9)
-  division: number   // 3→1 within a mid tier; 0 for the undivided Rookie + top tiers
-  en: string         // composed label incl. numeral, e.g. "Scholar II"
-  zh: string         // e.g. "学者 II"
+  division: number   // always 0 — numbered divisions are gone (kept for wire compat)
+  en: string         // the level's own unique title, e.g. "Pathfinder"
+  zh: string         // e.g. "寻路者"
   color: string
   glow: string
   emblem: string
@@ -214,7 +215,7 @@ const LEVEL_TITLES: Array<{ en: string; zh: string }> = [
   // Grandmaster family (47-59) 🏆
   { en: 'Grandmaster', zh: '大宗师' }, { en: 'Champion', zh: '冠军' }, { en: 'Titan', zh: '巨擘' }, { en: 'Paragon', zh: '典范' }, { en: 'Sovereign', zh: '王者' }, { en: 'Legend', zh: '传奇' }, { en: 'Immortal Hand', zh: '不朽妙手' }, { en: 'Apex', zh: '绝巅' }, { en: 'Colossus', zh: '擎天者' }, { en: 'Peerless', zh: '无双' }, { en: 'Monarch of Mind', zh: '心智之王' }, { en: 'World-Class', zh: '世界级' }, { en: 'Pinnacle', zh: '绝顶' },
   // Transcendent family (60-74) 🌌
-  { en: 'Transcendent', zh: '超凡' }, { en: 'Ascendant', zh: '飞升者' }, { en: 'Ethereal', zh: '缥缈者' }, { en: 'Boundless', zh: '无界' }, { en: 'Celestial', zh: '天穹者' }, { en: 'Starforger', zh: '铸星者' }, { en: 'Voidwalker', zh: '踏虚者' }, { en: 'Cosmic Mind', zh: '宇宙心智' }, { en: 'Infinite', zh: '无限' }, { en: 'Eternal', zh: '永恒' }, { en: 'All-Seeing', zh: '洞悉万象' }, { en: 'Beyond', zh: '彼岸' }, { en: 'Singularity', zh: '奇点' }, { en: 'Universal', zh: '寰宇' }, { en: 'Threshold', zh: '门槛' },
+  { en: 'Transcendent', zh: '超凡' }, { en: 'Ascendant', zh: '飞升者' }, { en: 'Ethereal', zh: '缥缈者' }, { en: 'Boundless', zh: '无界' }, { en: 'Celestial', zh: '天穹者' }, { en: 'Starforger', zh: '铸星者' }, { en: 'Voidwalker', zh: '踏虚者' }, { en: 'Cosmic Mind', zh: '宇宙心智' }, { en: 'Infinite', zh: '无限' }, { en: 'Eternal', zh: '永恒' }, { en: 'All-Seeing', zh: '洞悉万象' }, { en: 'Beyond', zh: '彼岸' }, { en: 'Singularity', zh: '奇点' }, { en: 'Apotheosis', zh: '臻于化境' }, { en: 'Event Horizon', zh: '事件视界' },
 ]
 
 /**
