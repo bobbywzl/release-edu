@@ -937,13 +937,19 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
     } catch { /* forced pass is best-effort — the turn still returns */ }
   }
 
-  const list = parsed?.proposals ?? []
+  // VALIDATE proposals BEFORE the delete gate: a shape-drifted reply (items
+  // keyed `name`, bare strings, empty titles) previously passed the raw
+  // `list.length > 0` gate, deleted the student's ghosts, then created zero
+  // replacements — a total wipe. Only genuinely titled entries count.
+  const valid = (parsed?.proposals ?? [])
+    .filter((p): p is { title: string; summary: string; kind?: string } => !!p && typeof p.title === 'string' && p.title.trim().length > 0)
+    .slice(0, 4)
 
-  // Replace the dialog's previous ghosts ONLY now that the turn succeeded and
-  // produced actual replacements. A conversational turn (proposals: []) keeps
-  // the previous set on the board. Scoped so ghosts from other dialogs/nodes
-  // and already-approved (pending=false) nodes are never touched.
-  if (replaceIds.length > 0 && list.length > 0) {
+  // Replace the dialog's previous ghosts ONLY now that the turn produced actual
+  // replacements. A conversational turn (no valid proposals) keeps the previous
+  // set. Scoped so ghosts from other dialogs/nodes and already-approved
+  // (pending=false) nodes are never touched.
+  if (replaceIds.length > 0 && valid.length > 0) {
     await prisma.treeNode.deleteMany({
       where: { id: { in: replaceIds }, treeId, parentId: nodeId, pending: true },
     }).catch(() => null)
@@ -953,9 +959,8 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
   // Kind is DEPTH (small-to-big law) — the model's kind suggestion is ignored.
   const childKind = kindForDepth(nodePath(tree.nodes, nodeId).length)
   const created: TreeNode[] = []
-  for (let i = 0; i < Math.min(4, list.length); i++) {
-    const p = list[i]
-    if (!p?.title) continue
+  for (let i = 0; i < valid.length; i++) {
+    const p = valid[i]
     created.push(await prisma.treeNode.create({
       data: {
         treeId, parentId: nodeId,
