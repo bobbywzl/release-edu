@@ -23,9 +23,12 @@ export type UsageProvider = 'anthropic' | 'google'
 interface Price { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 export const MODEL_PRICING: Record<string, Price> = {
-  // Anthropic
-  'claude-opus-4-8':            { input: 15, output: 75, cacheRead: 1.5,  cacheWrite: 18.75 },
-  'claude-opus-4-7':            { input: 15, output: 75, cacheRead: 1.5,  cacheWrite: 18.75 },
+  // Anthropic — Opus-tier pricing dropped to $5/$25 per MTok from Opus 4.5
+  // onward (the old $15/$75 rows overbilled the budget gate 3× and threw the
+  // admin panel off in both directions).
+  'claude-opus-5':              { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25 },
+  'claude-opus-4-8':            { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25 },
+  'claude-opus-4-7':            { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25 },
   'claude-sonnet-5':            { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75 },
   'claude-sonnet-4-6':          { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75 }, // legacy — keep for historical usage records
   'claude-haiku-4-5-20251001':  { input: 1,  output: 5,  cacheRead: 0.1,  cacheWrite: 1.25 },
@@ -34,12 +37,19 @@ export const MODEL_PRICING: Record<string, Price> = {
   'gemini-3-flash-preview':     { input: 0.1,  output: 0.4, cacheRead: 0.025,  cacheWrite: 0.1 },
 }
 
-// Conservative fallback for an unrecognised model (Sonnet-tier) so unknown
-// spend is still counted rather than dropped to $0.
+// Family-aware fallback for an unrecognised model id, so the auto-adopting
+// resolver can never outrun the table into the wrong tier: an unknown Opus
+// bills as Opus, an unknown Haiku as Haiku, anything else Sonnet-tier.
 const FALLBACK_PRICE: Price = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }
+const OPUS_FALLBACK: Price = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }
+const HAIKU_FALLBACK: Price = { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 }
 
 export function priceFor(model: string): Price {
-  return MODEL_PRICING[model] ?? FALLBACK_PRICE
+  const hit = MODEL_PRICING[model]
+  if (hit) return hit
+  if (model.includes('opus')) return OPUS_FALLBACK
+  if (model.includes('haiku')) return HAIKU_FALLBACK
+  return FALLBACK_PRICE
 }
 
 export interface TokenCounts {
