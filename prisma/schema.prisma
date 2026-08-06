@@ -118,6 +118,15 @@ model TreeNode {
   // every turn — the per-node redundancy law without the token bloat.
   contextSummary   String?
   contextSummaryAt DateTime?
+  // The node's PROGRESS-BOARD DIGEST — a learner-facing, structured JSON
+  // ({headline, moments[], misconceptions[], quizRead, nextFocus}) written by
+  // a cheap background pass (Haiku, usage tag `tree-digest`) after real work
+  // happens here. Powers the workspace Mastery Board's narrative sections
+  // (key moments, misconceptions cleared, Bob's read of the quiz record) in
+  // the session's language. Unlike contextSummary (prompt-facing), this is
+  // written TO the learner.
+  boardDigest   String?
+  boardDigestAt DateTime?
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

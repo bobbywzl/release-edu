@@ -32,7 +32,7 @@ import {
   recordCheckpointStruggle, type XpAwardLite,
 } from '@/lib/tree-engine'
 import { clampText } from '@/lib/clamp'
-import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, resolveFacetCredit, type PendingQuiz } from '@/lib/mastery'
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, resolveFacetCredit, QUIZ_HISTORY_CAP, type PendingQuiz } from '@/lib/mastery'
 import { evaluateAndAwardBadges, type BadgeDef } from '@/lib/badges'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
@@ -357,6 +357,21 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
     // a newer card Bob stored while we were judging.
     if (tally.pending?.question === quiz.question) tally.pending = null
     if (isReview) tally.reviewedAt = new Date().toISOString()
+    // PERFORMANCE RECORD (Mastery Board): append this judged attempt to the
+    // node's chronological history — outcome/facet/confidence only, never key
+    // material. `fix` marks the comeback moment: a correct answer that closed
+    // a facet the learner had previously missed (gated on THIS application's
+    // credit so CAS re-runs on fresher state stay truthful).
+    tally.history = [
+      ...(tally.history ?? []),
+      {
+        t: new Date().toISOString(), ok: correct, kind: quiz.kind,
+        ...(typeof quiz.facet === 'string' && quiz.facet.trim() ? { facet: quiz.facet.trim().slice(0, 120) } : {}),
+        ...(body.confidence === 'sure' || body.confidence === 'unsure' ? { conf: body.confidence } : {}),
+        ...(isReview ? { review: true } : {}),
+        ...(correct && coverageAdvanced && fixedAfterStruggle ? { fix: true } : {}),
+      },
+    ].slice(-QUIZ_HISTORY_CAP)
     return tally
   }
   // NEVER-LOSE WRITE: a silently dropped tally desynchronizes the header
@@ -501,6 +516,16 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
       }
     }
     await store.addMessage(conv.id, 'assistant', `${banner}${feedback ? ` — ${feedback}` : ''}${coverageNote}${verifiedNote}${reviewNote}`)
+  } catch { /* non-critical */ }
+
+  // Keep the node's MASTERY BOARD digest fresh: a judged checkpoint is
+  // exactly the kind of event the board narrates (a proven facet, a fixed
+  // hole, a wrong answer worth reading back). Backgrounded — never blocks
+  // the verdict the student is waiting on.
+  try {
+    const { inBackground } = await import('@/lib/background')
+    const { refreshNodeBoardDigest } = await import('@/lib/tree-engine')
+    inBackground(refreshNodeBoardDigest(userId, id, nodeId, zh ? 'zh' : undefined))
   } catch { /* non-critical */ }
 
   return NextResponse.json({
