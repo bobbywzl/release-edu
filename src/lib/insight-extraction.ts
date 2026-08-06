@@ -19,6 +19,10 @@ export async function extractInsightsBackground(
   // (verification/struggle/misconception insights). Falls back to the global
   // profile language only when no session language is provided.
   sessionLang?: string,
+  // The tree (session) this exchange happened in — labels subject-specific
+  // insights on the open learner model so a struggle never renders unlabeled
+  // next to an unrelated session.
+  treeId?: string,
 ): Promise<void> {
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default
@@ -108,6 +112,9 @@ importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; ve
         }).catch(() => null)
       } else if (op.op === 'new' && validTypes.has(op.type) && typeof op.content === 'string' && op.content.trim()) {
         const { clampText } = await import('@/lib/clamp')
+        // Subject-specific types carry their session label; durable
+        // about-the-person traits stay global (they're true across subjects).
+        const SUBJECT_TYPES = new Set(['knowledge', 'misconception', 'struggle', 'weakness', 'breakthrough'])
         await prisma.insight.create({
           data: {
             userId: storeUserId,
@@ -116,6 +123,7 @@ importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; ve
             confidence: clamp01(op.confidence, 0.5),
             importance: clamp01(op.importance, 0.4),
             source: `chat-${new Date().toISOString().split('T')[0]}`,
+            ...(treeId && SUBJECT_TYPES.has(op.type) ? { treeId } : {}),
           },
         }).catch(() => null)
       }

@@ -10,10 +10,10 @@
  * checkpoint cards (MCQ / short answer). Correct answers earn XP and count
  * toward the node's verification — there is no separate test screen.
  */
-import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   Bot, Send, ArrowLeft, ArrowRight, ShieldCheck, Loader2, StickyNote, Paperclip,
   Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
@@ -76,6 +76,53 @@ function splitQuiz(raw: string): { text: string; quiz: QuizPayload | null } {
 }
 
 let tempId = 0
+
+/**
+ * OBJECTIVE PILL — one "hole to fill": a syllabus point the learner missed a
+ * checkpoint on. It appears (pop-in) the moment the miss is recorded and gets
+ * a drawn-✓ tick animation the moment a later correct answer closes it — the
+ * felt moment of real progress, not just a silent counter move.
+ */
+function HolePill({ name, done, title }: { name: string; done: boolean; title: string }) {
+  const prevDone = useRef(done)
+  const [pop, setPop] = useState(false)
+  useEffect(() => {
+    if (!prevDone.current && done) {
+      setPop(true)
+      const timer = setTimeout(() => setPop(false), 1100)
+      prevDone.current = done
+      return () => clearTimeout(timer)
+    }
+    prevDone.current = done
+  }, [done])
+  return (
+    <motion.span
+      layout
+      initial={{ opacity: 0, scale: 0.8, y: 4 }}
+      animate={{ opacity: 1, scale: pop ? [1, 1.22, 1] : 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.85 }}
+      transition={{ duration: pop ? 0.55 : 0.2, ease: 'easeOut' }}
+      title={title}
+      className={cn(
+        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium max-w-[240px]',
+        done
+          ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
+          : 'border-amber-400/40 bg-amber-500/10 text-amber-300',
+      )}
+    >
+      {done ? (
+        // Remount on pop so the ✓ path DRAWS when the hole just closed, but
+        // renders instantly complete on a plain reload.
+        <motion.svg key={pop ? 'tick-anim' : 'tick'} viewBox="0 0 24 24" className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round">
+          <motion.path d="M20 6L9 17l-5-5" initial={{ pathLength: pop ? 0 : 1 }} animate={{ pathLength: 1 }} transition={{ duration: 0.45, ease: 'easeOut' }} />
+        </motion.svg>
+      ) : (
+        <span className="w-2.5 h-2.5 border-[1.5px] border-current rounded-[3px] flex-shrink-0" />
+      )}
+      <span className={cn('truncate', done && 'line-through decoration-emerald-400/60')}>{name}</span>
+    </motion.span>
+  )
+}
 
 function WorkspaceInner() {
   const search = useSearchParams()
@@ -153,6 +200,8 @@ function WorkspaceInner() {
   const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | null>(null)
   // One facet-growth call in flight at a time (the ⬆ grow-into-branch chips).
   const [facetGrowBusy, setFacetGrowBusy] = useState<string | null>(null)
+  // Checkpoint-rail navigation: the message being flashed after a jump.
+  const [flashMsgId, setFlashMsgId] = useState<string | null>(null)
   // GROW BRANCH (FOUNDATION: the tree grows through the learner's own
   // questions) — null = closed; a string opens the dialog with that seed
   // question ('' = blank). Approved children attach under THIS node.
@@ -192,6 +241,45 @@ function WorkspaceInner() {
   const { highlights, addHighlight, updateHighlight, deleteHighlight } = useHighlights(conversationId)
 
   const node = tree?.nodes.find(n => n.id === nodeId) ?? null
+
+  // ── CHECKPOINT RAIL anchors ──
+  // Which chat message probed each syllabus facet (the sanitized [[QUIZ]]
+  // markers carry the facet name going forward). Latest probe wins — that's
+  // the moment worth revisiting: the question plus the teaching around it.
+  const facetAnchors = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const m of messages) {
+      if (m.role !== 'assistant') continue
+      const idx = m.content.indexOf('[[QUIZ]]')
+      if (idx === -1) continue
+      const jm = m.content.slice(idx + 8).match(/\{[^{}]*\}/)
+      if (!jm) continue
+      try {
+        const q = JSON.parse(jm[0]) as { facet?: string }
+        if (typeof q.facet === 'string' && q.facet.trim()) map.set(q.facet.trim().toLowerCase(), m.id)
+      } catch { /* malformed marker — no anchor */ }
+    }
+    return map
+  }, [messages])
+
+  function jumpToFacet(name: string) {
+    const anchorId = facetAnchors.get(name.trim().toLowerCase())
+    if (!anchorId) return
+    const el = document.getElementById(`ws-msg-${anchorId}`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setFlashMsgId(anchorId)
+    setTimeout(() => setFlashMsgId(f => (f === anchorId ? null : f)), 1800)
+  }
+
+  // ── HOLES TO FILL (objective pills) ──
+  // Every facet the learner has MISSED a checkpoint on: open box while
+  // unfixed, animated tick the moment a correct answer closes it. Derived
+  // purely from the sanitized quizState, so it survives reloads.
+  const holes = useMemo(() => {
+    const qs = parseQuizState(node?.quizState)
+    return (qs.facets ?? []).filter(f => f.struggled).map(f => ({ name: f.name, done: f.done }))
+  }, [node?.quizState])
 
   // THE ROOT HAS NO WORKSPACE (law): it IS the problem statement, edited only
   // through the Tree Copilot. Any root deep-link bounces back to the tree.
@@ -898,14 +986,17 @@ function WorkspaceInner() {
               return (
                 <motion.div
                   key={m.id}
+                  id={`ws-msg-${m.id}`}
                   initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                   className={cn('group/turn flex flex-col', m.role === 'user' ? 'items-end' : 'items-start')}
                 >
                   <div className={cn(
-                    'rounded-2xl px-4 py-3 text-[15px] leading-relaxed',
+                    'rounded-2xl px-4 py-3 text-[15px] leading-relaxed transition-shadow',
                     m.role === 'user'
                       ? 'max-w-[80%] bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
                       : 'max-w-[92%] bg-card border border-border text-foreground rounded-bl-sm',
+                    // Checkpoint-rail jump target — a brief ring says "here".
+                    flashMsgId === m.id && 'ring-2 ring-primary/70',
                   )}>
                     {m.role === 'user' ? m.content : (
                       <>
@@ -1256,6 +1347,30 @@ function WorkspaceInner() {
             )}
           </div>
 
+          {/* HOLES TO FILL — the to-do objectives strip: every syllabus point
+              the learner missed a checkpoint on pops in as an open box, and
+              draws its ✓ the moment a later correct answer closes it. The
+              tick, not a silent counter, is the felt moment of progress. */}
+          {holes.length > 0 && (
+            <div className="px-3 lg:px-4 pt-2 bg-card/30 border-t border-border/60">
+              <div className="max-w-3xl mx-auto w-full flex flex-wrap items-center gap-1.5 pb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  🎯 {t('workspace.holesTitle')}
+                </span>
+                <AnimatePresence>
+                  {holes.map(h => (
+                    <HolePill
+                      key={h.name}
+                      name={h.name}
+                      done={h.done}
+                      title={h.done ? t('workspace.railFixedHint') : t('workspace.holeOpenHint')}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
+
           {/* Input bar — same visual language as the Bob chat, with the same
               SOTA multimodal capture row as the tree copilot (uniformity):
               📎 file · 📷 photo · 🎥 video · 🎙️ voice note. */}
@@ -1370,8 +1485,32 @@ function WorkspaceInner() {
                           <ul className="space-y-1">
                             {qs.facets.map((f, i) => (
                               <li key={i} className="group flex items-start gap-1.5 text-[12px] leading-snug">
-                                <span className="flex-shrink-0">{f.done ? '✅' : '⬜'}</span>
-                                <span className={cn('flex-1', f.done ? 'text-foreground/80' : 'text-muted-foreground')}>{f.name}</span>
+                                {/* CHECKPOINT RAIL state: ✅ proven · 🔶 missed,
+                                    not yet re-proven (an open hole) · ⬜ not
+                                    reached. "Fixed" = failed first, then proved. */}
+                                <span className="flex-shrink-0">{f.done ? '✅' : f.struggled ? '🔶' : '⬜'}</span>
+                                {facetAnchors.has(f.name.trim().toLowerCase()) ? (
+                                  <button
+                                    onClick={() => jumpToFacet(f.name)}
+                                    title={t('workspace.railJumpHint')}
+                                    className={cn(
+                                      'flex-1 text-left underline-offset-2 hover:underline cursor-pointer',
+                                      f.done ? 'text-foreground/80' : 'text-muted-foreground hover:text-foreground',
+                                    )}
+                                  >
+                                    {f.name}
+                                  </button>
+                                ) : (
+                                  <span className={cn('flex-1', f.done ? 'text-foreground/80' : 'text-muted-foreground')}>{f.name}</span>
+                                )}
+                                {f.done && f.struggled && (
+                                  <span
+                                    title={t('workspace.railFixedHint')}
+                                    className="flex-shrink-0 px-1.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-400/40 text-emerald-300 text-[9px] font-semibold uppercase tracking-wide"
+                                  >
+                                    {t('workspace.railFixed')}
+                                  </span>
+                                )}
                                 {/* FACETS BECOME BRANCHES (the vision's own
                                     words: the sub-points "form the further
                                     branches of the trees") — one tap grows an

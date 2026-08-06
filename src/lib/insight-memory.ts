@@ -86,6 +86,7 @@ export async function getTopInsights(
       lastConfirmedAt: l.createdAt,
       pinned: false,
       mergedIntoId: null,
+      treeId: null,
     }))
   }
   const now = new Date()
