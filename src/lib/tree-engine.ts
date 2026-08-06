@@ -1539,15 +1539,49 @@ export interface XpAwardLite { awarded: number; label: string; levelUp: boolean;
  * knowledge insight (analogy-bridge raw material), struggle resolution, and
  * the tree-completion check. Returns the XP awards for client celebration.
  */
+// True when a deployable-depth tree (advanced/professional) has NO build
+// evidence yet — no non-empty build log on any node, and no uploaded artifact
+// (per-node 'tree-node' uploads or tree-level copilot 'tree' shares). Fails
+// open: a query hiccup must never dam a completion that was otherwise earned.
+async function deployableGateBlocks(treeId: string): Promise<boolean> {
+  try {
+    const tree = await prisma.problemTree.findUnique({
+      where: { id: treeId }, select: { difficulty: true },
+    })
+    if (tree?.difficulty !== 'advanced' && tree?.difficulty !== 'professional') return false
+    const nodes = await prisma.treeNode.findMany({
+      where: { treeId }, select: { id: true, progressLog: true },
+    })
+    const hasLog = nodes.some(n => {
+      try {
+        const log = JSON.parse(n.progressLog ?? '[]')
+        return Array.isArray(log) && log.length > 0
+      } catch { return false }
+    })
+    if (hasLog) return false
+    const file = await prisma.linkedFile.findFirst({
+      where: { workType: { in: ['tree-node', 'tree'] }, workId: { in: [treeId, ...nodes.map(n => n.id)] } },
+      select: { id: true },
+    })
+    return !file
+  } catch { return false }
+}
+
 export async function markNodeVerified(
   userId: string, treeId: string, nodeId: string, lang?: string,
-): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean; seedOnly?: boolean }> {
+): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean; seedOnly?: boolean; buildPending?: boolean }> {
   const node = await prisma.treeNode.findUnique({ where: { id: nodeId } })
   if (!node) throw new Error('Node not found')
   const zh = lang === 'zh'
   const xp: XpAwardLite[] = []
   let treeCompleted = false
   let seedOnly = false
+  // DEPLOYABLE COMPLETION GATE (qa-findings-4 №2): sessions targeting
+  // advanced/professional depth promised deployable understanding — their
+  // completion requires ≥1 piece of real build evidence (a cited build-log
+  // entry or an uploaded artifact) on top of all-verified. Checkpoints alone
+  // certify EXPLAINED; the evidence flips the tree to DEPLOYED.
+  let buildPending = false
 
   await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'understood' } })
   // Node mastery is the small-step reward of the Tree product.
@@ -1608,6 +1642,14 @@ export async function markNodeVerified(
         // no trophy — the quiz route surfaces "is the problem actually
         // answered?" with the Copilot gap-check as the next step instead.
         seedOnly = true
+      } else if (await deployableGateBlocks(treeId)) {
+        // DEPLOYABLE COMPLETION GATE: this session's target depth promised
+        // "real-life deployable understanding" (Mode: the learner's own files
+        // and products as an answer to "do you understand this point").
+        // Every branch is verified — EXPLAINED — but no build evidence exists
+        // yet, so the crown waits: the quiz route surfaces "show me it
+        // running" with the build-log/upload path as the next step.
+        buildPending = true
       } else {
       await prisma.treeNode.updateMany({
         where: { treeId, parentId: null },
@@ -1648,7 +1690,7 @@ export async function markNodeVerified(
     inBackground(refreshNodeContextSummary(userId, treeId, nodeId, lang))
   } catch { /* non-critical */ }
 
-  return { xp, treeCompleted, seedOnly }
+  return { xp, treeCompleted, seedOnly, buildPending }
 }
 
 // ── THE ROOT ANSWER (the artifact the founding paragraph promises) ───────

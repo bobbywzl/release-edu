@@ -24,6 +24,9 @@ interface TreeSummary {
   understoodCount: number
   hasPurpose?: boolean
   accentColor?: string | null
+  // Completed trees only: true when real build evidence backs the mastery
+  // (Deployed), false when it was proven through checkpoints alone (Explained).
+  deployed?: boolean
 }
 
 export default function TreePage() {
@@ -605,6 +608,16 @@ export default function TreePage() {
                       {consolidated && (
                         <span className="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-400 text-[10px] font-bold align-middle">
                           <Sparkles className="w-3 h-3" /> {t('tree.consolidated')}
+                        </span>
+                      )}
+                      {consolidated && (
+                        <span className={cn(
+                          'inline-flex items-center gap-1 ml-1.5 px-1.5 py-0.5 rounded-full border text-[10px] font-bold align-middle',
+                          tree.deployed
+                            ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-400'
+                            : 'bg-sky-500/10 border-sky-400/30 text-sky-300',
+                        )}>
+                          {tree.deployed ? t('tree.outcomeDeployed') : t('tree.outcomeExplained')}
                         </span>
                       )}
                     </p>

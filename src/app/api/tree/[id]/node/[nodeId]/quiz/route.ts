@@ -332,12 +332,17 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
   // is withheld (completion gate) and the client asks the honest question —
   // "is the problem actually answered?" — with the Copilot gap-check as CTA.
   let seedComplete = false
+  // Deployable-depth twin of seedComplete: every branch verified, but the
+  // session promised deployable understanding and no build evidence exists —
+  // the client asks for it ("show me it running") instead of the trophy.
+  let buildPending = false
   if (!isVerifiedNode && masteryMet(tally)) {
     verified = true
     try {
       const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
       treeCompleted = r.treeCompleted
       seedComplete = r.seedOnly ?? false
+      buildPending = r.buildPending ?? false
       xp.push(...r.xp)
     } catch (err) {
       console.error('[tree] markNodeVerified failed (status will reconcile on next tree read):', err)
@@ -396,6 +401,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
     alreadyVerified: isVerifiedNode,
     treeCompleted,
     seedComplete,
+    buildPending,
     review: isReview,
   })
 }
