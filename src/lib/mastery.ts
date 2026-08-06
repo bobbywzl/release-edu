@@ -23,6 +23,10 @@ export const MASTERY_MIN_SHORT = 1
 export interface SyllabusFacet {
   name: string
   done: boolean
+  /** A checkpoint probing this facet was answered WRONG at some point.
+   *  done && struggled = "failed first, then fixed" — the checkpoint rail
+   *  renders it as repaired learning, distinct from a clean pass. */
+  struggled?: boolean
 }
 
 /** How a correct answer's facet tag resolves against the coverage map. */
@@ -115,6 +119,10 @@ export interface SanitizedPending {
   question: string
   options?: string[]
   hint?: string
+  /** The syllabus facet this card probes — no answer material (the facet
+   *  names are already fully visible in the coverage map); powers the
+   *  checkpoint rail's jump-to-moment anchors. */
+  facet?: string
 }
 
 /** Strip a pending checkpoint down to the client-safe shape (no answer key). */
@@ -125,6 +133,7 @@ export function sanitizePending(p: PendingQuiz | null | undefined): SanitizedPen
     question: p.question,
     ...(p.kind === 'mcq' && Array.isArray(p.options) ? { options: p.options } : {}),
     ...(typeof p.hint === 'string' && p.hint.trim() ? { hint: p.hint } : {}),
+    ...(typeof p.facet === 'string' && p.facet.trim() ? { facet: p.facet } : {}),
   }
 }
 
@@ -212,7 +221,7 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
     const facets = Array.isArray(p.facets)
       ? p.facets
         .filter(f => f && typeof f.name === 'string' && f.name.trim())
-        .map(f => ({ name: f.name.trim().slice(0, 120), done: f.done === true }))
+        .map(f => ({ name: f.name.trim().slice(0, 120), done: f.done === true, struggled: f.struggled === true }))
         .slice(0, 6)
       : null
     return {

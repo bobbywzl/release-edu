@@ -148,10 +148,14 @@ export async function PATCH(
       const arr = (raw: string | null) => { try { const v = JSON.parse(raw ?? '[]'); return Array.isArray(v) ? v : [] } catch { return [] } }
       const srcQs = parseQuizState(node.quizState)
       const dstQs = parseQuizState(into.quizState)
-      const facetMap = new Map<string, { name: string; done: boolean }>()
+      const facetMap = new Map<string, { name: string; done: boolean; struggled?: boolean }>()
       for (const f of [...(dstQs.facets ?? []), ...(srcQs.facets ?? [])]) {
         const prev = facetMap.get(f.name)
-        facetMap.set(f.name, { name: f.name, done: (prev?.done ?? false) || f.done })
+        facetMap.set(f.name, {
+          name: f.name,
+          done: (prev?.done ?? false) || f.done,
+          struggled: (prev?.struggled ?? false) || f.struggled === true,
+        })
       }
       const mergedQs: QuizState = {
         ...dstQs,

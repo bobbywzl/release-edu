@@ -263,6 +263,11 @@ model Insight {
   content         String
   confidence      Float    @default(0.5)
   source          String   // where this insight came from
+  // Which problem tree (session) this insight came from — null for global
+  // about-the-person traits and legacy rows. Labels the open learner model
+  // so a quantum-physics struggle never renders unlabeled next to a game-
+  // performance session. Plain id (no FK): a deleted tree just loses its label.
+  treeId          String?
   // ── Memory-engine fields ──
   // importance: how much this should shape teaching (durable traits high, one-off confusion low)
   importance      Float    @default(0.5)

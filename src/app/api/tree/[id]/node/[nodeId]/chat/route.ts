@@ -200,7 +200,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ nod
     orderBy: { createdAt: 'asc' },
     include: { messages: { orderBy: { createdAt: 'asc' } } },
   })
-  let pending: { kind: string; question: string; options?: string[]; hint?: string } | null = null
+  let pending: { kind: string; question: string; options?: string[]; hint?: string; facet?: string } | null = null
   // The persisted remediation debt: a wrong answer whose law-mandated full
   // remediation never ran (tab closed, judge response lost) — the workspace
   // fires [NODE_REMEDIATE] on mount when this is set.
@@ -218,6 +218,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ nod
         kind: p.kind, question: p.question,
         ...(p.kind === 'mcq' && Array.isArray(p.options) ? { options: p.options } : {}),
         ...(typeof p.hint === 'string' && p.hint.trim() ? { hint: p.hint } : {}),
+        ...(typeof p.facet === 'string' && p.facet.trim() ? { facet: p.facet } : {}),
       }
     }
   } catch { /* non-critical — card just won't re-arm this fetch */ }
@@ -437,6 +438,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                   userId, type: 'misconception',
                   content: `${clampText(r.misconception!, 250)} ${tag}`,
                   confidence: 0.7, importance: 0.6, source: 'reflection',
+                  treeId: id,
                 },
               })
             }
@@ -1038,6 +1040,10 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
           // The hint is answer-safe by construction (a nudge, not the key) —
           // it powers the card's Hint button client-side.
           ...(typeof card.hint === 'string' && card.hint.trim() ? { hint: card.hint } : {}),
+          // The facet name is already fully client-visible in the coverage
+          // map — carrying it on the marker anchors the checkpoint rail's
+          // jump-to-moment navigation.
+          ...(typeof card.facet === 'string' && card.facet.trim() ? { facet: card.facet } : {}),
         })
         try { controller.enqueue(encoder.encode(`\n\n${QUIZ_MARK}${sanitized}`)) } catch { /* closed */ }
         persistContent = `${proseOnly}\n\n${QUIZ_MARK}${sanitized}`
@@ -1301,7 +1307,7 @@ Return ONLY JSON: {"recitable": true|false}`,
             // bare 📎 chip label — a voice-note-only turn's transcript is
             // the student's actual utterance. Session language rides along so
             // insights are written in the tree's language, not the UI's.
-            inBackground(extractInsightsBackground(apiKey, turnContent || userRecord, persistContent, userId, tree.language ?? undefined))
+            inBackground(extractInsightsBackground(apiKey, turnContent || userRecord, persistContent, userId, tree.language ?? undefined, id))
           }
           // Keep THIS node's CONTEXT SUMMARY fresh so its descendants read a
           // current, distilled digest (never raw messages) via branchCoverage —

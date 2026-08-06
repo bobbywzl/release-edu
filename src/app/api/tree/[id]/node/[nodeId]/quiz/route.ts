@@ -216,7 +216,7 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
       feedback = j.feedback
       if (!correct) {
         const { inBackground } = await import('@/lib/background')
-        inBackground(recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined))
+        inBackground(recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined, id))
       }
     }
   } catch (err) {
@@ -253,6 +253,9 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
   // actually landed.
   let coverageAdvanced = false
   let coverageOutcome: 'credit' | 'deepening' | 'unresolved' | 'nocontract' = 'nocontract'
+  // This correct answer closed a facet the learner had previously MISSED —
+  // the visible "hole filled" moment (rail tick + insight resolution).
+  let fixedAfterStruggle = false
   const applyOutcome = (tally: ReturnType<typeof parseQuizState>) => {
     tally.attempts += 1
     if (correct) {
@@ -275,6 +278,10 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
         coverageOutcome = r.kind
         coverageAdvanced = false
         if (r.kind === 'credit') {
+          // "Failed first, then fixed": the facet was struggled before this
+          // correct answer — the checkpoint rail renders it as repaired
+          // learning, and matching struggle/misconception insights close.
+          fixedAfterStruggle = tally.facets[r.index].struggled === true
           tally.facets[r.index].done = true
           tally.untaggedStreak = 0
           coverageAdvanced = true
@@ -297,6 +304,19 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
       // client's follow-up turn dies with the tab, the workspace fires
       // [NODE_REMEDIATE] on next mount and the chat route clears this.
       tally.remediationOwed = quiz.question.slice(0, 400)
+      // Mark the probed facet STRUGGLED (done or not) — the "hole to fill"
+      // that the checkpoint rail and the in-chat objective pills track until
+      // a later correct answer on the same facet ticks it closed.
+      if (Array.isArray(tally.facets) && tally.facets.length > 0) {
+        const rr = resolveFacetCredit(tally.facets, quiz.facet)
+        if (rr.kind === 'credit') {
+          tally.facets[rr.index].struggled = true
+        } else {
+          const want = (quiz.facet ?? '').trim().toLowerCase()
+          const i = want ? tally.facets.findIndex(f => f.name.trim().toLowerCase() === want) : -1
+          if (i !== -1) tally.facets[i].struggled = true
+        }
+      }
     }
     // Confidence calibration: sure-but-wrong is the node's blind spot (future
     // checkpoints target it); sure-and-right is healthy calibration.
@@ -352,6 +372,20 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
     } catch (err) {
       console.error('[tree] quiz tally merge write failed:', err)
     }
+  }
+
+  // ── VISIBLE CLOSING (the report card becomes progress) ──
+  // A correct answer that re-proves previously-missed ground — a passed
+  // delayed retest, or a facet that was struggled and just flipped done —
+  // RESOLVES the matching struggle/misconception insights right now, so the
+  // open learner model visibly crosses them off mid-session instead of only
+  // at full node verification.
+  if (correct && (fixedAfterStruggle || !!quiz.retestOf)) {
+    try {
+      const { inBackground } = await import('@/lib/background')
+      const { markStrugglesResolved } = await import('@/lib/insight-memory')
+      inBackground(markStrugglesResolved(userId, node.title))
+    } catch { /* non-critical */ }
   }
 
   // ── XP: every meaningful answer pays; mastered material can't be farmed ──
@@ -459,5 +493,8 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
     seedComplete,
     buildPending,
     review: isReview,
+    // The "hole filled" moment: this correct answer closed a previously
+    // missed facet — the client ticks its objective pill with the animation.
+    fixedFacet: fixedAfterStruggle && quiz.facet ? quiz.facet : null,
   })
 }

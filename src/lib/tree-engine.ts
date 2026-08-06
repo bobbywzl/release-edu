@@ -1625,6 +1625,7 @@ export async function markNodeVerified(
         confidence: 0.95,
         importance: 0.7,
         source: 'verification',
+        treeId,
       },
     })
     const { markStrugglesResolved } = await import('@/lib/insight-memory')
@@ -1865,7 +1866,7 @@ ${sessionDirectives(tree, lang)}`,
  * existing struggle insight instead of stacking near-identical rows
  * (a bad afternoon must not clutter Bob's memory).
  */
-export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string, lang?: string): Promise<void> {
+export async function recordCheckpointStruggle(userId: string, nodeTitle: string, feedback: string, lang?: string, treeId?: string): Promise<void> {
   try {
     // Match the DELIMITED title in either quote style ("title" EN / 「title」
     // 中文). Delimiters keep dedup cross-language AND collision-immune — a bare
@@ -1899,6 +1900,7 @@ export async function recordCheckpointStruggle(userId: string, nodeTitle: string
         confidence: 0.85,
         importance: 0.55,
         source: 'verification',
+        ...(treeId ? { treeId } : {}),
       },
     })
   } catch { /* non-critical */ }

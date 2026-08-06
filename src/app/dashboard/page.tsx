@@ -27,11 +27,31 @@ interface TreeSummary {
   understoodCount: number
 }
 
+interface InsightRow {
+  id: string
+  type: string
+  content: string
+  timesObserved: number
+  lastConfirmedAt?: string
+  status?: 'active' | 'resolved'
+  treeId?: string | null
+  /** The session (tree) this note came from — subject notes render under it. */
+  treeTitle?: string | null
+}
+
+// Traits that are true about the PERSON across every subject — they belong in
+// the "About you" group even without a session label.
+const PERSONAL_TYPES = new Set(['personality', 'interest', 'preference', 'aspiration', 'style', 'strength'])
+
 export default function DashboardPage() {
   const { data, loading } = useStudentData()
   const { t } = useLanguage()
   const [trees, setTrees] = useState<TreeSummary[] | null>(null)
-  const [insights, setInsights] = useState<Array<{ id: string; type: string; content: string; timesObserved: number; lastConfirmedAt?: string }>>([])
+  const [insights, setInsights] = useState<InsightRow[]>([])
+  // Recently-RESOLVED struggles/misconceptions — rendered crossed off inside
+  // their subject group: the list where things get ticked off reads as
+  // progress; the one that only grows reads as a report card.
+  const [resolvedInsights, setResolvedInsights] = useState<InsightRow[]>([])
   const [showInsights, setShowInsights] = useState(false)
   // The star counter shows the TRUE constellation size from the API (the
   // visible list is ranked and capped at 24 — counting it made the number
@@ -49,6 +69,7 @@ export default function DashboardPage() {
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (d?.insights) setInsights(d.insights)
+        if (Array.isArray(d?.resolved)) setResolvedInsights(d.resolved)
         if (typeof d?.total === 'number') setStarCount(d.total)
         else if (d?.insights) setStarCount(d.insights.length)
       })
@@ -118,7 +139,10 @@ export default function DashboardPage() {
               {weeklyInsights.map(i => (
                 <div key={i.id} className="flex items-start gap-2 text-xs">
                   <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium uppercase tracking-wide">{t(`insight.type.${i.type}`, i.type)}</span>
-                  <span className="text-foreground/85 leading-snug">{i.content}</span>
+                  <span className="text-foreground/85 leading-snug">
+                    {i.content}
+                    {i.treeTitle ? <span className="text-muted-foreground/60"> · {i.treeTitle}</span> : null}
+                  </span>
                 </div>
               ))}
             </div>
@@ -214,17 +238,50 @@ export default function DashboardPage() {
             <span className="text-[11px] text-muted-foreground tabular-nums">{starCount ?? insights.length} {t('dashboard.starsEarned')}</span>
             <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showInsights ? 'rotate-180' : ''}`} />
           </button>
-          {showInsights && (
-            <div className="rounded-b-2xl border border-t-0 border-white/[0.06] bg-white/[0.02] px-4 py-3 space-y-1.5 -mt-2 pt-3.5">
-              <p className="text-[11px] text-muted-foreground mb-2">{t('dashboard.bobKnowsSub')}</p>
-              {insights.map(i => (
-                <div key={i.id} className="flex items-start gap-2 text-xs">
+          {showInsights && (() => {
+            // ── Grouped learner model ──
+            // "About you" (durable traits, true across subjects) · one group
+            // per session, labeled with its tree · "Earlier sessions" for
+            // legacy subject notes with no label. Resolved struggles render
+            // crossed off inside their group — visible progress, not a
+            // report card that only grows. Container styling follows the
+            // forest-night design system's surface language.
+            const all = [...insights, ...resolvedInsights]
+            const aboutYou = all.filter(i => !i.treeId && PERSONAL_TYPES.has(i.type))
+            const byTree = new Map<string, { title: string; items: InsightRow[] }>()
+            for (const i of all) {
+              if (!i.treeId) continue
+              if (!byTree.has(i.treeId)) byTree.set(i.treeId, { title: i.treeTitle || t('dashboard.insightEarlier'), items: [] })
+              byTree.get(i.treeId)!.items.push(i)
+            }
+            const earlier = all.filter(i => !i.treeId && !PERSONAL_TYPES.has(i.type))
+            const Row = ({ i }: { i: InsightRow }) => (
+              <div className="flex items-start gap-2 text-xs">
+                {i.status === 'resolved' ? (
+                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 text-[10px] font-medium uppercase tracking-wide">✓ {t('dashboard.insightFixed')}</span>
+                ) : (
                   <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-medium uppercase tracking-wide">{t(`insight.type.${i.type}`, i.type)}</span>
-                  <span className="text-foreground/85 leading-snug">{i.content}{i.timesObserved > 1 ? <span className="text-muted-foreground/60"> ·×{i.timesObserved}</span> : null}</span>
-                </div>
-              ))}
-            </div>
-          )}
+                )}
+                <span className={i.status === 'resolved' ? 'text-muted-foreground/70 leading-snug line-through decoration-emerald-400/50' : 'text-foreground/85 leading-snug'}>
+                  {i.content}{i.status !== 'resolved' && i.timesObserved > 1 ? <span className="text-muted-foreground/60"> ·×{i.timesObserved}</span> : null}
+                </span>
+              </div>
+            )
+            const Group = ({ label, items }: { label: string; items: InsightRow[] }) => (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-muted-foreground/80 uppercase tracking-wider pt-1">{label}</p>
+                {items.map(i => <Row key={i.id} i={i} />)}
+              </div>
+            )
+            return (
+              <div className="rounded-b-2xl border border-t-0 border-white/[0.06] bg-white/[0.02] px-4 py-3 space-y-2 -mt-2 pt-3.5">
+                <p className="text-[11px] text-muted-foreground">{t('dashboard.bobKnowsSub')}</p>
+                {aboutYou.length > 0 && <Group label={t('dashboard.insightAboutYou')} items={aboutYou} />}
+                {Array.from(byTree.entries()).map(([tid, g]) => <Group key={tid} label={g.title} items={g.items} />)}
+                {earlier.length > 0 && <Group label={t('dashboard.insightEarlier')} items={earlier} />}
+              </div>
+            )
+          })()}
         </motion.div>
       )}
     </motion.div>
