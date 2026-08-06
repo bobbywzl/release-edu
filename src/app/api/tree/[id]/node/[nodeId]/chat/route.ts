@@ -743,6 +743,10 @@ ${node.status !== 'understood' && quizStateNow.facets ? `- SYLLABUS COVERAGE MAP
 [[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows the student's thinking WITHOUT revealing or eliminating the answer","facet":"the exact coverage-map facet this probes (when a map exists)"}
 or
 [[QUIZ]]{"kind":"short","question":"...","rubric":"what a truly-understanding answer must contain (never shown to the student)","hint":"a nudge that points at the right ANGLE of thinking without giving the answer","facet":"the exact coverage-map facet this probes (when a map exists)"}
+
+[[QUIZ]]{"kind":"artifact","question":"name the EXACT real-world evidence to produce and attach — the artifact itself, never prose about it (e.g. 'Attach your actual 10-minute profiler capture' / 'A photo of the wired relay with the pump running')","rubric":"what the attached artifact must visibly SHOW to prove this facet (never shown to the student)","hint":"where or how to capture it, without doing it for them","facet":"the exact coverage-map facet this probes (when a map exists)"}
+
+ARTIFACT CHECKPOINTS — when a facet is proven by DOING (a measurement taken, a circuit wired, code run and its output, a capture recorded), prefer kind "artifact": the card lets the student attach a photo/screenshot/file from their device, and the judge grades what the artifact actually shows — their build, not their wording. On a session whose target level is advanced/professional, make at least ONE checkpoint on this node an artifact checkpoint whenever any facet is genuinely doable at the student's stage. Never demand an artifact the student cannot plausibly produce yet, and never use kind "artifact" for purely conceptual facets.
 - The "hint" ships to the card's Hint button — write it so a stuck student gets un-stuck but still has to do the understanding themselves (point at the mechanism to consider, never at the answer).
 - NEVER paste a checkpoint's question or options as plain chat text — plain text cannot be answered, graded, or counted toward mastery. If the student says they can't see the card or its options, do NOT work around it in prose: tell them briefly that a fresh interactive card is attached right below your message (the system attaches it automatically on such turns).
 - Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
@@ -978,11 +982,12 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
       const proseOnly = (qIdx !== -1 ? full.slice(0, qIdx) : full).trimEnd()
 
       const cardShapeValid = (card: PendingQuiz): boolean => {
+        const validArtifact = card.kind === 'artifact'
         const validMcq = card.kind === 'mcq'
           && Array.isArray(card.options) && card.options.length >= 2
           && Number.isInteger(card.correctIndex)
           && (card.correctIndex as number) >= 0 && (card.correctIndex as number) < card.options.length
-        return typeof card.question === 'string' && !!card.question.trim() && (validMcq || card.kind === 'short')
+        return typeof card.question === 'string' && !!card.question.trim() && (validMcq || card.kind === 'short' || validArtifact)
       }
 
       // Store the full card (answer key) on the node via compare-and-set —

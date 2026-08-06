@@ -39,6 +39,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const userId = await getUserId()
   const body = (await req.json().catch(() => ({}))) as {
     quiz?: Partial<PendingQuiz>; answer?: string | number; confidence?: 'sure' | 'unsure'; lang?: string
+    /** For kind:'artifact' — the LinkedFile id of the evidence the student
+     *  attached on the card (uploaded via /api/files/upload just before). */
+    artifactFileId?: string
   }
 
   const tree = await getTreeWithNodes(userId, id)
@@ -57,7 +60,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const qs = parseQuizState(node.quizState)
   const sent = body.quiz
   const quiz = qs.pending
-  if (!quiz?.question || (quiz.kind !== 'mcq' && quiz.kind !== 'short')) {
+  if (!quiz?.question || (quiz.kind !== 'mcq' && quiz.kind !== 'short' && quiz.kind !== 'artifact')) {
     return NextResponse.json({ error: 'already-answered', code: 'no-pending' }, { status: 409 })
   }
   if (sent?.question && sent.question !== quiz.question) {
@@ -77,6 +80,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (optLen < 2 || !Number.isInteger(mcqIdx) || mcqIdx < 0 || mcqIdx >= optLen
       || !Number.isInteger(quiz.correctIndex) || (quiz.correctIndex as number) < 0 || (quiz.correctIndex as number) >= optLen) {
       return NextResponse.json({ error: 'invalid mcq answer' }, { status: 400 })
+    }
+  } else if (quiz.kind === 'artifact') {
+    // The evidence file must exist, belong to this student, and be attached
+    // to THIS node — validated BEFORE the claim so a bad upload never
+    // consumes the card. (The optional note in body.answer may be empty.)
+    if (typeof body.artifactFileId !== 'string' || !body.artifactFileId.trim()) {
+      return NextResponse.json({ error: 'artifact required' }, { status: 400 })
+    }
+    const row = await prisma.linkedFile.findUnique({
+      where: { id: body.artifactFileId },
+      select: { userId: true, workId: true },
+    }).catch(() => null)
+    if (!row || row.userId !== userId || row.workId !== nodeId) {
+      return NextResponse.json({ error: 'artifact not found' }, { status: 400 })
     }
   } else if (!String(body.answer ?? '').trim()) {
     return NextResponse.json({ error: 'answer required' }, { status: 400 })
@@ -154,6 +171,43 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
             : explanation
         )
       }
+    } else if (quiz.kind === 'artifact') {
+      // EVIDENCE CHECKPOINT: grade the real thing. The artifact reaches the
+      // judge as its Gemini content-analysis; if the background analysis
+      // pass hasn't landed yet, run it synchronously now (grading is the
+      // moment that needs eyes). Text files are readable directly.
+      const row = await prisma.linkedFile.findUnique({
+        where: { id: String(body.artifactFileId) },
+        select: { id: true, name: true, mimeType: true, content: true, analysis: true },
+      })
+      if (!row) throw new Error('artifact-row-missing')
+      let analysis = (row.analysis ?? '').trim()
+      const isMedia = /^(image|audio|video)\//.test(row.mimeType ?? '') || row.mimeType === 'application/pdf'
+      if (!analysis && isMedia && (row.content ?? '').startsWith('data:')) {
+        try {
+          const b64 = (row.content as string).split(',', 2)[1] ?? ''
+          if (b64) {
+            const { analyzeImage } = await import('@/lib/gemini')
+            analysis = (await analyzeImage(b64, `the student's checkpoint evidence "${row.name}" — describe exactly what it shows, including any readings, numbers, connections, or outputs visible`, row.mimeType ?? 'image/png')).slice(0, 8000)
+            await prisma.linkedFile.update({ where: { id: row.id }, data: { analysis } }).catch(() => null)
+          }
+        } catch { /* analysis unavailable — judged conservatively below */ }
+      }
+      if (!analysis && !isMedia && (row.content ?? '').trim() && !(row.content ?? '').startsWith('data:')) {
+        analysis = `(text file contents) ${String(row.content).slice(0, 1500)}`
+      }
+      const note = String(body.answer ?? '').trim()
+      const evidence = `ARTIFACT FILE: "${row.name}" (${row.mimeType})
+CONTENT ANALYSIS: ${analysis || '(no machine analysis could be produced for this attachment — the artifact is unreadable; unless the note alone is conclusive, score below 7 and say what a clearer capture would show)'}${note ? `
+STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
+      answerText = `📎 ${row.name}${note ? ` — ${note.slice(0, 300)}` : ''}`
+      const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, evidence, body.confidence, body.lang, { artifact: true })
+      correct = j.correct
+      feedback = j.feedback
+      if (!correct) {
+        const { inBackground } = await import('@/lib/background')
+        inBackground(recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined))
+      }
     } else {
       const answer = String(body.answer ?? '').trim() // non-empty (validated pre-claim)
       answerText = answer.slice(0, 1200)
@@ -205,7 +259,9 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
       tally.correct += 1
       tally.combo += 1
       tally.wrongStreak = 0
-      if (quiz.kind === 'short') tally.shortCorrect += 1
+      // An artifact is a PRODUCTION, not recognition — it satisfies the
+      // own-words bar at least as strongly as a typed explanation.
+      if (quiz.kind === 'short' || quiz.kind === 'artifact') tally.shortCorrect += 1
       // Syllabus coverage — TRUTHFUL crediting: a facet flips `done` ONLY when
       // a checkpoint that actually targeted it is answered correctly. A tag on
       // an already-done facet is a deepening question (no coverage change); a
