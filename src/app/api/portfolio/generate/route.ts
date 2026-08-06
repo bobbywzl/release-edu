@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUserId } from '@/lib/get-user-id'
 import prisma from '@/lib/prisma'
 import { NO_THINKING } from '@/lib/chat-model-router'
+import { parseQuizState } from '@/lib/mastery'
 
 // Portfolios generated before the Tree pivot carry Release EDU data. The
 // version stamp lets readers treat anything older as absent — a Tree EDU
@@ -178,6 +179,22 @@ ${nodeLines}`
   const recentUserExcerpts = userMessages.slice(-20)
     .map(m => `- "${m.content.replace(/\s+/g, ' ').slice(0, 220)}"`).join('\n')
 
+  // The learner's JUDGED-CORRECT own-words explanations (quizState
+  // provenAnswers) — the strongest evidence quotes available: each one passed
+  // the transfer-test judge, unlike arbitrary recent chat excerpts.
+  const provenAnswerLines = (() => {
+    const lines: string[] = []
+    for (const t of trees) {
+      for (const n of t.nodes) {
+        if (n.pending || n.parentId === null) continue
+        const pa = parseQuizState(n.quizState).provenAnswers ?? []
+        const best = pa[pa.length - 1]
+        if (best) lines.push(`- [node "${n.title}" · tree "${t.title.slice(0, 60)}"] "${best.answer.replace(/\s+/g, ' ').slice(0, 260)}"`)
+      }
+    }
+    return lines.slice(0, 20).join('\n')
+  })()
+
   const Anthropic = (await import('@anthropic-ai/sdk')).default
   const client = new Anthropic({ apiKey })
 
@@ -219,6 +236,9 @@ Workspace messages written by the student: ${userMessages.length}
 
 ## SESSIONS (the complete, only source of truth)
 ${treeDigests}
+
+## STUDENT'S JUDGED-CORRECT OWN-WORDS EXPLANATIONS (each PASSED the transfer-test judge — the STRONGEST evidence quotes; prefer these over the raw excerpts below)
+${provenAnswerLines || '(none yet)'}
 
 ## STUDENT'S OWN RECENT WORKSPACE WORDS (verbatim — use for "evidence" quotes)
 ${recentUserExcerpts || '(none yet)'}

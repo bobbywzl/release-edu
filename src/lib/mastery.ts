@@ -155,6 +155,8 @@ export function sanitizeQuizStateForClient(raw: string | null | undefined): stri
     // client-visible via `missed`; no key material) — powers the tree panel's
     // "where you left off" resume line.
     remediationOwed: qs.remediationOwed ?? null,
+    // The learner's OWN judged-correct words — theirs to see, no key material.
+    provenAnswers: qs.provenAnswers ?? [],
     // Judged-attempt record (outcome/facet/confidence timestamps only — no
     // questions, no keys) — powers the Mastery Board's performance-over-time
     // sections. parseQuizState already whitelisted every field.
@@ -231,14 +233,27 @@ export interface QuizState {
    *  has not happened yet — the debt survives tab closes and node switches;
    *  the workspace fires the turn on mount and the chat route clears it. */
   remediationOwed?: string | null
+  /** The learner's own JUDGED-CORRECT explanations (short/artifact answers)
+   *  — their most identity-invested artifact, kept so the victory turn can
+   *  quote it back, the panels can show it, and the portfolio can cite it
+   *  instead of arbitrary chat excerpts. Newest last, capped at 6. */
+  provenAnswers?: ProvenAnswer[]
   /** Chronological judged-attempt record (capped) — see QuizHistoryEntry. */
   history?: QuizHistoryEntry[]
+}
+
+export interface ProvenAnswer {
+  /** The syllabus facet the answer proved (when the card was tagged). */
+  facet?: string
+  answer: string
+  at: string
 }
 
 export function parseQuizState(raw: string | null | undefined): QuizState {
   const fallback: QuizState = {
     correct: 0, attempts: 0, combo: 0, shortCorrect: 0,
     sureWrong: 0, sureRight: 0, missed: [], reviewedAt: null, pending: null, facets: null, untaggedStreak: 0,
+    provenAnswers: [],
   }
   if (!raw) return fallback
   try {
@@ -275,6 +290,16 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
       untaggedStreak: Math.max(0, p.untaggedStreak ?? 0),
       wrongStreak: Math.max(0, p.wrongStreak ?? 0),
       remediationOwed: typeof p.remediationOwed === 'string' && p.remediationOwed.trim() ? p.remediationOwed.slice(0, 400) : null,
+      provenAnswers: Array.isArray(p.provenAnswers)
+        ? p.provenAnswers
+          .filter(a => a && typeof a.answer === 'string' && a.answer.trim() && typeof a.at === 'string')
+          .map(a => ({
+            ...(typeof a.facet === 'string' && a.facet.trim() ? { facet: a.facet.slice(0, 120) } : {}),
+            answer: a.answer.slice(0, 500),
+            at: a.at,
+          }))
+          .slice(-6)
+        : [],
       history: Array.isArray(p.history)
         ? p.history
           .filter(h => h && typeof h.t === 'string' && typeof h.ok === 'boolean'

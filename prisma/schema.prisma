@@ -176,6 +176,9 @@ model StudentProfile {
   // Best streak ever — badge criteria use this so a lost streak never
   // takes earned badges away.
   longestStreak  Int       @default(0)
+  // Earned streak shields: one banked per completed week (cap 2), auto-spent
+  // to bridge a SINGLE missed day — always announced, never silent.
+  streakShields  Int       @default(0)
   // Last daily check-in as YYYY-MM-DD in the USER's timezone — the streak's
   // day boundary is the learner's midnight, and the compare-and-set on this
   // stamp makes the daily award idempotent across parallel tabs.

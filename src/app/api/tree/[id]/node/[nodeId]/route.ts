@@ -66,7 +66,15 @@ export async function PATCH(
       // KIND = DEPTH (small-to-big law): an insert-a-layer adoption shifts
       // whole subtrees one level down — re-derive every kind from live depth.
       await normalizeTreeKinds(id)
-      return NextResponse.json({ ok: true })
+      // Growth badges (self-grown-node rungs) unlock at THIS moment — the
+      // approval tap IS the earning act; the client celebrates on response.
+      let newBadges: Array<Record<string, unknown>> = []
+      try {
+        const { evaluateAndAwardBadges } = await import('@/lib/badges')
+        const nb = await evaluateAndAwardBadges(userId)
+        newBadges = nb.map(b => ({ id: b.id, tier: b.tier, icon: b.icon, name: b.name, desc: b.desc }))
+      } catch { /* non-critical */ }
+      return NextResponse.json({ ok: true, newBadges })
     }
     case 'split': {
       // RESTRUCTURE DRIFT (copilot chip, tap = permission): extract the

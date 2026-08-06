@@ -29,7 +29,7 @@ import { NodeProgressBoard } from '@/components/node-progress-board'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { emitXpAwards } from '@/components/xp-toast'
+import { emitXpAwards, emitBadgeEvents } from '@/components/xp-toast'
 import { MASTERY_TARGET, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel, type ChatAttachment } from '@/components/multimodal-input'
 
@@ -855,6 +855,13 @@ function WorkspaceInner() {
         throw new Error('quiz error')
       }
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
+      // Badge unlocks fire HERE, at the earning act — the big center-screen
+      // celebration (satisfaction audit #2). Slightly delayed so the verdict
+      // lands first.
+      if (Array.isArray(body.newBadges) && body.newBadges.length > 0) {
+        const earned = body.newBadges
+        setTimeout(() => emitBadgeEvents(earned), 1400)
+      }
       const verified = !!body.verified
       const wasCorrect = !!body.correct
       // Server truth first (node row read at answer time); body.review and the

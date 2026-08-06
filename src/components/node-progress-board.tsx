@@ -282,16 +282,28 @@ export function NodeProgressBoard(props: NodeProgressBoardProps) {
       {isVerified && (
         <motion.div
           initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl border border-emerald-400/50 bg-emerald-500/10 px-4 py-3 flex items-center gap-3"
+          className="rounded-2xl border border-emerald-400/50 bg-emerald-500/10 px-4 py-3 space-y-2"
         >
-          <ShieldCheck className="w-6 h-6 text-emerald-400 flex-shrink-0" />
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-emerald-300">{t('tree.verified')}</p>
-            <p className="text-[11px] text-emerald-200/80">
-              {t('workspace.verifiedBanner')}
-              {qs.reviewedAt ? ` · ${t('board.reviewedAt').replace('{d}', fmtDay(qs.reviewedAt))}` : ''}
-            </p>
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="w-6 h-6 text-emerald-400 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-emerald-300">{t('tree.verified')}</p>
+              <p className="text-[11px] text-emerald-200/80">
+                {t('workspace.verifiedBanner')}
+                {qs.reviewedAt ? ` · ${t('board.reviewedAt').replace('{d}', fmtDay(qs.reviewedAt))}` : ''}
+              </p>
+            </div>
           </div>
+          {/* The learner's own judged-correct explanation stands here
+              permanently — their words, their trophy (satisfaction audit #4). */}
+          {(qs.provenAnswers?.length ?? 0) > 0 && (
+            <div className="border-t border-emerald-400/20 pt-2">
+              <p className="text-[10px] font-bold text-emerald-300/90 uppercase tracking-wider">{t('workspace.inYourWords')}</p>
+              <p className="text-[11px] text-foreground/85 leading-snug italic mt-0.5">
+                “{qs.provenAnswers![qs.provenAnswers!.length - 1].answer.slice(0, 220)}{qs.provenAnswers![qs.provenAnswers!.length - 1].answer.length > 220 ? '…' : ''}”
+              </p>
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -524,19 +536,33 @@ export function NodeProgressBoard(props: NodeProgressBoardProps) {
             })}
             {/* Own-words requirement — the final objective, always shown */}
             <div className={cn(
-              'rounded-2xl border p-3.5 flex items-center gap-3',
+              'rounded-2xl border p-3.5',
               ownWordsDone ? 'border-emerald-400/40 bg-emerald-500/[0.06]' : 'border-border bg-card/60',
             )}>
-              <div className={cn(
-                'w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 border',
-                ownWordsDone ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-300' : 'border-border bg-background/60 text-muted-foreground',
-              )}>
-                {ownWordsDone ? '✓' : '💬'}
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  'w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 border',
+                  ownWordsDone ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-300' : 'border-border bg-background/60 text-muted-foreground',
+                )}>
+                  {ownWordsDone ? '✓' : '💬'}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-foreground">{t('board.ownWordsObj')}</p>
+                  <p className="text-[11px] text-muted-foreground">{ownWordsDone ? t('board.ownWordsDone') : t('board.ownWordsOpen')}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-[13px] font-semibold text-foreground">{t('board.ownWordsObj')}</p>
-                <p className="text-[11px] text-muted-foreground">{ownWordsDone ? t('board.ownWordsDone') : t('board.ownWordsOpen')}</p>
-              </div>
+              {/* The proven words themselves — quoted back, permanently */}
+              {(qs.provenAnswers ?? []).length > 0 && (
+                <div className="mt-2 pt-2 border-t border-border/60 space-y-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{t('workspace.inYourWords')}</p>
+                  {(qs.provenAnswers ?? []).slice(-3).reverse().map((a, ai) => (
+                    <p key={ai} className="text-[11px] text-foreground/85 leading-snug italic border-l-2 border-emerald-400/40 pl-2">
+                      “{a.answer.slice(0, 220)}{a.answer.length > 220 ? '…' : ''}”
+                      {a.facet && <span className="not-italic text-[9px] text-muted-foreground ml-1.5">· {a.facet}</span>}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

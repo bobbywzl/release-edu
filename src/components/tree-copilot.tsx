@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel } from '@/components/multimodal-input'
+import { emitBadgeEvents } from '@/components/xp-toast'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import type { CopilotAction } from '@/lib/tree-engine'
@@ -241,6 +242,12 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       })
+      // Growth badges celebrate at the approval tap (server returns each
+      // unlock exactly once — discarding it would swallow the ceremony).
+      try {
+        const body = await res.clone().json()
+        if (Array.isArray(body?.newBadges) && body.newBadges.length > 0) emitBadgeEvents(body.newBadges)
+      } catch { /* non-critical */ }
       if (res.ok || (res.status >= 400 && res.status < 500)) {
         setGhosts(g => g.filter(x => x.id !== ghostId))
         await onChanged()

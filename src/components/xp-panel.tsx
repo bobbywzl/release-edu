@@ -208,6 +208,14 @@ export function XpPanel() {
             <div className="max-w-[150px]">
               <p className="text-sm font-bold text-foreground">
                 {data.streak} <span className="font-medium text-muted-foreground">{t('xp.streakDays')}</span>
+                {/* The monument: your longest run ever survives every break —
+                    a lost streak leaves a record, not a void. */}
+                {data.longestStreak > 1 && data.longestStreak > data.streak && (
+                  <span className="ml-1.5 text-[11px] font-medium text-amber-300/90">{t('xp.streakBest').replace('{n}', String(data.longestStreak))}</span>
+                )}
+                {data.streak > 1 && data.streak >= data.longestStreak && (
+                  <span className="ml-1.5 text-[11px] font-medium text-amber-300/90" title={t('xp.streakBestNowHint')}>★</span>
+                )}
               </p>
               {streakAtRisk ? (
                 // Loss aversion, honestly: name the REAL stakes — the
