@@ -150,7 +150,7 @@ function WorkspaceInner() {
   // 'completed' = the whole tree (crown + trophy) · 'seedComplete' = every
   // seeded branch verified but the tree never grew — the honest question
   // card ("is the problem actually answered?") renders instead of a trophy.
-  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | null>(null)
+  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | 'buildPending' | null>(null)
   // One facet-growth call in flight at a time (the ⬆ grow-into-branch chips).
   const [facetGrowBusy, setFacetGrowBusy] = useState<string | null>(null)
   // GROW BRANCH (FOUNDATION: the tree grows through the learner's own
@@ -766,7 +766,7 @@ function WorkspaceInner() {
           // what was proven as capabilities, ties it to the root, and names
           // the next stop — the [[NEXT_NODE]] button rides his reply. The
           // tree-level outcome (completed / seed-complete) renders as a card.
-          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.seedComplete ? 'seedComplete' : null)
+          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.seedComplete ? 'seedComplete' : !!body.buildPending ? 'buildPending' : null)
           void streamFromBob('[NODE_VERIFIED]', false)
         }
       }, verified ? 2200 : 1500)
@@ -1168,7 +1168,9 @@ function WorkspaceInner() {
                   'max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 border',
                   treeOutcome === 'completed'
                     ? 'border-amber-400/50 bg-amber-500/[0.08]'
-                    : 'border-emerald-400/40 bg-emerald-500/[0.06]',
+                    : treeOutcome === 'buildPending'
+                      ? 'border-violet-400/40 bg-violet-500/[0.06]'
+                      : 'border-emerald-400/40 bg-emerald-500/[0.06]',
                 )}
               >
                 {treeOutcome === 'completed' ? (
@@ -1182,6 +1184,19 @@ function WorkspaceInner() {
                       className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors"
                     >
                       <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.treeCompleteCta')}
+                    </button>
+                  </>
+                ) : treeOutcome === 'buildPending' ? (
+                  <>
+                    <p className="text-xs font-bold text-violet-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Trophy className="w-3.5 h-3.5 opacity-60" /> {t('workspace.buildPendingTitle')}
+                    </p>
+                    <p className="text-sm text-foreground mt-1.5">{t('workspace.buildPendingBody')}</p>
+                    <button
+                      onClick={() => { setPanelTab('files'); setShowNotes(true) }}
+                      className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 border border-violet-400/40 text-violet-300 text-xs font-semibold hover:bg-violet-500/30 transition-colors"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.buildPendingCta')}
                     </button>
                   </>
                 ) : (
