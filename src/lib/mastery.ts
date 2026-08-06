@@ -157,6 +157,10 @@ export function sanitizeQuizStateForClient(raw: string | null | undefined): stri
     remediationOwed: qs.remediationOwed ?? null,
     // The learner's OWN judged-correct words — theirs to see, no key material.
     provenAnswers: qs.provenAnswers ?? [],
+    // Judged-attempt record (outcome/facet/confidence timestamps only — no
+    // questions, no keys) — powers the Mastery Board's performance-over-time
+    // sections. parseQuizState already whitelisted every field.
+    history: qs.history ?? [],
     pending: sanitizePending(qs.pending),
   }
   return JSON.stringify(safe)
@@ -168,6 +172,33 @@ export interface MissedCheckpoint {
   question: string
   missedAt: string
 }
+
+/**
+ * One judged checkpoint attempt, appended chronologically by the quiz route —
+ * the node's PERFORMANCE RECORD THROUGH TIME. Powers the workspace Mastery
+ * Board (attempt timeline, first-try vs after-feedback rates, best streak,
+ * comeback/fix moments). Carries NO answer-key material: outcome + facet tag
+ * only (facet names are already fully client-visible in the coverage map).
+ */
+export interface QuizHistoryEntry {
+  /** ISO timestamp of the judged answer. */
+  t: string
+  /** Judged correct? */
+  ok: boolean
+  kind: 'mcq' | 'short' | 'artifact'
+  /** Syllabus facet the checkpoint probed (as tagged by Bob), if any. */
+  facet?: string
+  /** Self-assessed confidence at answer time (calibration record). */
+  conf?: 'sure' | 'unsure'
+  /** Was a retention-review card on an already-verified node. */
+  review?: boolean
+  /** This correct answer closed a facet the learner had previously MISSED —
+   *  the "failed first, then fixed" comeback moment. */
+  fix?: boolean
+}
+
+/** History cap — enough for a rich timeline without unbounded JSON growth. */
+export const QUIZ_HISTORY_CAP = 80
 
 /** Per-node checkpoint tally, stored as JSON in TreeNode.quizState. */
 export interface QuizState {
@@ -207,6 +238,8 @@ export interface QuizState {
    *  quote it back, the panels can show it, and the portfolio can cite it
    *  instead of arbitrary chat excerpts. Newest last, capped at 6. */
   provenAnswers?: ProvenAnswer[]
+  /** Chronological judged-attempt record (capped) — see QuizHistoryEntry. */
+  history?: QuizHistoryEntry[]
 }
 
 export interface ProvenAnswer {
@@ -266,6 +299,19 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
             at: a.at,
           }))
           .slice(-6)
+        : [],
+      history: Array.isArray(p.history)
+        ? p.history
+          .filter(h => h && typeof h.t === 'string' && typeof h.ok === 'boolean'
+            && (h.kind === 'mcq' || h.kind === 'short' || h.kind === 'artifact'))
+          .map(h => ({
+            t: h.t, ok: h.ok, kind: h.kind,
+            ...(typeof h.facet === 'string' && h.facet.trim() ? { facet: h.facet.trim().slice(0, 120) } : {}),
+            ...(h.conf === 'sure' || h.conf === 'unsure' ? { conf: h.conf } : {}),
+            ...(h.review === true ? { review: true } : {}),
+            ...(h.fix === true ? { fix: true } : {}),
+          }))
+          .slice(-QUIZ_HISTORY_CAP)
         : [],
     }
   } catch {

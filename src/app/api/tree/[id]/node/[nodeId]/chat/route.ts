@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, refreshNodeContextSummary, studentGrounding, type XpAwardLite } from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, refreshNodeContextSummary, refreshNodeBoardDigest, studentGrounding, type XpAwardLite } from '@/lib/tree-engine'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 import { NO_THINKING } from '@/lib/chat-model-router'
@@ -1323,6 +1323,10 @@ Return ONLY JSON: {"recitable": true|false}`,
           // would never fire there, leaving the summary stuck at the intro seed.
           if (isIntro || (!isTrigger && count % 3 === 0)) {
             inBackground(refreshNodeContextSummary(userId, id, nodeId, tree.language ?? undefined))
+            // The MASTERY BOARD digest rides the same cadence: it narrates the
+            // same conversation the context summary distills, for the opposite
+            // audience (the learner's progress board, in the session language).
+            inBackground(refreshNodeBoardDigest(userId, id, nodeId, tree.language ?? undefined))
           }
         } catch { /* non-critical */ }
       }

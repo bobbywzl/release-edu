@@ -783,6 +783,135 @@ Keep the WHOLE summary under 180 words. Write every word in ${zh ? 'Simplified C
   } catch { /* non-critical */ }
 }
 
+/**
+ * Regenerate a node's MASTERY BOARD digest — the learner-facing structured
+ * narrative (headline, key moments, misconceptions cleared, Bob's read of the
+ * checkpoint record, next focus) that powers the workspace progress board.
+ * Sibling of refreshNodeContextSummary with the opposite audience: that one
+ * is written FOR upper-node prompts, this one is written TO the learner, in
+ * the session's language. Cheap Haiku background pass (usage tag
+ * `tree-digest`), triggered after substantive node chat and after judged
+ * checkpoints; monotonic CAS on boardDigestAt so a stale refresh finishing
+ * late can never clobber a fresher one. Best-effort — never blocks a user
+ * response and never throws into its caller.
+ */
+export async function refreshNodeBoardDigest(userId: string, treeId: string, nodeId: string, lang?: string): Promise<void> {
+  try {
+    const tree = await getTreeWithNodes(userId, treeId)
+    if (!tree) return
+    const node = tree.nodes.find(n => n.id === nodeId)
+    if (!node || node.pending || node.parentId === null) return
+    const zh = (lang ?? tree.language ?? undefined) === 'zh'
+
+    const { parseQuizState } = await import('@/lib/mastery')
+    const qs = parseQuizState(node.quizState)
+
+    // This node's workspace conversation — student AND Bob turns, so the
+    // digest can quote the learner's own breakthroughs, not just teaching.
+    const clean = (s: string) => s
+      .replace(/\[\[QUIZ\]\][\s\S]*$/, '(asked a checkpoint)')
+      .replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, '')
+      .replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}/g, '')
+      .replace(/```image[\s\S]*?```/g, '(sketched a diagram)')
+      .trim()
+    let convLines: string[] = []
+    let basisAt: Date | null = null
+    const conv = await prisma.conversation.findFirst({
+      where: { userId, context: `tree-node:${nodeId}` },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    }).catch(() => null)
+    if (conv) {
+      const recent = await prisma.message.findMany({
+        where: { conversationId: conv.id },
+        orderBy: { createdAt: 'desc' },
+        take: 18,
+        select: { role: true, content: true, createdAt: true },
+      }).catch(() => [])
+      basisAt = recent[0]?.createdAt ?? null
+      convLines = recent
+        .slice()
+        .reverse()
+        .map(m => ({ role: m.role, text: clean(m.content) }))
+        .filter(m => m.text.length > 0)
+        .map(m => `${m.role === 'user' ? 'STUDENT' : 'BOB'}: ${m.text.slice(0, 450)}`)
+    }
+
+    // The build log — real-world execution progress Bob detected (the
+    // achievement flow for build/solve sessions).
+    let buildLines: string[] = []
+    try {
+      const parsed = JSON.parse(node.progressLog ?? '[]') as Array<{ text?: string; createdAt?: string }>
+      if (Array.isArray(parsed)) {
+        buildLines = parsed
+          .filter(e => e && typeof e.text === 'string')
+          .slice(-8)
+          .map(e => `- ${(e.text as string).slice(0, 200)}${e.createdAt ? ` (${String(e.createdAt).slice(0, 10)})` : ''}`)
+      }
+    } catch { /* malformed log — digest just goes without it */ }
+
+    // Nothing has happened here yet — don't burn a call on an empty board.
+    if (convLines.length === 0 && qs.attempts === 0 && buildLines.length === 0) return
+
+    const history = (qs.history ?? []).slice(-30)
+    const historyLines = history.map(h =>
+      `${h.ok ? '✔' : '✘'} ${h.kind}${h.facet ? ` on "${h.facet}"` : ''}${h.conf ? ` (felt ${h.conf})` : ''}${h.fix ? ' — FIXED a previously-missed point' : ''}${h.review ? ' [retention review]' : ''} at ${h.t.slice(0, 16)}`)
+    const facetLines = (qs.facets ?? []).map(f =>
+      `${f.done ? '✅ proven' : '⬜ unproven'}${f.struggled ? (f.done ? ' (failed first, then fixed)' : ' (missed — still open)') : ''} — "${f.name}"`)
+    const state = node.status === 'understood'
+      ? `VERIFIED${qs.reviewedAt ? ` (last retention review ${qs.reviewedAt.slice(0, 10)})` : ''}`
+      : qs.attempts > 0 ? `in progress (${qs.correct} correct / ${qs.attempts} checkpoint answers)` : 'opened, not yet tested'
+
+    const client = await anthropic()
+    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+    const model = pickBackgroundModel()
+    const result = await client.messages.create({
+      model,
+      max_tokens: 900,
+      messages: [{
+        role: 'user',
+        content: `You are Bob, the learner's AI mentor. Write the learner-facing PROGRESS DIGEST for one node of their problem-mastery tree — the narrative panels of their Mastery Board. Address the learner directly as "you"${zh ? ' (你)' : ''}. Ground EVERY item strictly in the material below — never invent events, quotes, scores, or beliefs that are not visibly there. Fewer true items beat padded lists; omit what the record doesn't support.
+
+ROOT PROBLEM (session goal): "${tree.title}"${tree.purpose ? `\nWHY the learner wants this mastered: ${clampText(tree.purpose, 240)}` : ''}
+THIS NODE: "${node.title}" — ${node.summary}
+Verification state: ${state}
+${facetLines.length ? `SYLLABUS COVERAGE MAP:\n${facetLines.join('\n')}` : 'No syllabus contract yet.'}
+${historyLines.length ? `CHECKPOINT RECORD (oldest → newest):\n${historyLines.join('\n')}` : 'No checkpoints answered yet.'}
+${(qs.missed ?? []).length ? `Missed checkpoints still open: ${qs.missed.map(m => m.question.slice(0, 120)).join(' | ')}` : ''}
+${qs.sureWrong > 0 || qs.sureRight > 0 ? `Confidence calibration: ${qs.sureRight} sure-and-right, ${qs.sureWrong} sure-but-wrong.` : ''}
+${buildLines.length ? `REAL-WORLD BUILD LOG (execution progress Bob detected):\n${buildLines.join('\n')}` : ''}
+${node.notes?.trim() ? `Learner's own notes: ${node.notes.trim().slice(0, 400)}` : ''}
+${convLines.length ? `RECENT WORKSPACE CONVERSATION (oldest → newest):\n${convLines.join('\n')}` : ''}
+
+Return ONLY a JSON object, no prose around it:
+{"headline": string, "moments": [{"kind": "learning"|"fixed"|"breakthrough"|"build", "text": string, "facet"?: string}], "misconceptions": [{"label": string, "cleared": boolean, "note"?: string}], "quizRead": string, "nextFocus": string}
+
+Rules:
+- headline: ONE sentence naming the strongest capability the learner has ACTUALLY demonstrated here so far ("You can now ..."); if nothing is proven yet, name the first real step they took.
+- moments (up to 5, chronological): the moments real progress happened — a concept that clicked (kind "learning"), a previously-missed point later proven right (kind "fixed"), an insight in the learner's own words (kind "breakthrough"), concrete real-world build/execution progress (kind "build"). Each 1-2 specific sentences, past tense. Add "facet" only when one syllabus point clearly owns the moment (use its exact name).
+- misconceptions (up to 4): wrong beliefs that actually SURFACED here (a wrong checkpoint answer, a confusion Bob corrected). "cleared": true only when the record shows the repair (a later correct answer on that ground / a fixed facet). Write "label" as the belief itself, stated plainly — not a description of the event.
+- quizRead: 1-2 sentences reading the checkpoint record like a coach — the pattern, the trend, calibration (sure-but-wrong), comebacks. Only from the record above; if there are no checkpoints yet, "".
+- nextFocus: the single most useful thing to prove or do next on THIS node; "" if the node is verified and nothing is open.
+- Write every string in ${zh ? 'Simplified Chinese (简体中文)' : 'English'}.`,
+      }],
+    })
+    void recordUsage(result, userId, model, 'tree-digest')
+    const raw = extractJSON<Record<string, unknown>>(responseText(result))
+    if (!raw) return
+    // Round-trip through the shared tolerant parser so ONLY the clamped,
+    // validated shape is ever stored (the client renders through the same
+    // parser — the two can't drift).
+    const { parseBoardDigest } = await import('@/lib/board-digest')
+    const digest = parseBoardDigest(JSON.stringify(raw))
+    if (!digest) return
+    const writeAt = basisAt ?? new Date()
+    await prisma.treeNode.updateMany({
+      where: { id: nodeId, OR: [{ boardDigestAt: null }, { boardDigestAt: { lt: writeAt } }] },
+      data: { boardDigest: JSON.stringify(digest), boardDigestAt: writeAt },
+    }).catch(() => null)
+  } catch { /* non-critical */ }
+}
+
 // ── Expansion (grows only with permission) ───────────────────────────────
 
 export interface ExpansionResult {
