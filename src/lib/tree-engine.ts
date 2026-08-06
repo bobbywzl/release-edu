@@ -1457,6 +1457,7 @@ export async function judgeCheckpointAnswer(
   userId: string, treeId: string, nodeId: string,
   question: string, rubric: string | undefined, answer: string,
   confidence?: 'sure' | 'unsure', lang?: string,
+  opts?: { artifact?: boolean },
 ): Promise<CheckpointJudgement> {
   const tree = await getTreeWithNodes(userId, treeId)
   const node = tree?.nodes.find(n => n.id === nodeId)
@@ -1464,12 +1465,24 @@ export async function judgeCheckpointAnswer(
 
   const client = await anthropic()
   const primaryModel = await getJudgeModel()
-  const judgeBody = {
-    max_tokens: 700,
-    ...NO_THINKING,
-    messages: [{
-      role: 'user' as const,
-      content: `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
+  const prompt = opts?.artifact
+    ? `Judge whether the student's ATTACHED REAL-WORLD ARTIFACT actually demonstrates what this checkpoint asked them to produce. Correct = score ≥ 7.
+
+NODE UNDER STUDY: "${node.title}" — ${node.summary}
+ROOT PROBLEM: "${tree.title}"
+THE CHECKPOINT ASKED THEM TO ATTACH: ${question.slice(0, 600)}
+${rubric ? `WHAT THE ARTIFACT MUST VISIBLY SHOW: ${rubric.slice(0, 400)}` : ''}
+THE ARTIFACT (as a machine content-analysis of their attachment, plus any note they added)${confidence ? ` [stated confidence: ${confidence}]` : ''}:
+${answer.slice(0, 1800)}
+
+STRICT EVIDENCE BAR: the artifact must itself SHOW the asked-for thing — the measurement, the running build, the real output. An attachment that is merely related, generic, stock-looking, or could not plausibly have come from actually doing the task scores below 7. Judge substance over polish: photos and screenshots of real work are expected to be messy. If the analysis is too unclear to verify the specific ask, score below 7 and say exactly what a sufficient capture would show.
+
+The feedback must be INFORMATIVE, not a verdict: in 1-3 sentences name what the artifact does or doesn't demonstrate, and what would complete it.
+
+${sessionDirectives(tree, lang)}
+
+Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`
+    : `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
 
 NODE UNDER STUDY: "${node.title}" — ${node.summary}
 ROOT PROBLEM: "${tree.title}"
@@ -1483,7 +1496,13 @@ The feedback must be INFORMATIVE, not a verdict: in 1-3 sentences give the scien
 
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`,
+Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`
+  const judgeBody = {
+    max_tokens: 700,
+    ...NO_THINKING,
+    messages: [{
+      role: 'user' as const,
+      content: prompt,
     }],
   }
   // Judging must survive a bad model id, a model-specific outage, AND the
