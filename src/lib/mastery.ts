@@ -82,7 +82,10 @@ export function masteryMet(qs: QuizState): boolean {
  * options}.
  */
 export interface PendingQuiz {
-  kind: 'mcq' | 'short'
+  /** 'artifact' = evidence checkpoint: the student attaches the REAL thing
+   *  (a photo, screenshot, capture, file) and the judge grades what the
+   *  artifact actually shows — verification about their device, not prose. */
+  kind: 'mcq' | 'short' | 'artifact'
   question: string
   options?: string[]
   correctIndex?: number
@@ -112,7 +115,7 @@ export interface PendingQuiz {
  * judges server-side against the DB copy).
  */
 export interface SanitizedPending {
-  kind: 'mcq' | 'short'
+  kind: 'mcq' | 'short' | 'artifact'
   question: string
   options?: string[]
   hint?: string

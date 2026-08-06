@@ -39,7 +39,7 @@ interface TreeData { id: string; title: string; displayTitle?: string | null; fr
 interface NodeFileRow { id: string; name: string; type?: string | null }
 
 interface QuizPayload {
-  kind: 'mcq' | 'short'
+  kind: 'mcq' | 'short' | 'artifact'
   question: string
   options?: string[]
   correctIndex?: number
@@ -178,6 +178,9 @@ function WorkspaceInner() {
   const [hintShown, setHintShown] = useState(false)
   const [quizSel, setQuizSel] = useState<number | null>(null)
   const [quizText, setQuizText] = useState('')
+  // Evidence checkpoint (kind 'artifact'): the staged file the student is
+  // attaching as their answer — uploaded on submit, then graded by the judge.
+  const [quizFile, setQuizFile] = useState<File | null>(null)
   // Confidence is an ACTIVE self-assessment — null until the student taps.
   // A silent default would poison the calibration counters (sureWrong).
   const [quizConf, setQuizConf] = useState<'sure' | 'unsure' | null>(null)
@@ -197,7 +200,7 @@ function WorkspaceInner() {
   // 'completed' = the whole tree (crown + trophy) · 'seedComplete' = every
   // seeded branch verified but the tree never grew — the honest question
   // card ("is the problem actually answered?") renders instead of a trophy.
-  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | null>(null)
+  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | 'buildPending' | null>(null)
   // One facet-growth call in flight at a time (the ⬆ grow-into-branch chips).
   const [facetGrowBusy, setFacetGrowBusy] = useState<string | null>(null)
   // Checkpoint-rail navigation: the message being flashed after a jump.
@@ -395,7 +398,7 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
+    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
     initialScrollRef.current = true
     stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -484,7 +487,7 @@ function WorkspaceInner() {
       const { quiz } = splitQuiz(full)
       if (quiz) {
         setActiveQuiz(quiz)
-        setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false)
+        setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false)
         // Attention arbiter (client side): the checkpoint card is the one
         // CTA this turn — a lingering discovery card yields to it.
         setSuggestion(null)
@@ -757,7 +760,10 @@ function WorkspaceInner() {
   async function submitQuiz() {
     if (!activeQuiz || quizBusy || quizResult || !treeId || !nodeId) return
     const answer = activeQuiz.kind === 'mcq' ? quizSel : quizText.trim()
-    if (answer === null || answer === '') return
+    if (activeQuiz.kind === 'artifact') {
+      if (!quizFile) return
+      if (quizFile.size > 3_500_000) { alert(t('workspace.fileTooLarge')); return }
+    } else if (answer === null || answer === '') return
     // Answering a checkpoint is a student-initiated turn — pin to the bottom
     // so the verdict and feedback bubbles land in view.
     stickToBottomRef.current = true
@@ -771,10 +777,36 @@ function WorkspaceInner() {
     const ctrl = new AbortController()
     const timeout = setTimeout(() => ctrl.abort(), 55000)
     try {
+      // Evidence checkpoint: upload the artifact first (same endpoint and
+      // shape as the Files tab, so it also lands in the node's evidence list
+      // and counts toward the deployable completion gate), then send its id
+      // with the answer for grading.
+      let artifactFileId: string | undefined
+      if (activeQuiz.kind === 'artifact' && quizFile) {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader()
+          r.onload = () => resolve(String(r.result))
+          r.onerror = () => reject(r.error)
+          r.readAsDataURL(quizFile)
+        })
+        const up = await fetch('/api/files/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workType: 'tree-node', workId: nodeId,
+            name: quizFile.name, type: quizFile.type || 'application/octet-stream',
+            content: dataUrl,
+          }),
+          signal: ctrl.signal,
+        })
+        const ur = up.ok ? await up.json().catch(() => null) : null
+        if (!ur?.id) throw new Error('artifact-upload-failed')
+        artifactFileId = ur.id as string
+      }
       const res = await fetch(`/api/tree/${treeId}/node/${nodeId}/quiz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf ?? undefined, lang: language }),
+        body: JSON.stringify({ quiz: activeQuiz, answer, confidence: quizConf ?? undefined, lang: language, artifactFileId }),
         signal: ctrl.signal,
       })
       const body = await res.json().catch(() => null)
@@ -790,7 +822,7 @@ function WorkspaceInner() {
           // consumed by the answer) — arm it so it can't strand invisibly.
           if (nodeIdRef.current === answeredNode && d?.pending && d.pending.question !== activeQuiz?.question) {
             setActiveQuiz(d.pending as QuizPayload)
-            setQuizSel(null); setQuizText(''); setQuizConf(null); setQuizResult(null); setQuizError(false); setQuizErrorDetail(null)
+            setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setQuizErrorDetail(null)
           }
         } catch { /* transient */ }
       }
@@ -798,7 +830,7 @@ function WorkspaceInner() {
         // Permanently unanswerable card (stale after a newer checkpoint, or
         // malformed) — retire it and resync rather than dead-ending the
         // student on a Submit button that never resolves.
-        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
+        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null)
         void resyncChat()
         return
       }
@@ -836,7 +868,7 @@ function WorkspaceInner() {
         await resyncChat()          // land the ✅/❌ feedback bubbles first
         loadTree()                  // flip header pips / Verified chip
         if (nodeIdRef.current !== answeredNode) return
-        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizConf(null)
+        setActiveQuiz(null); setQuizResult(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null)
         // Bottleneck-Triggered Teaching (FOUNDATION.md): a correct answer on an
         // UNVERIFIED node found no bottleneck — keep asking (NEXT CHECKPOINT).
         // A wrong answer found one — teach into it (REMEDIATE), never a
@@ -854,7 +886,7 @@ function WorkspaceInner() {
           // what was proven as capabilities, ties it to the root, and names
           // the next stop — the [[NEXT_NODE]] button rides his reply. The
           // tree-level outcome (completed / seed-complete) renders as a card.
-          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.seedComplete ? 'seedComplete' : null)
+          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.seedComplete ? 'seedComplete' : !!body.buildPending ? 'buildPending' : null)
           void streamFromBob('[NODE_VERIFIED]', false)
         }
       }, verified ? 2200 : 1500)
@@ -1166,6 +1198,51 @@ function WorkspaceInner() {
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
                   />
                 )}
+                {/* EVIDENCE CHECKPOINT — the answer is the real thing: a
+                    photo/screenshot/file from the student's device, graded
+                    on what the artifact itself shows. */}
+                {activeQuiz.kind === 'artifact' && (
+                  <div className="space-y-2">
+                    {quizFile ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2">
+                        <span className="text-sm leading-none">📎</span>
+                        <span className="text-xs text-foreground truncate flex-1">{quizFile.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setQuizFile(null)}
+                          disabled={quizBusy || !!quizResult}
+                          aria-label={t('common.dismiss')}
+                          className="text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className={cn(
+                        'flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-primary/40 bg-background/40 px-3 py-4 cursor-pointer hover:bg-primary/[0.06] transition-colors',
+                        (quizBusy || !!quizResult) && 'pointer-events-none opacity-60',
+                      )}>
+                        <span className="text-xl leading-none">📎</span>
+                        <span className="text-xs font-semibold text-foreground">{t('workspace.quizAttach')}</span>
+                        <span className="text-[10px] text-muted-foreground text-center max-w-[260px]">{t('workspace.quizAttachHint')}</span>
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept="image/*,application/pdf,text/plain,text/csv,application/json,.log,.txt,.csv,.json"
+                          onChange={e => { const f = e.target.files?.[0]; if (f) setQuizFile(f); e.currentTarget.value = '' }}
+                        />
+                      </label>
+                    )}
+                    <textarea
+                      value={quizText}
+                      onChange={e => setQuizText(e.target.value)}
+                      rows={2}
+                      disabled={quizBusy || !!quizResult}
+                      placeholder={t('workspace.quizAttachNote')}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
+                    />
+                  </div>
+                )}
                 {/* Hint — an answer-safe nudge, revealed only on tap */}
                 {activeQuiz.hint && !quizResult && (
                   hintShown ? (
@@ -1233,7 +1310,7 @@ function WorkspaceInner() {
                     )}
                     <button
                       onClick={submitQuiz}
-                      disabled={quizBusy || (activeQuiz.kind === 'mcq' ? quizSel === null : !quizText.trim())}
+                      disabled={quizBusy || (activeQuiz.kind === 'mcq' ? quizSel === null : activeQuiz.kind === 'artifact' ? !quizFile : !quizText.trim())}
                       className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-40"
                     >
                       {quizBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
@@ -1259,7 +1336,9 @@ function WorkspaceInner() {
                   'max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 border',
                   treeOutcome === 'completed'
                     ? 'border-amber-400/50 bg-amber-500/[0.08]'
-                    : 'border-emerald-400/40 bg-emerald-500/[0.06]',
+                    : treeOutcome === 'buildPending'
+                      ? 'border-violet-400/40 bg-violet-500/[0.06]'
+                      : 'border-emerald-400/40 bg-emerald-500/[0.06]',
                 )}
               >
                 {treeOutcome === 'completed' ? (
@@ -1273,6 +1352,19 @@ function WorkspaceInner() {
                       className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors"
                     >
                       <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.treeCompleteCta')}
+                    </button>
+                  </>
+                ) : treeOutcome === 'buildPending' ? (
+                  <>
+                    <p className="text-xs font-bold text-violet-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Trophy className="w-3.5 h-3.5 opacity-60" /> {t('workspace.buildPendingTitle')}
+                    </p>
+                    <p className="text-sm text-foreground mt-1.5">{t('workspace.buildPendingBody')}</p>
+                    <button
+                      onClick={() => { setPanelTab('files'); setShowNotes(true) }}
+                      className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 border border-violet-400/40 text-violet-300 text-xs font-semibold hover:bg-violet-500/30 transition-colors"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.buildPendingCta')}
                     </button>
                   </>
                 ) : (

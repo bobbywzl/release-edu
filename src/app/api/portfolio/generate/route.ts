@@ -152,7 +152,18 @@ async function generatePortfolioInBackground(userId: string, apiKey: string): Pr
         + (files.length ? `\n    Evidence files: ${files.map(f => f.name).join(', ')}` : '')
         + (conv ? `\n    Workspace exchanges: ${conv.messages.length} messages` : '')
     }).join('\n')
-    return `### Session: "${t.title}" [${t.status}]${t.difficulty ? ` · target level: ${t.difficulty}` : ''}${t.language ? ` · language: ${t.language}` : ''}
+    // Explained vs Deployed: a completed session's mastery claim carries its
+    // evidence class — build log / uploaded artifacts = Deployed; verified
+    // checkpoints alone = Explained. The model must not overstate the former.
+    const fileWorkIds = new Set(nodeFiles.map(f => f.workId).filter(Boolean) as string[])
+    const hasBuildEvidence = fileWorkIds.has(t.id) || t.nodes.some(n => {
+      if (fileWorkIds.has(n.id)) return true
+      try { const l = JSON.parse(n.progressLog ?? '[]'); return Array.isArray(l) && l.length > 0 } catch { return false }
+    })
+    const outcome = t.status === 'completed'
+      ? ` · outcome: ${hasBuildEvidence ? 'DEPLOYED (mastery backed by real build evidence)' : 'EXPLAINED (mastery verified through checkpoints)'}`
+      : ''
+    return `### Session: "${t.title}" [${t.status}]${t.difficulty ? ` · target level: ${t.difficulty}` : ''}${t.language ? ` · language: ${t.language}` : ''}${outcome}
 ${t.framing ? `Framing: ${t.framing.slice(0, 220)}` : ''}
 ${t.personalContext ? `Student's stated background for this problem: "${t.personalContext.slice(0, 220)}"` : ''}
 Progress: ${verified.length}/${nodes.length} nodes verified as understood (AI-tested, not self-marked)
@@ -172,8 +183,11 @@ ${nodeLines}`
 
   const completionRate = realNodes.length > 0 ? Math.round((verifiedNodes.length / realNodes.length) * 100) : 0
 
+  // Teaching-tier via the resolver — never a hardcoded id (CLAUDE.md rule):
+  // the portfolio inherits every new Opus release the moment it ships.
+  const portfolioModel = await (await import('@/lib/model-resolver')).getTeachingModel()
   const result = await client.messages.create({
-    model: 'claude-opus-4-8',
+    model: portfolioModel,
     max_tokens: 4000,
     ...NO_THINKING,
     messages: [{
@@ -245,7 +259,7 @@ Return ONLY valid JSON.`,
 
   {
     const { recordAnthropicUsage } = await import('@/lib/usage')
-    recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'portfolio' })
+    recordAnthropicUsage(result.usage, { userId, model: portfolioModel, feature: 'portfolio' })
   }
   const text = (result.content[0] as { type: string; text?: string })?.text?.trim()
   if (!text) {

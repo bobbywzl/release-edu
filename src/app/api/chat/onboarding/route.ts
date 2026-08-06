@@ -241,7 +241,7 @@ export async function POST(req: NextRequest) {
         // Try opus first (highest quality for onboarding), fall back to sonnet
         // if opus stays overloaded — sonnet typically has more capacity. Each
         // model gets its own 4-attempt retry budget with exponential backoff.
-        const MODELS = ['claude-opus-4-8', 'claude-sonnet-5'] as const
+        const MODELS = ['claude-opus-5', 'claude-sonnet-5'] as const
         const RETRY_DELAYS_MS = [1500, 3000, 6000]
         let succeeded = false
         let lastErr: unknown = null

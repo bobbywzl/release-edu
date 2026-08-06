@@ -42,7 +42,7 @@
 // made every checkpoint JUDGE call reject while teaching (valid Opus) kept
 // working, surfacing as the workspace "trouble connecting" on judging only.
 export const CHAT_MODELS = {
-  opus: 'claude-opus-4-8',
+  opus: 'claude-opus-5',
   sonnet: 'claude-sonnet-5',
   haiku: 'claude-haiku-4-5-20251001',
 } as const
