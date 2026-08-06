@@ -33,6 +33,7 @@ import {
 } from '@/lib/tree-engine'
 import { clampText } from '@/lib/clamp'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, resolveFacetCredit, type PendingQuiz } from '@/lib/mastery'
+import { evaluateAndAwardBadges, type BadgeDef } from '@/lib/badges'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
   const { id, nodeId } = await params
@@ -265,6 +266,20 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
       // An artifact is a PRODUCTION, not recognition — it satisfies the
       // own-words bar at least as strongly as a typed explanation.
       if (quiz.kind === 'short' || quiz.kind === 'artifact') tally.shortCorrect += 1
+      // KEEP THE LEARNER'S OWN WORDS (satisfaction audit #4): a judged-correct
+      // own-words/artifact answer is their most identity-invested artifact —
+      // stamped here so the victory turn quotes it, the panels show it, and
+      // the portfolio cites it. Newest last, capped at 6.
+      if ((quiz.kind === 'short' || quiz.kind === 'artifact') && answerText.trim()) {
+        tally.provenAnswers = [
+          ...(tally.provenAnswers ?? []),
+          {
+            ...(typeof quiz.facet === 'string' && quiz.facet.trim() ? { facet: quiz.facet.slice(0, 120) } : {}),
+            answer: answerText.slice(0, 500),
+            at: new Date().toISOString(),
+          },
+        ].slice(-6)
+      }
       // Syllabus coverage — TRUTHFUL crediting: a facet flips `done` ONLY when
       // a checkpoint that actually targeted it is answered correctly. A tag on
       // an already-done facet is a deepening question (no coverage change); a
@@ -444,6 +459,16 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
     }
   }
 
+  // ── BADGES AT THE EARNING MOMENT (satisfaction audit #2) ──
+  // Evaluate right here, where the metrics just moved, and ship any unlock
+  // WITH the verdict — the big center-screen celebration fires in the
+  // workspace at the earning act, not on some later dashboard visit.
+  let newBadges: Pick<BadgeDef, 'id' | 'tier' | 'icon' | 'name' | 'desc'>[] = []
+  try {
+    const nb = await evaluateAndAwardBadges(userId)
+    newBadges = nb.map(b => ({ id: b.id, tier: b.tier, icon: b.icon, name: b.name, desc: b.desc }))
+  } catch { /* non-critical */ }
+
   // ── Persist the exchange so Bob's next turn sees the outcome ──
   try {
     const store = dbStore.forUser(userId)
@@ -501,5 +526,7 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
     // The "hole filled" moment: this correct answer closed a previously
     // missed facet — the client ticks its objective pill with the animation.
     fixedFacet: fixedAfterStruggle && quiz.facet ? quiz.facet : null,
+    // Badge unlocks earned by THIS answer — celebrated where it happened.
+    newBadges,
   })
 }

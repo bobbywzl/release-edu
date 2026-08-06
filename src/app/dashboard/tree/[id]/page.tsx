@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { TreeCopilot } from '@/components/tree-copilot'
+import { emitBadgeEvents } from '@/components/xp-toast'
 import { useLanguage } from '@/lib/i18n'
 import { parseQuizState, masteryFilled, masteryTarget } from '@/lib/mastery'
 import { cn } from '@/lib/utils'
@@ -358,11 +359,17 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
     if (ghostBusy) return
     setGhostBusy(nodeId)
     try {
-      await fetch(`/api/tree/${tree.id}/node/${nodeId}`, {
+      const res = await fetch(`/api/tree/${tree.id}/node/${nodeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       }).catch(() => null)
+      // Growth badges celebrate at the approval tap (server returns each
+      // unlock exactly once — discarding it would swallow the ceremony).
+      try {
+        const body = res ? await res.json() : null
+        if (Array.isArray(body?.newBadges) && body.newBadges.length > 0) emitBadgeEvents(body.newBadges)
+      } catch { /* non-critical */ }
       onChanged()
     } finally {
       setGhostBusy(null)
@@ -623,10 +630,22 @@ function NodeProgressCard({ node }: { node: TreeNodeData }) {
   const target = masteryTarget(qs)
   const filled = Math.min(masteryFilled(qs), target)
   const verified = node.status === 'understood'
+  const lastProven = qs.provenAnswers?.length ? qs.provenAnswers[qs.provenAnswers.length - 1] : null
+  // A VERIFIED node's card is its trophy: the learner's own judged-correct
+  // explanation, standing (satisfaction audit #4 — own words never vanish).
+  if (verified) {
+    if (!lastProven) return null
+    return (
+      <div className="border border-emerald-400/30 bg-emerald-500/[0.05] rounded-xl p-3 space-y-1">
+        <p className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">{t('workspace.inYourWords')}</p>
+        <p className="text-[12px] text-foreground/90 leading-snug italic">“{lastProven.answer.slice(0, 220)}{lastProven.answer.length > 220 ? '…' : ''}”</p>
+      </div>
+    )
+  }
   // Goal gradient: a completely untouched node shows NOTHING here — the
   // first proven point makes the card appear, already partly full.
   const touched = qs.attempts > 0 || (qs.facets?.some(f => f.done) ?? false) || !!node.contextSummary
-  if (verified || !touched) return null
+  if (!touched) return null
 
   // The resume line — the most actionable "where you left off", in priority:
   // an unanswered card > a queued walkthrough > a miss awaiting retest > the
@@ -889,6 +908,12 @@ function TreeCanvasInner() {
     // Surface failure instead of a ghost silently vanishing on reload — a
     // 404 means the proposal was already replaced/handled elsewhere.
     if (!res || !res.ok) setPanelNote(t('tree.actionFailed'))
+    // Growth badges unlock at the approval tap — celebrate here, not on a
+    // later dashboard visit (the server returns each unlock exactly once).
+    try {
+      const body = res ? await res.json() : null
+      if (Array.isArray(body?.newBadges) && body.newBadges.length > 0) emitBadgeEvents(body.newBadges)
+    } catch { /* non-critical */ }
     load()
   }, [params.id, load, t])
 

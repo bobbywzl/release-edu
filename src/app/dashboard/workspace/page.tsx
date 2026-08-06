@@ -25,7 +25,7 @@ import { GrowBranchDialog } from '@/components/grow-branch'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { emitXpAwards } from '@/components/xp-toast'
+import { emitXpAwards, emitBadgeEvents } from '@/components/xp-toast'
 import { MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel, type ChatAttachment } from '@/components/multimodal-input'
 
@@ -842,6 +842,13 @@ function WorkspaceInner() {
         throw new Error('quiz error')
       }
       if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
+      // Badge unlocks fire HERE, at the earning act — the big center-screen
+      // celebration (satisfaction audit #2). Slightly delayed so the verdict
+      // lands first.
+      if (Array.isArray(body.newBadges) && body.newBadges.length > 0) {
+        const earned = body.newBadges
+        setTimeout(() => emitBadgeEvents(earned), 1400)
+      }
       const verified = !!body.verified
       const wasCorrect = !!body.correct
       // Server truth first (node row read at answer time); body.review and the
@@ -1538,12 +1545,24 @@ function WorkspaceInner() {
                     isVerifiedNode ? 'border-emerald-400/50 bg-emerald-500/10' : 'border-border bg-background/50',
                   )}>
                     {isVerifiedNode ? (
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-                        <div>
-                          <p className="text-sm font-bold text-emerald-300">{t('tree.verified')}</p>
-                          <p className="text-[11px] text-emerald-200/80">{t('workspace.verifiedBanner')}</p>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                          <div>
+                            <p className="text-sm font-bold text-emerald-300">{t('tree.verified')}</p>
+                            <p className="text-[11px] text-emerald-200/80">{t('workspace.verifiedBanner')}</p>
+                          </div>
                         </div>
+                        {/* The learner's own judged-correct explanation stands
+                            here permanently — their words, their trophy. */}
+                        {(qs.provenAnswers?.length ?? 0) > 0 && (
+                          <div className="border-t border-emerald-400/20 pt-2">
+                            <p className="text-[10px] font-bold text-emerald-300/90 uppercase tracking-wider">{t('workspace.inYourWords')}</p>
+                            <p className="text-[11px] text-foreground/85 leading-snug italic mt-0.5">
+                              “{qs.provenAnswers![qs.provenAnswers!.length - 1].answer.slice(0, 220)}{qs.provenAnswers![qs.provenAnswers!.length - 1].answer.length > 220 ? '…' : ''}”
+                            </p>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-1.5">

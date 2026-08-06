@@ -18,8 +18,22 @@ export async function POST(req: NextRequest) {
   try {
     const userId = await getUserId()
     const { timeZone } = (await req.json().catch(() => ({}))) as { timeZone?: string }
-    const { streak, awards } = await updateStreak(userId, typeof timeZone === 'string' ? timeZone : undefined)
-    return NextResponse.json({ streak, awards })
+    const result = await updateStreak(userId, typeof timeZone === 'string' ? timeZone : undefined)
+    // Streak-rung badges unlock at THIS moment (the day's check-in advanced
+    // longestStreak) — evaluate here so the celebration fires now, not on a
+    // later dashboard visit. Only when the day actually advanced (awards
+    // non-empty), so no-op repeat calls stay cheap.
+    let newBadges: Array<{ id: string; tier: string; icon: string; name: unknown; desc: unknown }> = []
+    if (result.awards.length > 0) {
+      try {
+        const { evaluateAndAwardBadges } = await import('@/lib/badges')
+        const nb = await evaluateAndAwardBadges(userId)
+        newBadges = nb.map(b => ({ id: b.id, tier: b.tier, icon: b.icon, name: b.name, desc: b.desc }))
+      } catch { /* non-critical */ }
+    }
+    // Full payload: awards + the honest streak-transition events (streakEnded /
+    // shieldUsed / shieldEarned) so the client can name what happened.
+    return NextResponse.json({ ...result, newBadges })
   } catch {
     // Never let the retention layer break app entry (e.g. brand-new user
     // with no profile yet).

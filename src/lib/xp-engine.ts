@@ -510,21 +510,35 @@ function prevDay(day: string): string {
   return new Date(Date.UTC(y, m - 1, d) - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
-export async function updateStreak(userId: string, timeZone?: string): Promise<{ streak: number; awards: XpAwardResult[] }> {
+export interface StreakCheckinResult {
+  streak: number
+  awards: XpAwardResult[]
+  /** The honest goodbye (satisfaction audit #3): a run just ended — its
+   *  length, and whether it was this learner's longest ever. */
+  streakEnded?: { previous: number; wasRecord: boolean }
+  /** A banked shield auto-bridged a single missed day — always announced. */
+  shieldUsed?: boolean
+  /** A completed week just banked a new shield. */
+  shieldEarned?: boolean
+  /** Current banked shields (for the panel). */
+  shields?: number
+}
+
+export async function updateStreak(userId: string, timeZone?: string): Promise<StreakCheckinResult> {
   await ensureProfile(userId)
-  let profile: { streak: number; updatedAt: Date; longestStreak: number | null; lastCheckinDay: string | null } | null = null
+  let profile: { streak: number; updatedAt: Date; longestStreak: number | null; lastCheckinDay: string | null; streakShields: number | null } | null = null
   try {
     profile = await prisma.studentProfile.findUnique({
       where: { userId },
-      select: { streak: true, updatedAt: true, longestStreak: true, lastCheckinDay: true },
+      select: { streak: true, updatedAt: true, longestStreak: true, lastCheckinDay: true, streakShields: true },
     })
   } catch {
-    // Schema lag (lastCheckinDay not pushed yet) — legacy columns only.
+    // Schema lag (lastCheckinDay/streakShields not pushed yet) — legacy columns only.
     const legacy = await prisma.studentProfile.findUnique({
       where: { userId },
       select: { streak: true, updatedAt: true },
     })
-    profile = legacy ? { ...legacy, longestStreak: null, lastCheckinDay: null } : null
+    profile = legacy ? { ...legacy, longestStreak: null, lastCheckinDay: null, streakShields: null } : null
   }
   if (!profile) return { streak: 0, awards: [] }
 
@@ -546,10 +560,26 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
   // "already here", so a live streak is never reset to 1 and show-up XP is
   // never double-paid for the same absolute day.
   if (lastDay >= today && (profile.lastCheckinDay !== null || profile.streak > 0)) {
-    return { streak: profile.streak, awards: [] }
+    return { streak: profile.streak, awards: [], shields: profile.streakShields ?? 0 }
   }
 
-  const newStreak = lastDay === yesterday ? profile.streak + 1 : 1
+  // ── STREAK SHIELDS + THE HONEST GOODBYE (satisfaction audit #3) ──
+  // Continuation: yesterday checked in → +1. ONE missed day with a banked
+  // shield → the shield auto-bridges it (+1, announced — never silent fake
+  // continuity). Anything else → honest reset, and the RESULT names the run
+  // that ended and whether it was the learner's longest ever.
+  const dayBeforeYesterday = prevDay(yesterday)
+  const shieldsHeld = profile.streakShields ?? 0
+  const continued = lastDay === yesterday
+  const shieldBridges = !continued && lastDay === dayBeforeYesterday && shieldsHeld > 0 && profile.streak > 0
+  const broke = !continued && !shieldBridges && profile.streak > 1 && profile.lastCheckinDay !== null
+  const newStreak = continued || shieldBridges ? profile.streak + 1 : 1
+  // A completed week banks one shield (cap 2) — earned, visible, spendable.
+  const shieldEarned = newStreak > 0 && newStreak % WEEK_LENGTH === 0 && (shieldsHeld - (shieldBridges ? 1 : 0)) < 2
+  const newShields = Math.max(0, Math.min(2, shieldsHeld - (shieldBridges ? 1 : 0) + (shieldEarned ? 1 : 0)))
+  const streakEnded = broke
+    ? { previous: profile.streak, wasRecord: profile.streak >= (profile.longestStreak ?? 0) }
+    : undefined
 
   // Compare-and-set on the day stamp: of N concurrent check-ins (multiple
   // tabs at the same instant), exactly one wins and pays the day's awards.
@@ -561,12 +591,13 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
         lastCheckinDay: today,
         streak: newStreak,
         longestStreak: Math.max(newStreak, profile.longestStreak ?? 0),
+        streakShields: newShields,
         // Remember the client's zone so server-only award paths (bumpDailyXp)
         // can compute the user's "today" without a browser in the loop.
         ...(timeZone ? { timeZone } : {}),
       },
     })
-    if (won.count === 0) return { streak: newStreak, awards: [] }
+    if (won.count === 0) return { streak: newStreak, awards: [], shields: newShields }
   } catch {
     // Schema lag — legacy non-guarded write (same-day check above still holds
     // for sequential calls).
@@ -596,5 +627,12 @@ export async function updateStreak(userId: string, timeZone?: string): Promise<{
     if (weekly) awards.push(weekly)
   }
 
-  return { streak: newStreak, awards }
+  return {
+    streak: newStreak,
+    awards,
+    ...(streakEnded ? { streakEnded } : {}),
+    ...(shieldBridges ? { shieldUsed: true } : {}),
+    ...(shieldEarned ? { shieldEarned: true } : {}),
+    shields: newShields,
+  }
 }

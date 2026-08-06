@@ -91,12 +91,15 @@ export default function DashboardPage() {
   // ONE counting convention (the counters used to disagree across
   // surfaces): "active" means status 'active' only — a mastered tree is
   // counted once, under problems mastered, never also as active. Node
-  // counts everywhere exclude the root and pending ghosts (the API's
-  // convention), same as the canvas header.
+  // counts exclude the root and pending ghosts (the API's convention).
+  // NODES UNDERSTOOD IS LIFETIME (satisfaction audit #1): completing your
+  // only tree must never wipe the counter to 0/0 — banked progress is
+  // permanent, matching the badge counter's convention.
   const activeTrees = trees?.filter(tr => tr.status === 'active') ?? []
   const completedTrees = trees?.filter(tr => tr.status === 'completed') ?? []
-  const totalNodes = activeTrees.reduce((s, tr) => s + tr.nodeCount, 0)
-  const understoodNodes = activeTrees.reduce((s, tr) => s + tr.understoodCount, 0)
+  const countedTrees = trees?.filter(tr => tr.status !== 'archived') ?? []
+  const totalNodes = countedTrees.reduce((s, tr) => s + tr.nodeCount, 0)
+  const understoodNodes = countedTrees.reduce((s, tr) => s + tr.understoodCount, 0)
 
   return (
     <motion.div
@@ -182,12 +185,25 @@ export default function DashboardPage() {
           </Link>
         </div>
         {trees === null && <div className="h-20 skeleton" />}
-        {trees !== null && activeTrees.length === 0 && (
+        {/* Plant-first ONLY for a genuinely empty forest — a learner whose
+            sole tree is COMPLETED is a winner, never a beginner again
+            (satisfaction audit #1). */}
+        {trees !== null && activeTrees.length === 0 && completedTrees.length === 0 && (
           <Link href="/dashboard/tree" className="block">
             <div className="border border-dashed border-primary/30 bg-primary/[0.03] rounded-2xl p-10 text-center hover:border-primary/50 hover:bg-primary/[0.06] transition-all">
               <TreeLogo className="w-9 h-9 text-primary mx-auto mb-2.5" />
               <p className="text-sm font-semibold text-foreground">{t('dashboard.plantFirst')}</p>
               <p className="text-xs text-muted-foreground mt-1">{t('dashboard.plantFirstSub')}</p>
+            </div>
+          </Link>
+        )}
+        {/* All-mastered state: celebrate the forest and invite the NEXT
+            problem — the dashed card reads as invitation, not amnesia. */}
+        {trees !== null && activeTrees.length === 0 && completedTrees.length > 0 && (
+          <Link href="/dashboard/tree" className="block">
+            <div className="border border-dashed border-amber-400/40 bg-amber-500/[0.04] rounded-2xl p-6 text-center hover:border-amber-400/60 hover:bg-amber-500/[0.07] transition-all">
+              <p className="text-sm font-semibold text-amber-300">🏆 {t('dashboard.allMastered').replace('{n}', String(completedTrees.length))}</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.allMasteredSub')}</p>
             </div>
           </Link>
         )}
@@ -220,6 +236,24 @@ export default function DashboardPage() {
             </Link>
           )
         })}
+        {/* MASTERED TREES STAY (satisfaction audit #1): finished problems are
+            the trophies of the forest — golden, permanent, one line each. */}
+        {completedTrees.slice(0, 3).map(tree => (
+          <Link key={tree.id} href={`/dashboard/tree/${tree.id}`} className="block group">
+            <div className="rounded-2xl border border-amber-400/35 bg-amber-500/[0.05] hover:border-amber-400/55 hover:bg-amber-500/[0.08] transition-all p-4">
+              <div className="flex items-center gap-2">
+                <span className="flex-shrink-0">🏆</span>
+                <p title={tree.title} className="text-sm font-semibold text-foreground truncate flex-1">
+                  {tree.displayTitle || tree.title}
+                </p>
+                <span className="text-[11px] text-amber-300 font-semibold flex-shrink-0">
+                  {t('dashboard.masteredChip').replace('{n}', String(tree.understoodCount))}
+                </span>
+                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/50 group-hover:text-amber-300 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+              </div>
+            </div>
+          </Link>
+        ))}
       </motion.div>
 
       {/* Open learner model — transparency into Bob's memory (research:
