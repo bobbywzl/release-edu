@@ -421,10 +421,27 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
           const rec = records[node.id]
           const annotations = parseArr<{ text: string; createdAt: string }>(node.annotations)
           const progress = parseArr<{ text: string; source: string; createdAt: string }>(node.progressLog)
+          const rails = q ? 0 : Math.min(depth, 6)
           return (
-            /* Learning-path order + depth indent — the same walk as the
-               canvas numbers, so "Start here · #1" is literally first. */
-            <div key={node.id} style={{ marginLeft: q ? 0 : Math.min(depth, 4) * 14 }}>
+            /* Learning-path order + UNMISTAKABLE depth: each ancestor level
+               draws a faint vertical rail and the row's own level an emerald
+               elbow into the card — the hierarchy reads like a file tree, not
+               a 14px nudge. (Search results stay flat: rank beats shape.) */
+            <div key={node.id} className="flex items-stretch">
+              {rails > 0 && (
+                <div className="flex flex-shrink-0" aria-hidden>
+                  {Array.from({ length: rails }).map((_, li) => (
+                    <div key={li} className="w-7 relative">
+                      {li === rails - 1 ? (
+                        <div className="absolute left-3 top-0 h-[26px] w-3.5 border-l-2 border-b-2 border-primary/40 rounded-bl-lg" />
+                      ) : (
+                        <div className="absolute left-3 inset-y-0 border-l-2 border-primary/15" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
               <div className="border border-border rounded-xl bg-card overflow-hidden">
                 <button
                   onClick={() => toggle(node.id)}
@@ -571,6 +588,7 @@ function ListView({ tree, onChanged }: { tree: TreeData; onChanged: () => void }
                   )}
                 </div>
               ))}
+              </div>
             </div>
           )
         })}
