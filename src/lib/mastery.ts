@@ -155,6 +155,10 @@ export function sanitizeQuizStateForClient(raw: string | null | undefined): stri
     // client-visible via `missed`; no key material) — powers the tree panel's
     // "where you left off" resume line.
     remediationOwed: qs.remediationOwed ?? null,
+    // Judged-attempt record (outcome/facet/confidence timestamps only — no
+    // questions, no keys) — powers the Mastery Board's performance-over-time
+    // sections. parseQuizState already whitelisted every field.
+    history: qs.history ?? [],
     pending: sanitizePending(qs.pending),
   }
   return JSON.stringify(safe)
@@ -166,6 +170,33 @@ export interface MissedCheckpoint {
   question: string
   missedAt: string
 }
+
+/**
+ * One judged checkpoint attempt, appended chronologically by the quiz route —
+ * the node's PERFORMANCE RECORD THROUGH TIME. Powers the workspace Mastery
+ * Board (attempt timeline, first-try vs after-feedback rates, best streak,
+ * comeback/fix moments). Carries NO answer-key material: outcome + facet tag
+ * only (facet names are already fully client-visible in the coverage map).
+ */
+export interface QuizHistoryEntry {
+  /** ISO timestamp of the judged answer. */
+  t: string
+  /** Judged correct? */
+  ok: boolean
+  kind: 'mcq' | 'short' | 'artifact'
+  /** Syllabus facet the checkpoint probed (as tagged by Bob), if any. */
+  facet?: string
+  /** Self-assessed confidence at answer time (calibration record). */
+  conf?: 'sure' | 'unsure'
+  /** Was a retention-review card on an already-verified node. */
+  review?: boolean
+  /** This correct answer closed a facet the learner had previously MISSED —
+   *  the "failed first, then fixed" comeback moment. */
+  fix?: boolean
+}
+
+/** History cap — enough for a rich timeline without unbounded JSON growth. */
+export const QUIZ_HISTORY_CAP = 80
 
 /** Per-node checkpoint tally, stored as JSON in TreeNode.quizState. */
 export interface QuizState {
@@ -200,6 +231,8 @@ export interface QuizState {
    *  has not happened yet — the debt survives tab closes and node switches;
    *  the workspace fires the turn on mount and the chat route clears it. */
   remediationOwed?: string | null
+  /** Chronological judged-attempt record (capped) — see QuizHistoryEntry. */
+  history?: QuizHistoryEntry[]
 }
 
 export function parseQuizState(raw: string | null | undefined): QuizState {
@@ -242,6 +275,19 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
       untaggedStreak: Math.max(0, p.untaggedStreak ?? 0),
       wrongStreak: Math.max(0, p.wrongStreak ?? 0),
       remediationOwed: typeof p.remediationOwed === 'string' && p.remediationOwed.trim() ? p.remediationOwed.slice(0, 400) : null,
+      history: Array.isArray(p.history)
+        ? p.history
+          .filter(h => h && typeof h.t === 'string' && typeof h.ok === 'boolean'
+            && (h.kind === 'mcq' || h.kind === 'short' || h.kind === 'artifact'))
+          .map(h => ({
+            t: h.t, ok: h.ok, kind: h.kind,
+            ...(typeof h.facet === 'string' && h.facet.trim() ? { facet: h.facet.trim().slice(0, 120) } : {}),
+            ...(h.conf === 'sure' || h.conf === 'unsure' ? { conf: h.conf } : {}),
+            ...(h.review === true ? { review: true } : {}),
+            ...(h.fix === true ? { fix: true } : {}),
+          }))
+          .slice(-QUIZ_HISTORY_CAP)
+        : [],
     }
   } catch {
     return fallback

@@ -1,32 +1,36 @@
 'use client'
 /**
- * Workspace — the per-node work area. Retains the Bob chat look (bubbles,
- * streaming, markdown, input bar) with a formal NOTES panel alongside:
- * the node's retained knowledge (explainer + your annotations), its context
- * in the tree, checkpoint-mastery state, and files from previous sessions —
- * all scoped to the node you're working on.
+ * Workspace — the per-node work area, laid out as a SPLIT CONSOLE: the
+ * MASTERY BOARD (NodeProgressBoard — progress per syllabus objective, the
+ * judged-answer record through time, Bob's narrated key moments and
+ * misconceptions cleared, sketched diagrams, build milestones, and the
+ * workbench with explainer/notes/annotations/file evidence) is the main
+ * display, with the Bob chat docked beside it on desktop (collapsible) and
+ * behind a Board/Chat switch on phones.
  *
- * Mastery is proven IN the chat: Bob's [[QUIZ]] blocks render as interactive
- * checkpoint cards (MCQ / short answer). Correct answers earn XP and count
- * toward the node's verification — there is no separate test screen.
+ * Mastery is still proven IN the chat: Bob's [[QUIZ]] blocks render as
+ * interactive checkpoint cards (MCQ / short answer). Correct answers earn XP
+ * and count toward the node's verification — there is no separate test
+ * screen; the board is the mirror that makes the progress visible.
  */
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Bot, Send, ArrowLeft, ArrowRight, ShieldCheck, Loader2, StickyNote, Paperclip,
+  Bot, Send, ArrowLeft, ArrowRight, ShieldCheck, Loader2,
   Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
-  Maximize2, Download, X, AlertCircle, RefreshCw, Trophy } from 'lucide-react'
+  LayoutDashboard, MessageCircle, Download, X, AlertCircle, RefreshCw, Trophy } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
 import { MessageErrorBoundary } from '@/components/message-error-boundary'
 import { GrowBranchDialog } from '@/components/grow-branch'
+import { NodeProgressBoard } from '@/components/node-progress-board'
 import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { emitXpAwards } from '@/components/xp-toast'
-import { MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
+import { MASTERY_TARGET, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel, type ChatAttachment } from '@/components/multimodal-input'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
@@ -34,6 +38,8 @@ interface NodeData {
   id: string; parentId: string | null; kind: string; title: string; summary: string
   explainer: string | null; status: string; pending: boolean; annotations: string | null; notes: string | null
   quizState: string | null; progressLog: string | null
+  // Mastery Board material (both ride the tree GET's full node rows).
+  origin?: string | null; boardDigest?: string | null
 }
 interface TreeData { id: string; title: string; displayTitle?: string | null; framing: string | null; nodes: NodeData[] }
 interface NodeFileRow { id: string; name: string; type?: string | null }
@@ -140,21 +146,13 @@ function WorkspaceInner() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
-  // Open by default on desktop, CLOSED on phones — otherwise the fixed-width
-  // notes panel covers the whole viewport and the Bob chat (where mastery is
-  // actually proven) opens at zero width and reads as missing. (Client-only
-  // component under Suspense, so window is available at first render.)
-  const [showNotes, setShowNotes] = useState<boolean>(() => (typeof window === 'undefined' ? true : window.innerWidth >= 1024))
-  // Esc closes the phone-width notes overlay (it covers the whole chat there).
-  useEffect(() => {
-    if (!showNotes) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && window.innerWidth < 1024) setShowNotes(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [showNotes])
-  const [panelTab, setPanelTab] = useState<'notes' | 'annotations' | 'files' | 'log'>('notes')
+  // ── SPLIT CONSOLE LAYOUT ──
+  // The MASTERY BOARD is the workspace's main display; the chat stays docked
+  // beside it on desktop (checkpoints are proven there — it must never be
+  // more than a glance away). On phones the two share the viewport through
+  // an explicit Board/Chat switch.
+  const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [mobileView, setMobileView] = useState<'board' | 'chat'>('board')
   const [explainerLoading, setExplainerLoading] = useState(false)
   // Explainer fullscreen overlay + PDF export state. The PDF is rasterized
   // client-side from the rendered markdown (fonts incl. 中文 and KaTeX come
@@ -268,11 +266,17 @@ function WorkspaceInner() {
   function jumpToFacet(name: string) {
     const anchorId = facetAnchors.get(name.trim().toLowerCase())
     if (!anchorId) return
-    const el = document.getElementById(`ws-msg-${anchorId}`)
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    setFlashMsgId(anchorId)
-    setTimeout(() => setFlashMsgId(f => (f === anchorId ? null : f)), 1800)
+    // The anchor lives in the CHAT — bring it on screen first (phone Board
+    // view / collapsed desktop chat render no messages to scroll to).
+    setMobileView('chat')
+    setChatCollapsed(false)
+    setTimeout(() => {
+      const el = document.getElementById(`ws-msg-${anchorId}`)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setFlashMsgId(anchorId)
+      setTimeout(() => setFlashMsgId(f => (f === anchorId ? null : f)), 1800)
+    }, 150)
   }
 
   // ── HOLES TO FILL (objective pills) ──
@@ -293,18 +297,23 @@ function WorkspaceInner() {
   }, [node, treeId, router])
 
 
-  // The node's build log (real-world progress Bob detected in chat) —
-  // newest first for the runbook card. Tolerates malformed JSON.
-  const buildLog: Array<{ text: string; createdAt?: string }> = (() => {
+  // GROW A FACET into its own child node (rebalance) — surfaced on the
+  // board's objective cards; the machinery is the tree PATCH the old
+  // checklist used.
+  async function growFacet(name: string) {
+    if (facetGrowBusy || !treeId || !nodeId) return
+    setFacetGrowBusy(name)
     try {
-      const parsed = JSON.parse(node?.progressLog ?? '[]') as Array<{ text?: string; createdAt?: string }>
-      return Array.isArray(parsed)
-        ? parsed.filter(e => e && typeof e.text === 'string').map(e => ({ text: e.text as string, createdAt: e.createdAt })).reverse()
-        : []
-    } catch {
-      return []
+      const res = await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rebalance', title: name.slice(0, 120), facets: [name] }),
+      }).catch(() => null)
+      if (res?.ok) await loadTree()
+    } finally {
+      setFacetGrowBusy(null)
     }
-  })()
+  }
 
   const loadTree = useCallback(async () => {
     if (!treeId) return
@@ -333,17 +342,21 @@ function WorkspaceInner() {
         if (reviewEntry) {
           // Retention review: Bob reactivates the idea + asks one fresh
           // checkpoint. Strip the flag so a reload doesn't re-trigger it.
+          // Bob is about to SPEAK — on a phone, land where he lands.
+          setMobileView('chat')
           void streamFromBob('[NODE_REVIEW]', false)
           router.replace(`/dashboard/workspace?tree=${treeId}&node=${nodeId}`, { scroll: false })
         } else if (d.messages.length === 0) {
           // First visit to this node: Bob opens with a condensed
           // syllabus-style hook. Triggered once; the saved reply prevents
-          // re-runs.
+          // re-runs. A brand-new node has no progress to board — meet Bob.
+          setMobileView('chat')
           void streamFromBob('[NODE_INTRO]', false)
         } else if (d.remediationOwed && !d.pending) {
           // A wrong answer's law-mandated full remediation never ran (the
           // tab closed before the follow-up turn) — the persisted debt fires
           // it now, so the teaching a miss earns can't evaporate.
+          setMobileView('chat')
           void streamFromBob('[NODE_REMEDIATE]', false)
         }
       })
@@ -398,7 +411,7 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setPanelTab('notes'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
+    setNotesDraft(null); setNotesError(false); setMobileView('board'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
     initialScrollRef.current = true
     stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -950,9 +963,8 @@ function WorkspaceInner() {
             <ShieldCheck className="w-4 h-4" /> {t('tree.verified')}
           </span>
         ) : (
-          /* Compact coverage counter (the dot pips are gone — the full
-             syllabus checklist lives in the Verification card in the side
-             panel, one line per promised point). */
+          /* Compact coverage counter — the full syllabus checklist lives on
+             the Mastery Board's objective cards, one per promised point. */
           (() => {
             const qs = parseQuizState(node?.quizState)
             const target = masteryTarget(qs)
@@ -979,18 +991,85 @@ function WorkspaceInner() {
             )
           })()
         )}
+        {/* Phone Board/Chat switch — the two surfaces share one viewport */}
+        <div className="lg:hidden flex items-center rounded-lg border border-border overflow-hidden flex-shrink-0">
+          {(['board', 'chat'] as const).map(v => (
+            <button
+              key={v}
+              onClick={() => setMobileView(v)}
+              className={cn(
+                'inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
+                mobileView === v ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {v === 'board' ? <LayoutDashboard className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{v === 'board' ? t('board.tabBoard') : t('board.tabChat')}</span>
+            </button>
+          ))}
+        </div>
+        {/* Desktop: collapse/expand the docked chat for a full-width board */}
         <button
-          onClick={() => setShowNotes(s => !s)}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
-          title={t('workspace.notes')}
+          onClick={() => setChatCollapsed(c => !c)}
+          className="hidden lg:block p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
+          title={chatCollapsed ? t('board.chatExpand') : t('board.chatCollapse')}
         >
-          {showNotes ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+          {chatCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
         </button>
       </div>
 
       <div className="flex-1 flex min-h-0">
-        {/* Chat column — retains the Bob chat look */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* MASTERY BOARD — the workspace's main display: progress per
+            syllabus objective, the record through time, Bob's narrated
+            moments, sketches, build milestones, and the workbench. */}
+        <div className={cn(
+          'flex-1 min-w-0 overflow-y-auto',
+          mobileView === 'board' ? 'block' : 'hidden lg:block',
+        )}>
+          {node ? (
+            <NodeProgressBoard
+              node={node}
+              messages={messages}
+              files={files}
+              imageContext={`${node.title} — ${node.summary}`}
+              canJumpToFacet={name => facetAnchors.has(name.trim().toLowerCase())}
+              onJumpToFacet={jumpToFacet}
+              onGrowFacet={growFacet}
+              facetGrowBusy={facetGrowBusy}
+              explainerLoading={explainerLoading}
+              pdfBusy={pdfBusy}
+              onEnsureExplainer={ensureExplainer}
+              onOpenExplainer={() => setExplainerFull(true)}
+              onDownloadPdf={downloadExplainerPdf}
+              explainerPreviewRef={explainerBodyRef}
+              notesValue={notesDraft ?? node.notes ?? ''}
+              notesDirty={notesDraft !== null}
+              notesSaving={notesSaving}
+              notesSaved={notesSaved}
+              notesError={notesError}
+              notesSavedAt={notesSavedAt}
+              onNotesChange={setNotesDraft}
+              onSaveNotes={saveNotes}
+              highlights={highlights}
+              onDeleteHighlight={deleteHighlight}
+              onPickEvidence={() => fileInputRef.current?.click()}
+            />
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <Loader2 className="w-5 h-5 text-primary animate-spin" />
+            </div>
+          )}
+        </div>
+
+        {/* Chat column — retains the Bob chat look, docked beside the board
+            on desktop (collapsible), full-viewport behind the Chat tab on
+            phones. Checkpoints are still proven HERE. */}
+        <div className={cn(
+          'flex-col min-w-0 bg-background',
+          mobileView === 'chat' ? 'flex flex-1' : 'hidden',
+          chatCollapsed
+            ? 'lg:hidden'
+            : 'lg:flex lg:flex-none lg:w-[26rem] xl:w-[30rem] lg:border-l lg:border-border',
+        )}>
           <div
             ref={scrollerRef}
             onScroll={() => {
@@ -1361,7 +1440,7 @@ function WorkspaceInner() {
                     </p>
                     <p className="text-sm text-foreground mt-1.5">{t('workspace.buildPendingBody')}</p>
                     <button
-                      onClick={() => { setPanelTab('files'); setShowNotes(true) }}
+                      onClick={() => fileInputRef.current?.click()}
                       className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 border border-violet-400/40 text-violet-300 text-xs font-semibold hover:bg-violet-500/30 transition-colors"
                     >
                       <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.buildPendingCta')}
@@ -1504,344 +1583,31 @@ function WorkspaceInner() {
           </div>
         </div>
 
-        {/* Formal notes panel — retained knowledge above Notes/Annotations/Files
-            tabs. Inline column on desktop; a right-side overlay on phones so it
-            never squeezes the chat to zero width. */}
-        {showNotes && (
-          <>
-          {/* Below lg the panel is a full-width overlay covering the chat —
-              it MUST have exits (deep-audit §15: one tap hid the only place
-              mastery can be proven, with no way back): a backdrop tap, a
-              visible ✕, and Esc all close it. */}
-          <div className="lg:hidden fixed inset-0 z-30 bg-black/40" onClick={() => setShowNotes(false)} />
-          <div className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl bg-card lg:static lg:z-auto lg:w-96 lg:max-w-none lg:shadow-none lg:bg-card/40 flex-shrink-0 border-l border-border overflow-y-auto">
-            <button
-              onClick={() => setShowNotes(false)}
-              aria-label={t('common.dismiss')}
-              className="lg:hidden absolute top-3 right-3 z-10 p-2 rounded-lg bg-background/80 border border-border text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-            <div className="p-4 space-y-4">
-              {/* VERIFICATION — the workspace's authoritative status card,
-                  rendered from the SAME server state (node.status + the
-                  syllabus coverage tally) that grounds Bob's chat verdicts:
-                  every promised syllabus point with its proven/unproven mark,
-                  or the solid Verified banner once all are proven. */}
-              {(() => {
-                const qs = parseQuizState(node?.quizState)
-                const isVerifiedNode = node?.status === 'understood'
-                const ownWordsDone = qs.shortCorrect >= MASTERY_MIN_SHORT
-                return (
-                  <div className={cn(
-                    'rounded-xl border p-3',
-                    isVerifiedNode ? 'border-emerald-400/50 bg-emerald-500/10' : 'border-border bg-background/50',
-                  )}>
-                    {isVerifiedNode ? (
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-                        <div>
-                          <p className="text-sm font-bold text-emerald-300">{t('tree.verified')}</p>
-                          <p className="text-[11px] text-emerald-200/80">{t('workspace.verifiedBanner')}</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                          <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" /> {t('workspace.coverageTitle')}
-                          {/* No zero counter (goal gradient): the tally shows
-                              up with the first proven point. */}
-                          {masteryFilled(qs) > 0 && (
-                            <span className="ml-auto font-normal normal-case tabular-nums text-muted-foreground">
-                              {t('workspace.coverageCount')
-                                .replace('{a}', String(Math.min(masteryFilled(qs), masteryTarget(qs))))
-                                .replace('{b}', String(masteryTarget(qs)))}
-                            </span>
-                          )}
-                        </p>
-                        {/* Journey strip (goal gradient): the real milestones
-                            already behind them render as done — the card
-                            never opens as a wall of nothing. */}
-                        <div className="flex items-center gap-1 text-[10px] flex-wrap pb-0.5">
-                          <span className="inline-flex items-center gap-0.5 text-emerald-300">✓ {t('workspace.jOpened')}</span>
-                          <span className="text-muted-foreground/50">→</span>
-                          <span className={qs.facets?.length ? 'inline-flex items-center gap-0.5 text-emerald-300' : 'text-muted-foreground/60'}>
-                            {qs.facets?.length ? '✓ ' : ''}{t('workspace.jSyllabus')}
-                          </span>
-                          <span className="text-muted-foreground/50">→</span>
-                          <span className={masteryFilled(qs) > 0 ? 'text-amber-300' : 'text-muted-foreground/60'}>{t('workspace.jProving')}</span>
-                          <span className="text-muted-foreground/50">→</span>
-                          <span className="text-muted-foreground/60">{t('tree.verified')}</span>
-                        </div>
-                        {qs.facets?.length ? (
-                          <ul className="space-y-1">
-                            {qs.facets.map((f, i) => (
-                              <li key={i} className="group flex items-start gap-1.5 text-[12px] leading-snug">
-                                {/* CHECKPOINT RAIL state: ✅ proven · 🔶 missed,
-                                    not yet re-proven (an open hole) · ⬜ not
-                                    reached. "Fixed" = failed first, then proved. */}
-                                <span className="flex-shrink-0">{f.done ? '✅' : f.struggled ? '🔶' : '⬜'}</span>
-                                {facetAnchors.has(f.name.trim().toLowerCase()) ? (
-                                  <button
-                                    onClick={() => jumpToFacet(f.name)}
-                                    title={t('workspace.railJumpHint')}
-                                    className={cn(
-                                      'flex-1 text-left underline-offset-2 hover:underline cursor-pointer',
-                                      f.done ? 'text-foreground/80' : 'text-muted-foreground hover:text-foreground',
-                                    )}
-                                  >
-                                    {f.name}
-                                  </button>
-                                ) : (
-                                  <span className={cn('flex-1', f.done ? 'text-foreground/80' : 'text-muted-foreground')}>{f.name}</span>
-                                )}
-                                {f.done && f.struggled && (
-                                  <span
-                                    title={t('workspace.railFixedHint')}
-                                    className="flex-shrink-0 px-1.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-400/40 text-emerald-300 text-[9px] font-semibold uppercase tracking-wide"
-                                  >
-                                    {t('workspace.railFixed')}
-                                  </span>
-                                )}
-                                {/* FACETS BECOME BRANCHES (the vision's own
-                                    words: the sub-points "form the further
-                                    branches of the trees") — one tap grows an
-                                    unproven facet into its own child node;
-                                    the facet moves out of this contract via
-                                    the rebalance machinery. Needs ≥2 unproven
-                                    left so this node always keeps a promise. */}
-                                {!f.done && (qs.facets?.filter(x => !x.done).length ?? 0) >= 2 && (
-                                  <button
-                                    onClick={async () => {
-                                      if (facetGrowBusy || !treeId || !nodeId) return
-                                      setFacetGrowBusy(f.name)
-                                      try {
-                                        const res = await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
-                                          method: 'PATCH',
-                                          headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({ action: 'rebalance', title: f.name.slice(0, 120), facets: [f.name] }),
-                                        }).catch(() => null)
-                                        if (res?.ok) await loadTree()
-                                      } finally {
-                                        setFacetGrowBusy(null)
-                                      }
-                                    }}
-                                    disabled={facetGrowBusy !== null}
-                                    title={t('workspace.facetGrow')}
-                                    className="flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-emerald-400/40 text-emerald-300 text-[10px] hover:bg-emerald-500/15 transition-all disabled:opacity-40"
-                                  >
-                                    {facetGrowBusy === f.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sprout className="w-3 h-3" />}
-                                    {t('workspace.facetGrowBtn')}
-                                  </button>
-                                )}
-                              </li>
-                            ))}
-                            <li className="flex items-start gap-1.5 text-[12px] leading-snug">
-                              <span className="flex-shrink-0">{ownWordsDone ? '✅' : '⬜'}</span>
-                              <span className={ownWordsDone ? 'text-foreground/80' : 'text-muted-foreground'}>{t('workspace.ownWords')}</span>
-                            </li>
-                          </ul>
-                        ) : (
-                          <p className="text-[12px] text-muted-foreground">
-                            {t('workspace.masteryHint').replace('{n}', String(masteryTarget(qs)))}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <StickyNote className="w-3.5 h-3.5 text-primary" /> {t('workspace.retainedKnowledge')}
-                  </h3>
-                  {node?.explainer && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={downloadExplainerPdf}
-                        disabled={pdfBusy}
-                        title={t('workspace.downloadPdf')}
-                        className="w-6 h-6 rounded-md hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                      >
-                        {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        onClick={() => setExplainerFull(true)}
-                        title={t('workspace.explainerExpand')}
-                        className="w-6 h-6 rounded-md hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                {node?.explainer ? (
-                  <div className="space-y-2">
-                    {/* Preview only — fullscreen is the DEFAULT reading
-                        surface (the old ~290px scroll box demoted a full
-                        textbook chapter to a peephole). Clicking anywhere
-                        opens the full view. */}
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setExplainerFull(true)}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExplainerFull(true) } }}
-                      className="relative w-full text-left text-[13px] leading-relaxed border border-border rounded-xl p-3 bg-background/50 max-h-44 overflow-hidden cursor-pointer hover:border-primary/40 transition-colors"
-                      title={t('workspace.explainerOpenFull')}
-                    >
-                      <div ref={explainerBodyRef} className="pointer-events-none">
-                        <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
-                          <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />
-                        </MessageErrorBoundary>
-                      </div>
-                      <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-card to-transparent rounded-b-xl pointer-events-none" />
-                    </div>
-                    <button
-                      onClick={() => setExplainerFull(true)}
-                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium py-2.5 hover:bg-primary/20 transition-colors"
-                    >
-                      <Maximize2 className="w-3.5 h-3.5" /> {t('workspace.explainerOpenFull')}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={ensureExplainer}
-                    disabled={explainerLoading}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 text-primary text-xs font-medium py-2.5 hover:bg-primary/20 transition-colors disabled:opacity-50"
-                  >
-                    {explainerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
-                    {explainerLoading ? t('workspace.explainerLoading') : t('workspace.generateExplainer')}
-                  </button>
-                )}
-              </div>
-
-              {/* Tabs: Notes (editable) · Annotations · Files · Build log — all retained per node */}
-              <div className="flex gap-1 border-b border-border">
-                {(['notes', 'annotations', 'files', 'log'] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setPanelTab(tab)}
-                    className={cn(
-                      'px-3 py-1.5 text-xs font-medium rounded-t-lg transition-colors -mb-px border-b-2',
-                      panelTab === tab
-                        ? 'text-primary border-primary'
-                        : 'text-muted-foreground border-transparent hover:text-foreground',
-                    )}
-                  >
-                    {tab === 'notes' ? t('workspace.tabNotes') : tab === 'annotations' ? t('workspace.annotations') : tab === 'files' ? t('workspace.files') : t('workspace.tabLog')}
-                    {tab === 'files' && files.length > 0 ? ` (${files.length})` : ''}
-                    {tab === 'log' && buildLog.length > 0 ? ` (${buildLog.length})` : ''}
-                  </button>
-                ))}
-              </div>
-
-              {panelTab === 'notes' && (
-                <div className="space-y-2">
-                  <textarea
-                    value={notesDraft ?? node?.notes ?? ''}
-                    onChange={e => setNotesDraft(e.target.value)}
-                    placeholder={t('workspace.notesPlaceholder')}
-                    rows={10}
-                    className="w-full text-xs leading-relaxed bg-background border border-border rounded-xl px-3 py-2.5 text-foreground placeholder:text-muted-foreground resize-y focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
-                  <div className="flex items-center gap-2">
-                    <span className={cn('text-[11px] flex-1', notesError ? 'text-red-400' : 'text-muted-foreground')}>
-                      {notesError
-                        ? t('workspace.notesSaveFailed')
-                        : notesSaving
-                          ? t('workspace.notesSaving')
-                          : notesSavedAt
-                            ? `${t('workspace.notesAutosaved')} ${notesSavedAt}`
-                            : t('workspace.notesAutosaveHint')}
-                    </span>
-                    <button
-                      onClick={saveNotes}
-                      disabled={notesDraft === null || notesSaving}
-                      className={cn(
-                        'rounded-lg text-xs font-medium px-3 py-1.5 transition-colors disabled:opacity-40',
-                        notesError
-                          ? 'bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500/20'
-                          : 'bg-primary/10 border border-primary/40 text-primary hover:bg-primary/20',
-                      )}
-                    >
-                      {notesSaved ? t('workspace.notesSaved') : t('workspace.notesSave')}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {panelTab === 'annotations' && (
-                <div>
-                  <p className="text-[11px] text-muted-foreground leading-snug mb-2">{t('workspace.annotationsHint')}</p>
-                  <div className="space-y-1.5">
-                    {highlights.length === 0 && <p className="text-[11px] text-muted-foreground">{t('workspace.noAnnotations')}</p>}
-                    {highlights.map(h => (
-                      <div
-                        key={h.id}
-                        className="text-xs border-l-2 rounded-r-md px-2.5 py-1.5 bg-background/60 group/hl"
-                        style={{ borderColor: { amber: '#FBBF24', blue: '#60A5FA', green: '#34D399', purple: '#A78BFA' }[h.color] ?? '#FBBF24' }}
-                      >
-                        <p className="text-foreground/90 italic">&ldquo;{h.selectedText.slice(0, 140)}{h.selectedText.length > 140 ? '…' : ''}&rdquo;</p>
-                        {h.comment && <p className="text-foreground mt-1 font-medium">💬 {h.comment}</p>}
-                        <div className="flex items-center justify-between mt-0.5">
-                          <span className="text-[10px] text-muted-foreground/60">{new Date(h.createdAt).toLocaleDateString()}</span>
-                          <button
-                            onClick={() => deleteHighlight(h.id)}
-                            className="opacity-0 group-hover/hl:opacity-100 text-[10px] text-muted-foreground hover:text-red-400 transition-opacity"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {panelTab === 'log' && (
-                <div>
-                  {/* The runbook: real-world execution Bob detected in your
-                      chats — what you actually built, ran, and measured. */}
-                  <p className="text-[11px] text-muted-foreground leading-snug mb-2">{t('workspace.logHint')}</p>
-                  <div className="space-y-1.5">
-                    {buildLog.length === 0 && <p className="text-[11px] text-muted-foreground">{t('workspace.noLog')}</p>}
-                    {buildLog.map((entry, li) => (
-                      <div key={li} className="text-xs border-l-2 border-emerald-400/60 rounded-r-md px-2.5 py-1.5 bg-background/60">
-                        <p className="text-foreground/90">{entry.text}</p>
-                        <span className="text-[10px] text-muted-foreground/60">{entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : ''}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {panelTab === 'files' && (
-                <div>
-                  <div className="space-y-1.5 mb-2">
-                    {files.length === 0 && <p className="text-[11px] text-muted-foreground">{t('workspace.noFiles')}</p>}
-                    {files.map(f => (
-                      <div key={f.id} className="flex items-center gap-2 text-xs text-foreground border border-border rounded-lg px-2.5 py-2">
-                        <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                        <span className="truncate">{f.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <input ref={fileInputRef} type="file" onChange={uploadEvidence} className="hidden" />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-accent text-xs py-2 transition-colors"
-                  >
-                    <Paperclip className="w-3.5 h-3.5" /> {t('workspace.uploadEvidence')}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-          </>
-        )}
       </div>
+
+      {/* Evidence picker — always mounted; the board's Files tab and the
+          build-pending CTA both drive it. */}
+      <input ref={fileInputRef} type="file" onChange={uploadEvidence} className="hidden" />
+
+      {/* Checkpoint-waiting pills — the live card renders in the chat; when
+          the chat is off screen (phone Board view / collapsed desktop chat)
+          the pill keeps it one tap away instead of stranding it. */}
+      {activeQuiz && !streaming && mobileView === 'board' && (
+        <button
+          onClick={() => setMobileView('chat')}
+          className="lg:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-primary text-primary-foreground text-xs font-bold shadow-lg"
+        >
+          <HelpCircle className="w-3.5 h-3.5" /> {t('board.checkpointWaiting')}
+        </button>
+      )}
+      {activeQuiz && !streaming && chatCollapsed && (
+        <button
+          onClick={() => setChatCollapsed(false)}
+          className="hidden lg:inline-flex fixed bottom-5 right-5 z-30 items-center gap-1.5 px-3.5 py-2 rounded-full bg-primary text-primary-foreground text-xs font-bold shadow-lg"
+        >
+          <HelpCircle className="w-3.5 h-3.5" /> {t('board.checkpointWaiting')}
+        </button>
+      )}
 
       {/* Grow-branch dialog — proposals are pending ghosts; approved
           children attach under THIS node (permission-based, per FOUNDATION). */}
