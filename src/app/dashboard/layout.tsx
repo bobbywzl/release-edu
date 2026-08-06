@@ -72,7 +72,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Spacer clears the fixed mobile hamburger on normal pages. The chat
               handles that clearance itself (header padding), so skip it there. */}
           {!isChat && <div className="lg:hidden h-14" />}
-          <div className="relative">{children}</div>
+          {/* Immersive pages (workspace, canvas) size themselves with h-full,
+              so their wrapper must have a definite height — an auto-height div
+              collapses the canvas to 0. Normal pages keep auto height so the
+              main scroll area grows with content. */}
+          <div className={isChat ? 'relative h-full' : 'relative'}>{children}</div>
         </main>
         {!isChat && <BottomNav />}
         <XpToastProvider />
