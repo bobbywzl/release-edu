@@ -44,7 +44,7 @@ function AchievementsSection() {
   const [data, setData] = useState<{ badges: XpBadgeInfo[]; level: number; rank: { en: string; zh: string; emblem?: string; color?: string }; xp: number } | null>(null)
 
   useEffect(() => {
-    fetch('/api/xp/summary', { cache: 'no-store' })
+    fetch('/api/xp/summary?readonly=1', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(j => { if (j) setData(j) })
       .catch(() => {})

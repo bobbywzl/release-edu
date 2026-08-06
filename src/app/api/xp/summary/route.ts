@@ -10,12 +10,13 @@ export const dynamic = 'force-dynamic'
  * (unlock overlay + chime).
  */
 import { NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { DAILY_GOAL_XP, getRank, getLevelForXp, userDayKey } from '@/lib/xp-engine'
 import { BADGES, evaluateAndAwardBadges, getBadgeStats } from '@/lib/badges'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const userId = await getUserId()
 
   const profile = await prisma.studentProfile.findUnique({ where: { userId } }).catch(() => null)
@@ -47,7 +48,12 @@ export async function GET() {
     || (profile?.updatedAt && userDayKey(new Date(profile.updatedAt), p?.timeZone ?? undefined) === today) === true
 
   // Badges: award anything newly crossed, then return the full board.
-  const newBadges = await evaluateAndAwardBadges(userId)
+  // READ-ONLY MODE (?readonly=1): display surfaces that can't celebrate
+  // (portfolio, print) must never CONSUME an unseen unlock — each badge
+  // returns as "new" exactly once, so awarding it on a surface that discards
+  // newBadges would swallow the celebration forever (satisfaction audit #2).
+  const readonly = req.nextUrl.searchParams.get('readonly') === '1'
+  const newBadges = readonly ? [] : await evaluateAndAwardBadges(userId)
   let earnedRows: Array<{ badgeId: string; earnedAt: Date; featured: boolean }> = []
   try {
     earnedRows = await prisma.userBadge.findMany({

@@ -88,7 +88,7 @@ function PortfolioPrintContent() {
   const [honorBadges, setHonorBadges] = useState<Array<{ id: string; icon: string; tier: string; name: { en: string; zh: string }; earnedAt: string | null }>>([])
   const [masteredTrees, setMasteredTrees] = useState<Array<{ id: string; title: string; nodeCount: number; understoodCount: number; updatedAt: string }>>([])
   useEffect(() => {
-    fetch('/api/xp/summary', { cache: 'no-store' })
+    fetch('/api/xp/summary?readonly=1', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(j => {
         if (!Array.isArray(j?.badges)) return
