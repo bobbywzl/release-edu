@@ -183,8 +183,11 @@ ${nodeLines}`
 
   const completionRate = realNodes.length > 0 ? Math.round((verifiedNodes.length / realNodes.length) * 100) : 0
 
+  // Teaching-tier via the resolver — never a hardcoded id (CLAUDE.md rule):
+  // the portfolio inherits every new Opus release the moment it ships.
+  const portfolioModel = await (await import('@/lib/model-resolver')).getTeachingModel()
   const result = await client.messages.create({
-    model: 'claude-opus-4-8',
+    model: portfolioModel,
     max_tokens: 4000,
     ...NO_THINKING,
     messages: [{
@@ -256,7 +259,7 @@ Return ONLY valid JSON.`,
 
   {
     const { recordAnthropicUsage } = await import('@/lib/usage')
-    recordAnthropicUsage(result.usage, { userId, model: 'claude-opus-4-8', feature: 'portfolio' })
+    recordAnthropicUsage(result.usage, { userId, model: portfolioModel, feature: 'portfolio' })
   }
   const text = (result.content[0] as { type: string; text?: string })?.text?.trim()
   if (!text) {
