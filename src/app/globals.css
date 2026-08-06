@@ -4,25 +4,28 @@
 
 @layer base {
   :root {
-    --background: 220 6% 13%;
-    --foreground: 210 11% 89%;
-    --card: 220 6% 16%;
-    --card-foreground: 210 11% 89%;
-    --popover: 220 6% 16%;
-    --popover-foreground: 210 11% 89%;
-    --primary: 210 10% 75%;
-    --primary-foreground: 220 6% 13%;
-    --secondary: 220 5% 20%;
-    --secondary-foreground: 210 11% 89%;
-    --muted: 220 5% 20%;
-    --muted-foreground: 215 8% 52%;
-    --accent: 220 5% 22%;
-    --accent-foreground: 210 11% 89%;
+    /* Deep forest-night surface stack: near-black with a cool cast, cards one
+       step up, hairline borders. The brand accent is a living emerald — the
+       color of a verified node — used for primary actions and progress. */
+    --background: 200 12% 7%;
+    --foreground: 190 14% 92%;
+    --card: 197 11% 10%;
+    --card-foreground: 190 14% 92%;
+    --popover: 197 11% 10%;
+    --popover-foreground: 190 14% 92%;
+    --primary: 158 64% 46%;
+    --primary-foreground: 200 20% 6%;
+    --secondary: 197 9% 15%;
+    --secondary-foreground: 190 14% 92%;
+    --muted: 197 9% 15%;
+    --muted-foreground: 196 8% 56%;
+    --accent: 197 9% 17%;
+    --accent-foreground: 190 14% 92%;
     --destructive: 0 62% 50%;
     --destructive-foreground: 210 11% 89%;
-    --border: 220 5% 22%;
-    --input: 220 5% 22%;
-    --ring: 210 8% 50%;
+    --border: 197 9% 17%;
+    --input: 197 9% 17%;
+    --ring: 158 64% 46%;
     --radius: 0.625rem;
   }
 
@@ -33,7 +36,7 @@
     --card-foreground: 222 47% 8%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 8%;
-    --primary: 217 91% 60%;
+    --primary: 158 64% 34%;
     --primary-foreground: 0 0% 100%;
     --secondary: 210 40% 94%;
     --secondary-foreground: 222 47% 8%;
@@ -130,6 +133,37 @@
   .text-balance {
     text-wrap: balance;
   }
+  /* Canopy backdrop — layered radial glows + a masked dot lattice. The shared
+     stage for marketing and app shells; sits behind content, never intercepts. */
+  .bg-canopy {
+    background-image:
+      radial-gradient(55rem 38rem at 85% -12%, hsl(158 64% 40% / 0.16), transparent 60%),
+      radial-gradient(46rem 34rem at -12% 108%, hsl(258 60% 55% / 0.10), transparent 60%);
+  }
+  .bg-lattice {
+    background-image: radial-gradient(circle, hsl(var(--foreground) / 0.055) 1px, transparent 1px);
+    background-size: 26px 26px;
+    mask-image: radial-gradient(70rem 48rem at 50% 0%, black 40%, transparent 78%);
+  }
+  /* Elevated surface recipe — one consistent card language across the app. */
+  .surface {
+    @apply rounded-2xl border border-white/[0.06] bg-white/[0.03];
+  }
+  .surface-hover {
+    @apply transition-all duration-300 hover:border-white/[0.12] hover:bg-white/[0.05] hover:-translate-y-0.5;
+  }
+}
+
+/* Skeleton shimmer for loading states */
+@keyframes shimmer-sweep {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+.skeleton {
+  border-radius: 0.5rem;
+  background: linear-gradient(100deg, hsl(var(--muted)) 40%, hsl(var(--muted-foreground) / 0.14) 50%, hsl(var(--muted)) 60%);
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.8s ease-in-out infinite;
 }
 
 /* Highlight pulse animation for scroll-to-message */
