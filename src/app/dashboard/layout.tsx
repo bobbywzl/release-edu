@@ -59,11 +59,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <AccountSlotGate>
       <div className="flex app-h overflow-hidden bg-background">
         <Sidebar />
-        <main className={`flex-1 overflow-y-auto ${isChat ? '' : 'pb-16 lg:pb-0'}`}>
+        <main className={`relative flex-1 overflow-y-auto ${isChat ? '' : 'pb-16 lg:pb-0'}`}>
+          {/* Branded backdrop for the standard pages — the immersive surfaces
+              (workspace, canvas) own their own stage. Fixed inside the scroll
+              container so the glow doesn't scroll away. */}
+          {!isChat && (
+            <>
+              <div className="absolute inset-0 bg-canopy pointer-events-none" aria-hidden />
+              <div className="absolute inset-0 bg-lattice pointer-events-none" aria-hidden />
+            </>
+          )}
           {/* Spacer clears the fixed mobile hamburger on normal pages. The chat
               handles that clearance itself (header padding), so skip it there. */}
           {!isChat && <div className="lg:hidden h-14" />}
-          {children}
+          <div className="relative">{children}</div>
         </main>
         {!isChat && <BottomNav />}
         <XpToastProvider />
