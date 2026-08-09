@@ -113,13 +113,21 @@ export function FeedbackButton() {
                   className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
                 />
               </Dialog.Overlay>
-              <Dialog.Content asChild forceMount aria-describedby={undefined}>
+              {/* Positioning law: never a Tailwind translate on a motion
+                  element (framer owns `transform` inline while animating, so
+                  translate centering gets clobbered). Center with a flex
+                  wrapper; the card animates inside it. */}
+              <Dialog.Content
+                aria-describedby={undefined}
+                forceMount
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+              >
                 <motion.div
                   initial={{ opacity: 0, y: 12, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 12, scale: 0.98 }}
                   transition={{ duration: 0.16, ease: 'easeOut' }}
-                  className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(26rem,calc(100vw-2rem))] rounded-2xl border border-border bg-card shadow-2xl p-4"
+                  className="pointer-events-auto w-[min(26rem,calc(100vw-2rem))] rounded-2xl border border-border bg-card shadow-2xl p-4"
                 >
                   {sent ? (
                     <div className="py-6 flex flex-col items-center gap-2 text-center">
