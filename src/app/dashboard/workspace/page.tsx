@@ -19,7 +19,7 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Bot, Send, ArrowLeft, ArrowRight, ShieldCheck, Loader2,
-  Sprout, FileText, PanelRightOpen, PanelRightClose, HelpCircle,
+  Sprout, FileText, HelpCircle,
   LayoutDashboard, MessageCircle, Download, X, AlertCircle, RefreshCw, Trophy } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { HighlightableText } from '@/components/highlightable-text'
@@ -146,13 +146,15 @@ function WorkspaceInner() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
-  // ── SPLIT CONSOLE LAYOUT ──
-  // The MASTERY BOARD is the workspace's main display; the chat stays docked
-  // beside it on desktop (checkpoints are proven there — it must never be
-  // more than a glance away). On phones the two share the viewport through
-  // an explicit Board/Chat switch.
-  const [chatCollapsed, setChatCollapsed] = useState(false)
-  const [mobileView, setMobileView] = useState<'board' | 'chat'>('board')
+  // ── BOARD → LESSON FLOW (all screen sizes) ──
+  // The MASTERY BOARD is the landing view of a node: a full-width summary /
+  // refresher of everything done so far (syllabus progress, notes, files,
+  // explainer). The LESSON is the full-screen conversation behind the
+  // "Continue lesson" CTA — checkpoints are proven there. Exactly one of the
+  // two is on screen: a brand-new node (or Bob about to speak: review /
+  // remediation) drops straight into the chat; returning to the board
+  // refetches node state so the summary always reflects the conversation.
+  const [view, setView] = useState<'board' | 'chat'>('board')
   const [explainerLoading, setExplainerLoading] = useState(false)
   // Explainer fullscreen overlay + PDF export state. The PDF is rasterized
   // client-side from the rendered markdown (fonts incl. 中文 and KaTeX come
@@ -266,10 +268,9 @@ function WorkspaceInner() {
   function jumpToFacet(name: string) {
     const anchorId = facetAnchors.get(name.trim().toLowerCase())
     if (!anchorId) return
-    // The anchor lives in the CHAT — bring it on screen first (phone Board
-    // view / collapsed desktop chat render no messages to scroll to).
-    setMobileView('chat')
-    setChatCollapsed(false)
+    // The anchor lives in the CHAT — enter the lesson view first (the board
+    // renders no messages to scroll to).
+    setView('chat')
     setTimeout(() => {
       const el = document.getElementById(`ws-msg-${anchorId}`)
       if (!el) return
@@ -342,21 +343,22 @@ function WorkspaceInner() {
         if (reviewEntry) {
           // Retention review: Bob reactivates the idea + asks one fresh
           // checkpoint. Strip the flag so a reload doesn't re-trigger it.
-          // Bob is about to SPEAK — on a phone, land where he lands.
-          setMobileView('chat')
+          // Bob is about to SPEAK — land where he lands.
+          setView('chat')
           void streamFromBob('[NODE_REVIEW]', false)
           router.replace(`/dashboard/workspace?tree=${treeId}&node=${nodeId}`, { scroll: false })
         } else if (d.messages.length === 0) {
-          // First visit to this node: Bob opens with a condensed
-          // syllabus-style hook. Triggered once; the saved reply prevents
-          // re-runs. A brand-new node has no progress to board — meet Bob.
-          setMobileView('chat')
+          // First visit to this node: straight into the full-screen lesson —
+          // Bob opens with a condensed syllabus-style hook. A brand-new node
+          // has no progress to board (the board becomes the landing view
+          // from the second visit on). The saved reply prevents re-runs.
+          setView('chat')
           void streamFromBob('[NODE_INTRO]', false)
         } else if (d.remediationOwed && !d.pending) {
           // A wrong answer's law-mandated full remediation never ran (the
           // tab closed before the follow-up turn) — the persisted debt fires
           // it now, so the teaching a miss earns can't evaporate.
-          setMobileView('chat')
+          setView('chat')
           void streamFromBob('[NODE_REMEDIATE]', false)
         }
       })
@@ -391,6 +393,19 @@ function WorkspaceInner() {
   useEffect(() => {
     if (stickToBottomRef.current) scrollToBottom()
   }, [streamText, activeQuiz, suggestion, quizResult, scrollToBottom])
+  // ENTERING THE LESSON always lands on the latest turn. While the chat is
+  // hidden (board view) the scroller is display:none — scrollHeight is 0 and
+  // every earlier bottom-pin was a no-op — so re-pin on each entry, repeated
+  // past the late layout passes (KaTeX fonts, generated visuals).
+  useEffect(() => {
+    if (view !== 'chat') return
+    stickToBottomRef.current = true
+    scrollToBottom()
+    requestAnimationFrame(scrollToBottom)
+    const t1 = setTimeout(scrollToBottom, 150)
+    const t2 = setTimeout(scrollToBottom, 600)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [view, scrollToBottom])
   useEffect(() => { setHintShown(false) }, [activeQuiz?.question])
 
   // Fresh node → fresh panel state (draft notes belong to one node only).
@@ -411,11 +426,29 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setMobileView('board'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
+    setNotesDraft(null); setNotesError(false); setView('board'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
     initialScrollRef.current = true
     stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
+
+  // RETURNING TO THE BOARD reloads it from the conversation's outcomes:
+  // node state (facets proven, status, notes, progress log) via the tree
+  // fetch, plus fresh file evidence — so the summary the student lands on
+  // always reflects everything the lesson just did.
+  const prevViewRef = useRef<'board' | 'chat'>('board')
+  useEffect(() => {
+    const prev = prevViewRef.current
+    prevViewRef.current = view
+    if (view !== 'board' || prev !== 'chat') return
+    loadTree()
+    if (nodeId) {
+      fetch(`/api/files/upload?workType=tree-node&workId=${nodeId}`, { cache: 'no-store' })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (d?.files) setFiles(d.files) })
+        .catch(() => { /* non-critical */ })
+    }
+  }, [view, loadTree, nodeId])
 
   // Stream one Bob turn. showUser=false is used for the [NODE_INTRO]
   // first-open trigger — Bob speaks without a student bubble appearing.
@@ -998,39 +1031,29 @@ function WorkspaceInner() {
             )
           })()
         )}
-        {/* Phone Board/Chat switch — the two surfaces share one viewport */}
-        <div className="lg:hidden flex items-center rounded-lg border border-border overflow-hidden flex-shrink-0">
-          {(['board', 'chat'] as const).map(v => (
-            <button
-              key={v}
-              onClick={() => setMobileView(v)}
-              className={cn(
-                'inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
-                mobileView === v ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {v === 'board' ? <LayoutDashboard className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">{v === 'board' ? t('board.tabBoard') : t('board.tabChat')}</span>
-            </button>
-          ))}
-        </div>
-        {/* Desktop: collapse/expand the docked chat for a full-width board */}
-        <button
-          onClick={() => setChatCollapsed(c => !c)}
-          className="hidden lg:block p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
-          title={chatCollapsed ? t('board.chatExpand') : t('board.chatCollapse')}
-        >
-          {chatCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
-        </button>
+        {/* In the lesson: one way back to the summary. Returning refetches
+            node state, so the board reloads with everything the
+            conversation just proved/wrote (see the view effect above). */}
+        {view === 'chat' && (
+          <button
+            onClick={() => setView('board')}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
+          >
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{t('board.tabBoard')}</span>
+          </button>
+        )}
       </div>
 
       <div className="flex-1 flex min-h-0">
-        {/* MASTERY BOARD — the workspace's main display: progress per
-            syllabus objective, the record through time, Bob's narrated
-            moments, sketches, build milestones, and the workbench. */}
+        {/* MASTERY BOARD — the landing summary: progress per syllabus
+            objective, the record through time, Bob's narrated moments,
+            sketches, build milestones, and the workbench. Full-width; the
+            fixed "Continue lesson" CTA below is the only way forward, so
+            pb clears it. */}
         <div className={cn(
-          'flex-1 min-w-0 overflow-y-auto',
-          mobileView === 'board' ? 'block' : 'hidden lg:block',
+          'flex-1 min-w-0 overflow-y-auto pb-24',
+          view === 'board' ? 'block' : 'hidden',
         )}>
           {node ? (
             <NodeProgressBoard
@@ -1067,15 +1090,12 @@ function WorkspaceInner() {
           )}
         </div>
 
-        {/* Chat column — retains the Bob chat look, docked beside the board
-            on desktop (collapsible), full-viewport behind the Chat tab on
-            phones. Checkpoints are still proven HERE. */}
+        {/* THE LESSON — the conversation covers the entire screen on every
+            device (messages and dock center on a readable measure).
+            Checkpoints are still proven HERE. */}
         <div className={cn(
           'flex-col min-w-0 bg-background',
-          mobileView === 'chat' ? 'flex flex-1' : 'hidden',
-          chatCollapsed
-            ? 'lg:hidden'
-            : 'lg:flex lg:flex-none lg:w-[26rem] xl:w-[30rem] lg:border-l lg:border-border',
+          view === 'chat' ? 'flex flex-1' : 'hidden',
         )}>
           <div
             ref={scrollerRef}
@@ -1085,8 +1105,11 @@ function WorkspaceInner() {
               stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
             }}
             style={{ overflowAnchor: 'none' }}
-            className="flex-1 overflow-y-auto p-4 space-y-4"
+            className="flex-1 overflow-y-auto p-4"
           >
+          {/* Full-screen lesson: transcript centers on the same measure as
+              the input dock below. */}
+          <div className="max-w-3xl mx-auto w-full space-y-4">
             {messages.length === 0 && !streaming && (
               <div className="text-center py-10 space-y-2">
                 <Bot className="w-8 h-8 text-primary mx-auto" />
@@ -1524,6 +1547,7 @@ function WorkspaceInner() {
               </motion.div>
             )}
           </div>
+          </div>
 
           {/* HOLES TO FILL — the to-do objectives strip: every syllabus point
               the learner missed a checkpoint on pops in as an open box, and
@@ -1596,23 +1620,19 @@ function WorkspaceInner() {
           build-pending CTA both drive it. */}
       <input ref={fileInputRef} type="file" onChange={uploadEvidence} className="hidden" />
 
-      {/* Checkpoint-waiting pills — the live card renders in the chat; when
-          the chat is off screen (phone Board view / collapsed desktop chat)
-          the pill keeps it one tap away instead of stranding it. */}
-      {activeQuiz && !streaming && mobileView === 'board' && (
+      {/* CONTINUE LESSON — the board's one way forward into the full-screen
+          conversation. When a checkpoint is waiting in the chat, the CTA
+          says so (the live card renders there — it must never be stranded).
+          Hidden until the transcript has loaded: a brand-new node drops
+          straight into the chat instead. */}
+      {view === 'board' && node && messages.length > 0 && (
         <button
-          onClick={() => setMobileView('chat')}
-          className="lg:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-primary text-primary-foreground text-xs font-bold shadow-lg"
+          onClick={() => setView('chat')}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-bold shadow-xl shadow-primary/25 hover:bg-primary/90 transition-colors"
         >
-          <HelpCircle className="w-3.5 h-3.5" /> {t('board.checkpointWaiting')}
-        </button>
-      )}
-      {activeQuiz && !streaming && chatCollapsed && (
-        <button
-          onClick={() => setChatCollapsed(false)}
-          className="hidden lg:inline-flex fixed bottom-5 right-5 z-30 items-center gap-1.5 px-3.5 py-2 rounded-full bg-primary text-primary-foreground text-xs font-bold shadow-lg"
-        >
-          <HelpCircle className="w-3.5 h-3.5" /> {t('board.checkpointWaiting')}
+          {activeQuiz && !streaming
+            ? <><HelpCircle className="w-4 h-4" /> {t('board.checkpointWaiting')}</>
+            : <><MessageCircle className="w-4 h-4" /> {t('board.continueLesson')} <ArrowRight className="w-4 h-4" /></>}
         </button>
       )}
 
