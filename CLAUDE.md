@@ -27,8 +27,10 @@ Read this before making changes.
   phrases and sentence structures. The goal is to be simple, concise, and straight
   to the point — most easily interpretable and suitable for the target audience.
   Use as few words and as simple wording as possible — always less and more
-  precise over more and complex. Applies to everything Claude writes: replies,
-  docs, commit messages, code comments, and UI copy.
+  precise over more and complex. Casual language is fine — the bar is that the
+  writing conveys a nuanced, logical view effectively, not that it sounds
+  formal. Applies to everything Claude writes: replies, docs, commit messages,
+  code comments, and UI copy.
 
 ## Canonical Documents
 
