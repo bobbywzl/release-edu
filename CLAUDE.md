@@ -22,6 +22,12 @@ Read this before making changes.
 - Any user-facing text Bob generates (greetings, fallbacks, errors) must respect the
   student's chosen language — never hard-code English where a Chinese (or other) learner
   could see it. Every UI string gets EN + 中文 keys in `src/lib/i18n.tsx`.
+- **Text production style (user directive, Aug 2026).** In text production, do not
+  use different phrases and sentence structures for the sake of using different
+  phrases and sentence structures. The goal is to be simple, concise, and straight
+  to the point — most easily interpretable and suitable for the target audience.
+  Applies to everything Claude writes: replies, docs, commit messages, code
+  comments, and UI copy.
 
 ## Canonical Documents
 
