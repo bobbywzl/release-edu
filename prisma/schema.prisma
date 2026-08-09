@@ -30,6 +30,7 @@ model User {
   curriculumBlocks CurriculumBlock[]
   userBadges       UserBadge[]
   problemTrees     ProblemTree[]
+  userFeedback     UserFeedback[]
 }
 
 // ── Problem Trees (the core learning object of the Tree pivot) ──
@@ -705,4 +706,26 @@ model AdminEmail {
   email     String   @unique
   addedBy   String?  // email of the admin who added it
   createdAt DateTime @default(now())
+}
+
+// ── User Feedback (the ever-present feedback button) ─────────
+// One row per note a user sends from the floating feedback button — goes
+// straight to the admin panel's Feedback page. Distinct from the legacy
+// MessageFeedback (per-message thumbs). Context fields are captured
+// automatically so a bug report arrives with where-it-happened attached.
+model UserFeedback {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String   // "bug" | "idea" | "other"
+  message   String
+  page      String?  // pathname where it was filed
+  treeId    String?  // plain id (no FK) — a deleted tree just loses the label
+  language  String?  // the app language the user was in
+  userAgent String?
+  status    String   @default("new") // "new" | "seen" | "resolved"
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
 }

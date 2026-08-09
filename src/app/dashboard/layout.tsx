@@ -6,6 +6,7 @@ import { XpToastProvider } from '@/components/xp-toast'
 import { DailyCheckin } from '@/components/daily-checkin'
 import { AccountSlotGate } from '@/components/account-slots'
 import { TransitionScreen } from '@/components/transition-screen'
+import { FeedbackButton } from '@/components/feedback-button'
 
 // Shared transition flags — any code path that owns a redirect-prone window
 // sets one of these so all guards stand down until the transition completes.
@@ -81,6 +82,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {!isChat && <BottomNav />}
         <XpToastProvider />
         <DailyCheckin />
+        {/* Ever-present feedback bubble — every dashboard surface, canvas
+            and workspace included (route-aware placement inside). */}
+        <FeedbackButton />
       </div>
     </AccountSlotGate>
   )

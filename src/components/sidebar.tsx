@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Bot,
   Settings, Zap, ChevronRight,
-  Menu, X, ChevronLeft, LogOut, Award, Pin, PinOff, Sprout, UserPlus } from 'lucide-react'
+  Menu, X, ChevronLeft, LogOut, Award, Pin, PinOff, Sprout, UserPlus, MessageSquareHeart } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { TreeLogo } from '@/components/tree-logo'
 import { useStudentData } from '@/lib/student-data'
@@ -188,6 +188,37 @@ export function Sidebar() {
               </Link>
             )
           })}
+          {/* Feedback — summons the ever-present feedback dialog (it lives
+              in the dashboard layout), styled as a regular nav item so it's
+              discoverable from the nav too, not only the floating bubble. */}
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('tree-edu:feedback'))}
+            title={!expanded ? t('nav.feedback') : undefined}
+            className="w-full"
+          >
+            <motion.div
+              whileHover={{ x: expanded ? 2 : 0 }}
+              className={cn(
+                'flex items-center gap-3 rounded-lg text-sm font-medium transition-colors text-muted-foreground hover:text-foreground hover:bg-accent',
+                expanded ? 'px-3 py-2.5' : 'px-2 py-2.5 justify-center',
+              )}
+            >
+              <MessageSquareHeart className="w-4 h-4 flex-shrink-0" />
+              <AnimatePresence mode="wait">
+                {expanded && (
+                  <motion.span
+                    initial={{ opacity: 0, width: 0 }}
+                    animate={{ opacity: 1, width: 'auto' }}
+                    exit={{ opacity: 0, width: 0 }}
+                    transition={{ duration: 0.12 }}
+                    className="flex-1 whitespace-nowrap overflow-hidden text-left"
+                  >
+                    {t('nav.feedback')}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          </button>
         </nav>
 
         {/* Student info bottom */}
