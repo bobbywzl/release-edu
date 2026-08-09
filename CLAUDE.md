@@ -26,8 +26,9 @@ Read this before making changes.
   use different phrases and sentence structures for the sake of using different
   phrases and sentence structures. The goal is to be simple, concise, and straight
   to the point — most easily interpretable and suitable for the target audience.
-  Applies to everything Claude writes: replies, docs, commit messages, code
-  comments, and UI copy.
+  Use as few words and as simple wording as possible — always less and more
+  precise over more and complex. Applies to everything Claude writes: replies,
+  docs, commit messages, code comments, and UI copy.
 
 ## Canonical Documents
 
