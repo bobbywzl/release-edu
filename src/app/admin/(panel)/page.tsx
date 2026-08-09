@@ -5,7 +5,7 @@ import {
   Shield, Users, MessageSquare, Lightbulb, Search,
   ChevronUp, ChevronDown, Zap, Flame,
   CheckCircle2, XCircle, ArrowUpDown, Activity, DollarSign, Cpu,
-  BarChart3, Trash2, Loader2,
+  BarChart3, Trash2, Loader2, Inbox,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AdminEmailsManager } from './admin-emails-manager'
@@ -253,6 +253,13 @@ export default function AdminDashboardPage() {
           </div>
         </div>
         <div className="flex gap-3">
+          <Link
+            href="/admin/feedback"
+            className="flex items-center gap-2 bg-card hover:bg-accent border border-border text-foreground rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+          >
+            <Inbox className="w-4 h-4" />
+            Feedback
+          </Link>
           <Link
             href="/admin/conversations"
             className="flex items-center gap-2 bg-card hover:bg-accent border border-border text-foreground rounded-lg px-4 py-2 text-sm font-medium transition-colors"

@@ -924,6 +924,20 @@ const EN: Dict = {
   'guide.step4Body': 'Projects are how you learn here. Each one develops real skills and competencies — not test scores. Your portfolio grows as you progress.',
   'guide.seeProjects': 'See Projects',
 
+  // ── Feedback (the ever-present button) ──
+  'nav.feedback': 'Feedback',
+  'feedback.button': 'Feedback',
+  'feedback.title': 'Tell the builders',
+  'feedback.sub': 'Goes straight to the team — every note gets read.',
+  'feedback.catBug': 'Bug',
+  'feedback.catIdea': 'Idea',
+  'feedback.catOther': 'Other',
+  'feedback.placeholder': 'What happened, or what would make Tree EDU better for you?',
+  'feedback.send': 'Send feedback',
+  'feedback.sent': 'Sent — thank you!',
+  'feedback.sentSub': 'Your note is already on the team’s desk.',
+  'feedback.failed': 'Could not send right now — please try again.',
+
   // ── Misc ──
   'common.loading': 'Loading…',
   'common.cancel': 'Cancel',
@@ -1840,6 +1854,20 @@ const ZH: Dict = {
   'guide.step4Title': '在实践中学习',
   'guide.step4Body': '项目是你在这里学习的方式。每个项目都培养真实的技能与能力 —— 而非考试分数。你的作品集会随着进度不断成长。',
   'guide.seeProjects': '查看项目',
+
+  // ── Feedback (the ever-present button) ──
+  'nav.feedback': '反馈',
+  'feedback.button': '反馈',
+  'feedback.title': '告诉开发团队',
+  'feedback.sub': '直达团队 —— 每一条我们都会认真读。',
+  'feedback.catBug': '问题',
+  'feedback.catIdea': '想法',
+  'feedback.catOther': '其他',
+  'feedback.placeholder': '遇到了什么问题，或者你希望 Tree EDU 变得更好的地方？',
+  'feedback.send': '发送反馈',
+  'feedback.sent': '已发送 —— 谢谢你！',
+  'feedback.sentSub': '你的反馈已经送到团队面前。',
+  'feedback.failed': '暂时无法发送 —— 请稍后再试。',
 
   // ── Misc ──
   'common.loading': '加载中…',
