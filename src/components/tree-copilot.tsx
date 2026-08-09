@@ -87,24 +87,85 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
   // frame, both reading the stale `busy` closure — the ref flips instantly,
   // so the second one is dropped instead of posting the message twice.
   const busyRef = useRef(false)
-  // AMBIENT FADE (the copilot must never wall off what's beneath it): any
-  // interaction OUTSIDE the copilot — panning the canvas, scrolling the
-  // list, tapping a node — fades the cloud to a whisper and lets clicks fall
-  // through it. Touching the pill or a fresh turn brings it back.
+  // AMBIENT FADE (the copilot must never wall off what's beneath it) — the
+  // dimming contract, in full:
+  //   LIT (full opacity) while ANY of these hold:
+  //     1. the cursor is inside the copilot's space (pill + chips + cloud,
+  //        plus a small grace margin) — tracked GEOMETRICALLY on pointermove,
+  //        so even the click-through dimmed cloud can be re-entered to wake;
+  //     2. focus is inside it (typing, IME composition, keyboard users);
+  //     3. a turn is in flight (the student is waiting on Bob);
+  //     4. a short grace window after new content lands (reply, ghost chips,
+  //        reshape chips) — it gets noticed before it rests.
+  //   DIMMED (still readable, ~45%, smooth 400ms fade both ways) once the
+  //   cursor leaves and no hold applies. While dimmed the cloud is
+  //   click-through so the canvas/list beneath stays fully workable, and an
+  //   explicit interaction outside (tapping/panning the tree) dims
+  //   immediately and cancels the grace hold — the student chose the tree.
   const [faded, setFaded] = useState(false)
+  const cursorInsideRef = useRef(false)
+  const focusWithinRef = useRef(false)
+  const holdUntilRef = useRef(0)
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const busyLiveRef = useRef(false)
+  useEffect(() => { busyLiveRef.current = busy }, [busy])
+  const reevaluateFade = () => {
+    const lit = busyLiveRef.current || focusWithinRef.current
+      || Date.now() < holdUntilRef.current || cursorInsideRef.current
+    setFaded(!lit)
+  }
+  // Light up now and stay lit for a beat, then re-check the cursor.
+  const holdLit = (ms: number) => {
+    holdUntilRef.current = Date.now() + ms
+    setFaded(false)
+    if (holdTimerRef.current) clearTimeout(holdTimerRef.current)
+    holdTimerRef.current = setTimeout(reevaluateFade, ms + 60)
+  }
+  useEffect(() => () => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current) }, [])
   useEffect(() => {
-    if (open) return
-    const dim = (e: Event) => {
+    if (open) { setFaded(false); return }
+    let raf = 0
+    // Mouse: geometric hover against the overlay's live rect — pointerenter
+    // can't fire on the dimmed cloud (it's pointer-events-none by design).
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType && e.pointerType !== 'mouse') return
+      const x = e.clientX, y = e.clientY
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const el = ambientRef.current
+        if (!el) return
+        const r = el.getBoundingClientRect()
+        const pad = 14 // grace margin: grazing the edge must not flicker
+        const inside = x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
+        if (inside !== cursorInsideRef.current) {
+          cursorInsideRef.current = inside
+          reevaluateFade()
+        }
+      })
+    }
+    // Touch has no hover: a tap on the copilot is the "enter", a tap on the
+    // surface beneath is the "leave" (and cancels the fresh-content hold).
+    const onDown = (e: PointerEvent) => {
       const el = ambientRef.current
-      if (el && e.target instanceof Node && el.contains(e.target)) return
-      setFaded(true)
+      if (el && e.target instanceof Node && el.contains(e.target)) {
+        cursorInsideRef.current = true
+        setFaded(false)
+        return
+      }
+      cursorInsideRef.current = false
+      holdUntilRef.current = 0
+      // If the input keeps focus the blur handler re-evaluates next tick.
+      if (!focusWithinRef.current) setFaded(true)
     }
-    window.addEventListener('pointerdown', dim, true)
-    window.addEventListener('wheel', dim, { capture: true, passive: true })
+    window.addEventListener('pointermove', onMove, { capture: true, passive: true })
+    window.addEventListener('pointerdown', onDown, true)
     return () => {
-      window.removeEventListener('pointerdown', dim, true)
-      window.removeEventListener('wheel', dim, { capture: true } as EventListenerOptions)
+      if (raf) cancelAnimationFrame(raf)
+      window.removeEventListener('pointermove', onMove, { capture: true } as EventListenerOptions)
+      window.removeEventListener('pointerdown', onDown, true)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
   // REACTIVE VIEW ADJUSTER (law): the copilot must never block the tree or a
   // freshly-popped ghost. After every ambient turn/chip the canvas re-fits
@@ -163,6 +224,25 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingIds])
+
+  // AMBIENT STICK-TO-BOTTOM: the cloud is a real scroll area (long replies
+  // scroll instead of being cut off), so the newest content must plant
+  // itself in view on every turn — but never yank the student who scrolled
+  // up mid-read unless a genuinely new message arrived.
+  const cloudRef = useRef<HTMLDivElement>(null)
+  const prevThreadLenRef = useRef(0)
+  useEffect(() => {
+    const grew = thread.length !== prevThreadLenRef.current
+    prevThreadLenRef.current = thread.length
+    if (open) return
+    const el = cloudRef.current
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (grew || nearBottom || busy) {
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread, busy, displayGhosts.length, actions.length, purposeProposal, note, open])
 
   async function send(preset?: string) {
     const msg = (preset ?? input).trim()
@@ -228,6 +308,9 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
     } finally {
       busyRef.current = false
       setBusy(false)
+      // Fresh content just landed (reply, chips, or the failure note) —
+      // keep it lit long enough to be noticed, then the hover rule resumes.
+      holdLit(2500)
     }
   }
 
@@ -371,6 +454,16 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
             exit={{ opacity: 0, y: 14 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
             ref={ambientRef}
+            // Focus inside the copilot (typing, IME, keyboard nav) holds it
+            // lit regardless of where the cursor is; blur re-checks next
+            // tick (blur fires before the new element takes focus).
+            onFocusCapture={() => { focusWithinRef.current = true; setFaded(false) }}
+            onBlurCapture={() => {
+              setTimeout(() => {
+                focusWithinRef.current = !!ambientRef.current?.contains(document.activeElement)
+                reevaluateFade()
+              }, 0)
+            }}
             // Positioning law: anchor with insets/margins ONLY — never a
             // Tailwind translate on a motion element (framer owns `transform`
             // inline while animating y, so a CSS translate gets clobbered and
@@ -379,14 +472,14 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
             className="fixed top-16 left-4 lg:left-20 right-4 z-40 max-w-xl flex flex-col gap-2 pointer-events-none"
           >
             {/* The pill — Spotlight for the tree. Dim invitation until used;
-                dims further while the student works the surface beneath, and
-                waking it (hover/focus) restores the whole cloud. */}
+                rests dimmer while the cursor is away and relights the whole
+                cloud the moment the cursor re-enters the copilot's space
+                (geometric tracking above — hover classes can't wake a
+                pointer-events-none cloud). */}
             <div
-              onPointerEnter={() => setFaded(false)}
-              onFocusCapture={() => setFaded(false)}
               className={cn(
-                'pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5 transition-opacity duration-300',
-                faded && 'opacity-50 hover:opacity-100',
+                'pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-card/60 backdrop-blur-xl shadow-2xl shadow-black/20 pl-4 pr-1.5 py-1.5 transition-opacity duration-[400ms] ease-in-out',
+                faded && 'opacity-60',
               )}
             >
               <Bot className="w-5 h-5 text-primary flex-shrink-0" />
@@ -424,7 +517,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
                 the cloud until the next exchange. */}
             {/* Empty-state suggestion chips — tap to ask, no typing needed. */}
             {thread.length === 0 && !busy && !listMode && (
-              <div className={cn('flex flex-wrap gap-1.5 transition-opacity duration-300', faded ? 'opacity-20 pointer-events-none' : 'pointer-events-auto')}>
+              <div className={cn('flex flex-wrap gap-1.5 transition-opacity duration-[400ms] ease-in-out', faded ? 'opacity-[0.45] pointer-events-none' : 'pointer-events-auto')}>
                 {chipList.map(c => (
                   <button
                     key={c}
@@ -449,9 +542,12 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
                  only the chips inside stay tappable. Shows only THIS visit's
                  exchanges (rehydrated history lives in the full view), and
                  the ✕ hides the cloud until the next exchange. */
-              <div className={cn(
-                'space-y-1.5 max-h-[30vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity duration-300',
-                faded ? 'opacity-20 pointer-events-none' : listMode ? 'pointer-events-none' : 'pointer-events-auto',
+              <div ref={cloudRef} className={cn(
+                // overscroll-contain: reaching the transcript's end must not
+                // chain the wheel into the page; the canvas beneath never
+                // sees wheel events that land on the lit cloud.
+                'space-y-1.5 max-h-[30vh] overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity duration-[400ms] ease-in-out',
+                faded ? 'opacity-[0.45] pointer-events-none' : listMode ? 'pointer-events-none' : 'pointer-events-auto',
               )}>
                 {/* Dismiss the cloud — the pill stays; the conversation is
                     intact behind the expand button. Tappable in list mode too. */}
@@ -472,7 +568,11 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
                       'rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed shadow-lg backdrop-blur-md',
                       m.role === 'user'
                         ? 'max-w-[75%] bg-primary/70 text-primary-foreground rounded-br-sm whitespace-pre-wrap'
-                        : 'max-w-[88%] bg-card/60 border border-border/40 text-foreground/95 rounded-bl-sm [&_p]:my-0.5 max-h-28 overflow-hidden',
+                        // No max-h clamp: a long reply was cut off with no
+                        // way to read the rest — the CLOUD is the scroll
+                        // area (30vh, stick-to-bottom), so full bubbles
+                        // scroll naturally within it.
+                        : 'max-w-[88%] bg-card/60 border border-border/40 text-foreground/95 rounded-bl-sm [&_p]:my-0.5',
                     )}>
                       {m.role === 'user' ? m.content : <MarkdownRenderer content={m.content} imageContext={`${tree.title}${tree.framing ? ` — ${tree.framing}` : ''}`} />}
                     </div>
