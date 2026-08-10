@@ -32,7 +32,7 @@ import {
   recordCheckpointStruggle, type XpAwardLite,
 } from '@/lib/tree-engine'
 import { clampText } from '@/lib/clamp'
-import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, masteryMet, resolveFacetCredit, QUIZ_HISTORY_CAP, type PendingQuiz } from '@/lib/mastery'
+import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, ANSWER_MAX, masteryTarget, masteryFilled, masteryMet, resolveFacetCredit, QUIZ_HISTORY_CAP, type PendingQuiz } from '@/lib/mastery'
 import { evaluateAndAwardBadges, type BadgeDef } from '@/lib/badges'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; nodeId: string }> }) {
@@ -98,6 +98,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   } else if (!String(body.answer ?? '').trim()) {
     return NextResponse.json({ error: 'answer required' }, { status: 400 })
+  } else if (String(body.answer ?? '').trim().length > ANSWER_MAX) {
+    // Never hand the judge a truncated answer: overflow is rejected BEFORE
+    // the claim (the card stays armed), with the reason spelled out — the
+    // composer enforces the same ANSWER_MAX with a live counter.
+    const zhLen = (tree.language ?? body.lang) === 'zh'
+    return NextResponse.json({
+      error: zhLen ? `答案请控制在 ${ANSWER_MAX} 字以内。` : `Keep your answer under ${ANSWER_MAX} characters.`,
+      code: 'answer-too-long',
+    }, { status: 400 })
   }
 
   // ── ATOMIC CLAIM (exactly-once) ──
@@ -210,8 +219,8 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
         inBackground(recordCheckpointStruggle(userId, node.title, feedback, zh ? 'zh' : undefined))
       }
     } else {
-      const answer = String(body.answer ?? '').trim() // non-empty (validated pre-claim)
-      answerText = answer.slice(0, 1200)
+      const answer = String(body.answer ?? '').trim() // non-empty + length-validated pre-claim
+      answerText = answer.slice(0, ANSWER_MAX)
       const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, answer, body.confidence, body.lang)
       correct = j.correct
       feedback = j.feedback
@@ -298,6 +307,20 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
           // learning, and matching struggle/misconception insights close.
           fixedAfterStruggle = tally.facets[r.index].struggled === true
           tally.facets[r.index].done = true
+          // EVIDENCE CONTRACT paper trail: record HOW the facet was proven.
+          // If an artifact checkpoint was ever issued on it but a reasoning
+          // answer is what flipped it, the substitution goes on the record —
+          // verified by reasoning, evidence pending (cleared when the
+          // deferred capture is attached; the Deployed label needs ≥1 real
+          // artifact on the tree).
+          tally.facets[r.index].provenBy = quiz.kind
+          const fname = tally.facets[r.index].name.trim().toLowerCase()
+          const askedArtifact = (tally.artifactAsked ?? []).some(x => x.trim().toLowerCase() === fname)
+          if (quiz.kind === 'artifact') {
+            delete tally.facets[r.index].evidencePending
+          } else if (askedArtifact) {
+            tally.facets[r.index].evidencePending = true
+          }
           tally.untaggedStreak = 0
           coverageAdvanced = true
         } else if (r.kind === 'deepening') {

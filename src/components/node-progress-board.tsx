@@ -81,6 +81,10 @@ interface NodeProgressBoardProps {
   onDeleteHighlight: (id: string) => void
   // Workbench — files
   onPickEvidence: () => void
+  /** "Attach the capture later": opens the evidence picker for a facet
+   *  whose artifact checkpoint was satisfied by reasoning (evidencePending);
+   *  the workspace clears the flag once the upload lands. */
+  onAttachFacetEvidence?: (facet: string) => void
 }
 
 const pct = (n: number, d: number): number | null => (d > 0 ? Math.round((n / d) * 100) : null)
@@ -271,7 +275,13 @@ export function NodeProgressBoard(props: NodeProgressBoardProps) {
             </span>
           )}
         </div>
-        {digest?.headline ? (
+        {filled === 0 && !isVerified ? (
+          /* Zero coverage = zero claimable capability (mastery is verified,
+             never self-declared). Until a checkpoint is proven, the headline
+             is the node's GOAL — guards stale digests written before the
+             state-dependent headline rule too. */
+          <p className="text-[15px] leading-relaxed text-foreground font-medium">🎯 {t('board.goalLead')}{node.summary}</p>
+        ) : digest?.headline ? (
           <p className="text-[15px] leading-relaxed text-foreground font-medium">✨ {digest.headline}</p>
         ) : (
           <p className="text-[13px] text-muted-foreground">{t('board.subtitle')}</p>
@@ -429,6 +439,17 @@ export function NodeProgressBoard(props: NodeProgressBoardProps) {
       )}
 
       {/* ── Syllabus objectives — one card per promised point ── */}
+      {/* Contract not landed yet: say so explicitly. The board must never
+          imply a smaller contract than the lesson will actually hold the
+          learner to (the facet map IS the promise). */}
+      {facets.length === 0 && !isVerified && (
+        <div className="space-y-2">
+          <SectionLabel>{t('board.objectives')}</SectionLabel>
+          <p className="text-[13px] text-muted-foreground rounded-xl border border-dashed border-border px-4 py-3">
+            {t('board.contractPending')}
+          </p>
+        </div>
+      )}
       {facets.length > 0 && (
         <div className="space-y-2">
           <SectionLabel>{t('board.objectives')}</SectionLabel>
@@ -499,6 +520,23 @@ export function NodeProgressBoard(props: NodeProgressBoardProps) {
                         </div>
                       ) : (
                         !f.done && <p className="text-[11px] text-muted-foreground">{t('board.noAttemptsYet')}</p>
+                      )}
+                      {/* EVIDENCE PENDING — this facet's artifact checkpoint
+                          was satisfied by reasoning instead; the permanent
+                          record says so, and the deferred capture is a
+                          first-class task, not a negotiation. */}
+                      {f.done && f.evidencePending && (
+                        <div className="flex items-center gap-2 flex-wrap rounded-lg border border-sky-400/40 bg-sky-500/[0.08] px-2.5 py-1.5">
+                          <span className="text-[10px] font-bold text-sky-300 uppercase tracking-wide">📎 {t('board.evidencePending')}</span>
+                          {props.onAttachFacetEvidence && (
+                            <button
+                              onClick={() => props.onAttachFacetEvidence!(f.name)}
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border border-sky-400/50 text-sky-200 text-[10px] font-semibold px-2 py-0.5 hover:bg-sky-500/20 transition-colors"
+                            >
+                              {t('board.evidenceAttachCta')}
+                            </button>
+                          )}
+                        </div>
                       )}
                       {/* Digest moments that belong to this objective */}
                       {facetMoments.map((m, mi) => (

@@ -29,7 +29,7 @@ export async function PATCH(
   const userId = await getUserId()
   const body = (await req.json().catch(() => ({}))) as {
     action?: string; text?: string; title?: string; summary?: string; newParentId?: string
-    moveTail?: number; intoNodeId?: string; facets?: string[]; childIds?: string[]
+    moveTail?: number; intoNodeId?: string; facets?: string[]; childIds?: string[]; facet?: string
   }
 
   // Ownership check through the tree.
@@ -365,6 +365,32 @@ export async function PATCH(
         where: { id: nodeId },
         data: { notes: (body.text ?? '').slice(0, 20_000) },
       })
+      return NextResponse.json({ ok: true })
+    }
+    case 'facet_evidence': {
+      // "Attach the capture later" — the deferred evidence landed. Only
+      // clears the facet's evidence-pending flag when a REAL uploaded
+      // artifact exists on this node; provenBy stays untouched as the
+      // honest record of how the facet originally verified.
+      const facetName = String(body.facet ?? '').trim().toLowerCase()
+      if (!facetName) return NextResponse.json({ error: 'facet required' }, { status: 400 })
+      const fileCount = await prisma.linkedFile.count({
+        where: { userId, workType: 'tree-node', workId: nodeId },
+      }).catch(() => 0)
+      if (fileCount === 0) return NextResponse.json({ error: 'no evidence attached yet' }, { status: 400 })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const fresh = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
+        if (!fresh) break
+        const qs = parseQuizState(fresh.quizState)
+        const i = (qs.facets ?? []).findIndex(f => f.name.trim().toLowerCase() === facetName)
+        if (i === -1 || !qs.facets![i].evidencePending) return NextResponse.json({ ok: true })
+        delete qs.facets![i].evidencePending
+        const w = await prisma.treeNode.updateMany({
+          where: { id: nodeId, quizState: fresh.quizState },
+          data: { quizState: JSON.stringify(qs) },
+        }).catch(() => null)
+        if (w && w.count > 0) break
+      }
       return NextResponse.json({ ok: true })
     }
     case 'annotate': {
