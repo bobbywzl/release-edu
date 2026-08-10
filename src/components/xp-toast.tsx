@@ -486,8 +486,10 @@ export function XpToastProvider() {
 
   return (
     <>
-      {/* Toast stack — bottom-right */}
-      <div className="fixed bottom-4 right-4 z-[150] flex flex-col gap-2 items-end">
+      {/* Toast stack — bottom-LEFT (clear of the sidebar rail and mobile
+          bottom nav). The bottom-right corner belongs to the ever-present
+          Feedback bubble; sharing it left both unreadable. */}
+      <div className="fixed bottom-20 lg:bottom-4 left-4 lg:left-20 z-[150] flex flex-col gap-2 items-start">
         <AnimatePresence mode="popLayout">
           {toasts.slice(-3).map(event => (
             <XpToastBanner key={event.id} event={event} onDone={() => removeToast(event.id)} />

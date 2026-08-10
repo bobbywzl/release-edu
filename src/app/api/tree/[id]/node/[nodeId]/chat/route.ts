@@ -175,7 +175,11 @@ async function deriveSyllabusContract(apiKey: string, userId: string, nodeId: st
       if (!freshRow) return
       const qs = parseQuizState(freshRow.quizState)
       if (qs.facets && qs.facets.length >= 2) return
-      qs.facets = names.map(n => ({ name: n, done: false }))
+      // MERGE, never overwrite: an existing entry (a sub-2 stub) keeps its
+      // progress; derived names only fill in what's missing.
+      const existing = qs.facets ?? []
+      const have = new Set(existing.map(f => f.name.trim().toLowerCase()))
+      qs.facets = [...existing, ...names.filter(n => !have.has(n.trim().toLowerCase())).map(n => ({ name: n, done: false }))]
       const w = await prisma.treeNode.updateMany({
         where: { id: nodeId, quizState: freshRow.quizState },
         data: { quizState: JSON.stringify(qs) },
@@ -1012,12 +1016,22 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
         // Four CAS attempts, then an unconditional merge write — a card that
         // streamed to the client but never landed server-side 404s on submit,
         // and a lost write here can also collide away a concurrent tally.
+        // EVIDENCE CONTRACT paper trail: an artifact checkpoint issued on a
+        // facet is remembered — if that facet is later proven by reasoning
+        // instead, the tally marks it evidencePending (see the quiz route).
+        const stampArtifactAsked = (qs: ReturnType<typeof parseQuizState>) => {
+          const facet = typeof pendingCard.facet === 'string' ? pendingCard.facet.trim() : ''
+          if (pendingCard.kind !== 'artifact' || !facet) return
+          const have = new Set((qs.artifactAsked ?? []).map(x => x.toLowerCase()))
+          if (!have.has(facet.toLowerCase())) qs.artifactAsked = [...(qs.artifactAsked ?? []), facet.slice(0, 120)].slice(-6)
+        }
         let stored = false
         for (let attempt = 0; attempt < 4 && !stored; attempt++) {
           const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
           const base = freshRow ? freshRow.quizState : node.quizState
           const qs = parseQuizState(base)
           qs.pending = pendingCard
+          stampArtifactAsked(qs)
           const w = await prisma.treeNode.updateMany({
             where: { id: nodeId, quizState: base },
             data: { quizState: JSON.stringify(qs) },
@@ -1030,6 +1044,7 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
             const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
             const qs = parseQuizState(freshRow?.quizState ?? node.quizState)
             qs.pending = pendingCard
+            stampArtifactAsked(qs)
             await prisma.treeNode.update({ where: { id: nodeId }, data: { quizState: JSON.stringify(qs) } })
           } catch (err) {
             console.error('[tree] pending-card merge write failed:', err)

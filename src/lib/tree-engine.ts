@@ -887,7 +887,10 @@ Return ONLY a JSON object, no prose around it:
 {"headline": string, "moments": [{"kind": "learning"|"fixed"|"breakthrough"|"build", "text": string, "facet"?: string}], "misconceptions": [{"label": string, "cleared": boolean, "note"?: string}], "quizRead": string, "nextFocus": string}
 
 Rules:
-- headline: ONE sentence naming the strongest capability the learner has ACTUALLY demonstrated here so far ("You can now ..."); if nothing is proven yet, name the first real step they took.
+- headline: ONE sentence whose FORM is dictated by the verification state above — mastery is verified, never self-declared, so never claim an unproven capability:
+  · nothing proven yet → the node's goal, future-framed ("The goal here: be able to ...");
+  · some facets proven, not verified → "You're proving you can ..." grounded strictly in what the record shows;
+  · VERIFIED → the earned form: "You can now ..." naming the strongest demonstrated capability.
 - moments (up to 5, chronological): the moments real progress happened — a concept that clicked (kind "learning"), a previously-missed point later proven right (kind "fixed"), an insight in the learner's own words (kind "breakthrough"), concrete real-world build/execution progress (kind "build"). Each 1-2 specific sentences, past tense. Add "facet" only when one syllabus point clearly owns the moment (use its exact name).
 - misconceptions (up to 4): wrong beliefs that actually SURFACED here (a wrong checkpoint answer, a confusion Bob corrected). "cleared": true only when the record shows the repair (a later correct answer on that ground / a fixed facet). Write "label" as the belief itself, stated plainly — not a description of the event.
 - quizRead: 1-2 sentences reading the checkpoint record like a coach — the pattern, the trend, calibration (sure-but-wrong), comebacks. Only from the record above; if there are no checkpoints yet, "".
@@ -1617,7 +1620,7 @@ NODE UNDER STUDY: "${node.title}" — ${node.summary}
 ROOT PROBLEM: "${tree.title}"
 CHECKPOINT QUESTION: ${question.slice(0, 600)}
 ${rubric ? `WHAT A TRULY-UNDERSTANDING ANSWER MUST CONTAIN: ${rubric.slice(0, 400)}` : ''}
-STUDENT'S ANSWER${confidence ? ` [stated confidence: ${confidence}]` : ''}: ${answer.slice(0, 1200)}
+STUDENT'S ANSWER${confidence ? ` [stated confidence: ${confidence}]` : ''}: ${answer.slice(0, 4000)}
 
 HYPERCORRECTION RULE: a CONFIDENT-WRONG answer is the most teachable state. If the answer is marked "sure" and scores below 5, your feedback must open by directly, memorably refuting the specific wrong belief (name it, then correct it).
 
@@ -1820,9 +1823,15 @@ export async function markNodeVerified(
       treeCompleted = true
       // THE ROOT ANSWER (the founding paragraph's missing artifact): on
       // completion, assemble the resolution from the verified nodes' digests
-      // — the answer the learner came for, not a status report. Backgrounded;
-      // the tree page offers it (and regeneration) once it lands.
+      // — the answer the learner came for, not a status report. Backgrounded.
+      // The old cached document is STALE-STAMPED first (rootAnswerAt = null,
+      // doc kept): clients read answer-without-timestamp as "reassembling"
+      // instead of serving the pre-completion version as if it were new.
       try {
+        await prisma.problemTree.updateMany({
+          where: { id: treeId, rootAnswer: { not: null } },
+          data: { rootAnswerAt: null },
+        }).catch(() => null)
         const { inBackground } = await import('@/lib/background')
         inBackground(generateRootAnswer(userId, treeId, lang))
       } catch { /* non-critical */ }

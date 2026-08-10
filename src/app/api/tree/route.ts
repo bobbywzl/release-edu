@@ -60,18 +60,17 @@ export async function GET() {
       for (const r of rows) if (r.workId) evidenceWorkIds.add(r.workId)
     }
   } catch { /* non-critical — cards fall back to the Explained label */ }
-  const hasBuildLog = (log: string | null) => {
-    try { const l = JSON.parse(log ?? '[]'); return Array.isArray(l) && l.length > 0 } catch { return false }
-  }
 
   return NextResponse.json({
     trees: trees.map(t => {
       // The root (the problem statement) is not a masterable node — progress
       // counts the branches only, so 100% is actually reachable.
       const real = t.nodes.filter(n => !n.pending && n.parentId !== null)
+      // DEPLOYED requires at least one ATTACHED ARTIFACT (a real capture the
+      // judge or the evidence flow saw) — a build log alone is a chat claim,
+      // and the evidence contract must not be waivable by narration.
       const deployed = t.status === 'completed' && (
-        evidenceWorkIds.has(t.id) ||
-        t.nodes.some(n => evidenceWorkIds.has(n.id) || hasBuildLog(n.progressLog))
+        evidenceWorkIds.has(t.id) || t.nodes.some(n => evidenceWorkIds.has(n.id))
       )
       return {
         id: t.id,

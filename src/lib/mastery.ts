@@ -16,6 +16,10 @@
 
 export const MASTERY_TARGET = 3
 export const MASTERY_MIN_SHORT = 1
+// Max characters for a typed checkpoint answer. One number shared by the
+// composer (maxLength + live counter) and the API (400 on overflow) — the
+// judge must see exactly what the student wrote, never a truncated string.
+export const ANSWER_MAX = 4000
 
 /** One promised sub-point from the node's syllabus — the verification
  *  contract's unit. done flips when a checkpoint probing it is answered
@@ -27,6 +31,14 @@ export interface SyllabusFacet {
    *  done && struggled = "failed first, then fixed" — the checkpoint rail
    *  renders it as repaired learning, distinct from a clean pass. */
   struggled?: boolean
+  /** HOW the facet was proven — the permanent record of the checkpoint kind
+   *  that flipped it (the evidence contract's paper trail). */
+  provenBy?: 'mcq' | 'short' | 'artifact'
+  /** An artifact checkpoint was issued on this facet, but it was ultimately
+   *  proven by REASONING instead (the substitution is pedagogically fine —
+   *  but it goes on the record): verified by reasoning, evidence pending.
+   *  Cleared when the learner attaches the deferred capture. */
+  evidencePending?: boolean
 }
 
 /** How a correct answer's facet tag resolves against the coverage map. */
@@ -233,6 +245,10 @@ export interface QuizState {
    *  has not happened yet — the debt survives tab closes and node switches;
    *  the workspace fires the turn on mount and the chat route clears it. */
   remediationOwed?: string | null
+  /** Facet names that ever had an ARTIFACT checkpoint issued. If such a
+   *  facet is later proven by a non-artifact answer, the substitution goes
+   *  on the permanent record as evidencePending. Capped at 6. */
+  artifactAsked?: string[]
   /** The learner's own JUDGED-CORRECT explanations (short/artifact answers)
    *  — their most identity-invested artifact, kept so the victory turn can
    *  quote it back, the panels can show it, and the portfolio can cite it
@@ -253,7 +269,7 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
   const fallback: QuizState = {
     correct: 0, attempts: 0, combo: 0, shortCorrect: 0,
     sureWrong: 0, sureRight: 0, missed: [], reviewedAt: null, pending: null, facets: null, untaggedStreak: 0,
-    provenAnswers: [],
+    artifactAsked: [], provenAnswers: [],
   }
   if (!raw) return fallback
   try {
@@ -269,7 +285,13 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
     const facets = Array.isArray(p.facets)
       ? p.facets
         .filter(f => f && typeof f.name === 'string' && f.name.trim())
-        .map(f => ({ name: f.name.trim().slice(0, 120), done: f.done === true, struggled: f.struggled === true }))
+        .map(f => ({
+          name: f.name.trim().slice(0, 120),
+          done: f.done === true,
+          struggled: f.struggled === true,
+          ...(f.provenBy === 'mcq' || f.provenBy === 'short' || f.provenBy === 'artifact' ? { provenBy: f.provenBy } : {}),
+          ...(f.evidencePending === true ? { evidencePending: true } : {}),
+        }))
         .slice(0, 6)
       : null
     return {
@@ -290,6 +312,9 @@ export function parseQuizState(raw: string | null | undefined): QuizState {
       untaggedStreak: Math.max(0, p.untaggedStreak ?? 0),
       wrongStreak: Math.max(0, p.wrongStreak ?? 0),
       remediationOwed: typeof p.remediationOwed === 'string' && p.remediationOwed.trim() ? p.remediationOwed.slice(0, 400) : null,
+      artifactAsked: Array.isArray(p.artifactAsked)
+        ? p.artifactAsked.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(x => x.slice(0, 120)).slice(-6)
+        : [],
       provenAnswers: Array.isArray(p.provenAnswers)
         ? p.provenAnswers
           .filter(a => a && typeof a.answer === 'string' && a.answer.trim() && typeof a.at === 'string')

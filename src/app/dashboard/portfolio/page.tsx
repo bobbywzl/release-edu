@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Award, RefreshCw, FileText, ChevronDown, ChevronUp,
-  Sparkles, TrendingUp, Target, BarChart3, Star, Zap, BookOpen, Trophy } from 'lucide-react'
+  Sparkles, TrendingUp, Target, BarChart3, Star, Zap, BookOpen, Trophy, ShieldCheck } from 'lucide-react'
 import { TreeLogo } from '@/components/tree-logo'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -320,6 +320,23 @@ export default function PortfolioPage() {
   const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   const [stale, setStale] = useState(false)
   const [editingStatement, setEditingStatement] = useState(false)
+  // LIVE VERIFICATION NUMBERS — this is the one screen designed to be shown
+  // to someone else, so the stat chips must never contradict the Forest in
+  // the same viewport. Chips compute from the live tree list; only the prose
+  // portrait stays cached.
+  const [liveTrees, setLiveTrees] = useState<Array<{ nodeCount: number; understoodCount: number }> | null>(null)
+  useEffect(() => {
+    fetch('/api/tree', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (Array.isArray(d?.trees)) setLiveTrees(d.trees) })
+      .catch(() => { /* chips fall back to the cached number */ })
+  }, [])
+  const liveStats = (() => {
+    if (!liveTrees) return null
+    const total = liveTrees.reduce((s, tr2) => s + (tr2.nodeCount || 0), 0)
+    const verified = liveTrees.reduce((s, tr2) => s + (tr2.understoodCount || 0), 0)
+    return { total, verified, problems: liveTrees.length, pct: total > 0 ? Math.round((verified / total) * 100) : 0 }
+  })()
 
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isPollingRef = useRef(false)
@@ -658,8 +675,14 @@ export default function PortfolioPage() {
               </Badge>
               <Badge variant="outline" className="gap-1.5">
                 <Target className="w-3 h-3 text-blue-400" />
-                {toNumber(portfolio.metrics?.completionRate)}% completion
+                {liveStats ? liveStats.pct : toNumber(portfolio.metrics?.completionRate)}% completion
               </Badge>
+              {liveStats && (
+                <Badge variant="outline" className="gap-1.5">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                  {liveStats.verified}/{liveStats.total} nodes verified · {liveStats.problems} problems
+                </Badge>
+              )}
               <Badge variant="outline" className="gap-1.5">
                 <Star className="w-3 h-3 text-purple-400" />
                 {sortedSkills.length} skills

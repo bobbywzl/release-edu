@@ -732,7 +732,6 @@ function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified:
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [note, setNote] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -761,7 +760,6 @@ function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified:
       if (res.ok && typeof body.answer === 'string') {
         setAnswer(body.answer)
         setGeneratedAt(body.generatedAt ?? new Date().toISOString())
-        setExpanded(true)
       } else {
         setNote(typeof body.error === 'string' ? body.error : t('tree.actionFailed'))
       }
@@ -781,20 +779,28 @@ function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified:
       </p>
       {answer ? (
         <>
-          <div className={cn('text-[13px] leading-relaxed overflow-hidden relative', !expanded && 'max-h-48')}>
+          <div className="text-[13px] leading-relaxed overflow-hidden relative max-h-48">
             <MarkdownRenderer content={answer} />
-            {!expanded && <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />}
+            <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />
           </div>
-          <button
-            onClick={() => setExpanded(e => !e)}
-            className="w-full rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent py-1.5 transition-colors"
+          {/* The document deserves a real reading surface — the full-width
+              reader route, never an inline scroll in this narrow panel. */}
+          <Link
+            href={`/dashboard/tree/${treeId}/answer`}
+            className="block w-full text-center rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-medium py-1.5 hover:bg-amber-500/25 transition-colors"
           >
-            {expanded ? t('tree.rootAnswerCollapse') : t('tree.rootAnswerExpand')}
-          </button>
+            {t('tree.rootAnswerExpand')}
+          </Link>
           <div className="flex items-center gap-2">
-            {generatedAt && (
+            {generatedAt ? (
               <span className="text-[10px] text-muted-foreground/70 flex-1">
                 {new Date(generatedAt).toLocaleString()}
+              </span>
+            ) : (
+              /* Stale-stamped: the tree just re-completed and the document
+                 is being reassembled — never present the old version as new. */
+              <span className="text-[10px] text-amber-300/90 flex-1 inline-flex items-center gap-1">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" /> {t('tree.answerReassembling')}
               </span>
             )}
             <button
@@ -1176,6 +1182,18 @@ function TreeCanvasInner() {
         </Link>
         <Sprout className="w-4 h-4 text-emerald-400 flex-shrink-0" />
         <h1 title={tree.title} className="text-sm font-bold text-foreground truncate flex-1">{tree.displayTitle || tree.title}</h1>
+        {/* THE ANSWER — once the tree completes, its payoff document is one
+            obvious tap away (full-width reader), never buried behind
+            root-click → expand. A floating twin sits top-center over the
+            canvas on wide screens. */}
+        {tree.status === 'completed' && (
+          <Link
+            href={`/dashboard/tree/${tree.id}/answer`}
+            className="inline-flex items-center gap-1.5 flex-shrink-0 px-3 py-1.5 rounded-full border border-amber-400/50 bg-amber-500/15 text-amber-300 text-xs font-bold hover:bg-amber-500/25 transition-colors"
+          >
+            <FileText className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{t('tree.answerReadyPill')}</span>
+          </Link>
+        )}
         {/* View toggle */}
         <div className="flex rounded-lg border border-border overflow-hidden flex-shrink-0">
           <button
@@ -1268,6 +1286,16 @@ function TreeCanvasInner() {
             </ReactFlow>
             {/* The ground the tree grows from */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-emerald-500/[0.08] to-transparent" />
+            {/* THE ANSWER — floating twin of the header pill, top-center
+                over the completed tree (below the copilot's row). */}
+            {tree.status === 'completed' && (
+              <Link
+                href={`/dashboard/tree/${tree.id}/answer`}
+                className="hidden lg:inline-flex absolute top-8 left-1/2 -translate-x-1/2 z-10 items-center gap-2 rounded-full border border-amber-400/50 bg-card/85 backdrop-blur-md px-4 py-2 text-amber-300 text-xs font-bold shadow-lg shadow-amber-500/10 hover:bg-amber-500/15 transition-colors"
+              >
+                <FileText className="w-4 h-4" /> {t('tree.answerReadyLong')}
+              </Link>
+            )}
             {/* First-run guidance — nothing else on this screen says what a
                 node IS or what to do; disappears once any node is verified. */}
             {tree && tree.nodes.some(n => !n.pending) && tree.nodes.filter(n => !n.pending).every(n => n.status !== 'understood') && (

@@ -30,7 +30,7 @@ import { useHighlights } from '@/lib/highlights'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { emitXpAwards, emitBadgeEvents } from '@/components/xp-toast'
-import { MASTERY_TARGET, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
+import { MASTERY_TARGET, ANSWER_MAX, masteryTarget, masteryFilled, parseQuizState } from '@/lib/mastery'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel, type ChatAttachment } from '@/components/multimodal-input'
 
 interface Msg { id: string; role: 'user' | 'assistant'; content: string }
@@ -205,6 +205,14 @@ function WorkspaceInner() {
   const [facetGrowBusy, setFacetGrowBusy] = useState<string | null>(null)
   // Checkpoint-rail navigation: the message being flashed after a jump.
   const [flashMsgId, setFlashMsgId] = useState<string | null>(null)
+  // Text sent while Bob is streaming — queued VISIBLY (a dashed bubble in
+  // the transcript) and auto-sent the moment the stream ends.
+  const [queued, setQueued] = useState<string | null>(null)
+  // The facet whose "attach the capture later" chip opened the evidence
+  // picker — the next upload clears its evidence-pending flag.
+  const evidenceFacetRef = useRef<string | null>(null)
+  const queuedRef = useRef<string | null>(null)
+  useEffect(() => { queuedRef.current = queued }, [queued])
   // GROW BRANCH (FOUNDATION: the tree grows through the learner's own
   // questions) — null = closed; a string opens the dialog with that seed
   // question ('' = blank). Approved children attach under THIS node.
@@ -426,7 +434,7 @@ function WorkspaceInner() {
     // Staged attachments (and a live mic) belong to ONE node's chat — drop
     // them on switch so evidence can't land in the wrong workspace.
     cancelRecording(); clearAttachments()
-    setNotesDraft(null); setNotesError(false); setView('board'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null)
+    setNotesDraft(null); setNotesError(false); setView('board'); setMessages([]); setSuggestion(null); setActiveQuiz(null); setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setTreeOutcome(null); setGrowSeed(null); setQueued(null)
     initialScrollRef.current = true
     stickToBottomRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -572,6 +580,19 @@ function WorkspaceInner() {
     }
   }
 
+  // Flush the queued message as soon as the stream ends — reading the
+  // freshest attachments/queue at flip time, never a mid-stream closure.
+  useEffect(() => {
+    if (streaming) return
+    const q = queuedRef.current
+    if (!q) return
+    setQueued(null)
+    const atts = attachments
+    clearAttachments()
+    void streamFromBob(q, true, atts)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming])
+
   // ── CUT-OFF RECOVERY ──
   // Continue: Bob resumes exactly where the token cap stopped him (the server
   // [NODE_CONTINUE] turn appends, never repeats). Regenerate: replay the turn
@@ -596,16 +617,21 @@ function WorkspaceInner() {
   }
 
   async function send() {
-    // The streaming check must run BEFORE clearing: a send attempted while
-    // Bob is mid-stream must keep the text and staged media (a cleared voice
-    // note is unrecoverable), not silently destroy them.
-    if (streaming) return
     const text = input.trim()
     if (!text && attachments.length === 0) return
     // Pre-check the server's 8000-char cap so an over-length paste is caught
     // before the round-trip (the server still enforces it as the backstop).
     if (text.length > 8000) {
       setMessages(prev => [...prev, { id: `t-${tempId++}`, role: 'assistant', content: t('workspace.messageTooLong') }])
+      return
+    }
+    // Mid-stream: QUEUE IT VISIBLY and auto-send when Bob finishes. Text
+    // sent while Bob is answering must never be silently withheld (or read
+    // as sent when it wasn't). Staged media stays in the tray and rides the
+    // queued send.
+    if (streaming || streamingRef.current) {
+      setQueued(q => (q ? `${q}\n\n${text}` : text))
+      setInput('')
       return
     }
     const atts = attachments
@@ -770,6 +796,19 @@ function WorkspaceInner() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workType: 'tree-node', workId: nodeId, name: file.name, type: file.type || 'text/plain', content: content.slice(0, 1_500_000) }),
     }).catch(() => {})
+    // Deferred-evidence flow: this upload was started from a facet's
+    // "attach the capture" chip — the artifact is in, clear the facet's
+    // evidence-pending flag on the permanent record.
+    const facetForEvidence = evidenceFacetRef.current
+    evidenceFacetRef.current = null
+    if (facetForEvidence && treeId) {
+      await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'facet_evidence', facet: facetForEvidence }),
+      }).catch(() => {})
+      loadTree()
+    }
     fetch(`/api/files/upload?workType=tree-node&workId=${nodeId}`, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.files) setFiles(d.files) })
@@ -1082,6 +1121,7 @@ function WorkspaceInner() {
               highlights={highlights}
               onDeleteHighlight={deleteHighlight}
               onPickEvidence={() => fileInputRef.current?.click()}
+              onAttachFacetEvidence={facet => { evidenceFacetRef.current = facet; fileInputRef.current?.click() }}
             />
           ) : (
             <div className="h-full flex items-center justify-center">
@@ -1298,14 +1338,34 @@ function WorkspaceInner() {
                   </div>
                 )}
                 {activeQuiz.kind === 'short' && (
-                  <textarea
-                    value={quizText}
-                    onChange={e => setQuizText(e.target.value)}
-                    rows={3}
-                    disabled={quizBusy || !!quizResult}
-                    placeholder={t('workspace.quizShortPlaceholder')}
-                    className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
-                  />
+                  <div>
+                    {/* Own-words composer: auto-grows (a deep multi-part
+                        answer must never be written through a 3-line
+                        window), manual resize allowed, hard maxLength =
+                        ANSWER_MAX with a live counter near the limit — the
+                        server rejects overflow instead of truncating. */}
+                    <textarea
+                      value={quizText}
+                      onChange={e => {
+                        setQuizText(e.target.value.slice(0, ANSWER_MAX))
+                        e.currentTarget.style.height = 'auto'
+                        e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight + 2, Math.round(window.innerHeight * 0.4))}px`
+                      }}
+                      rows={3}
+                      maxLength={ANSWER_MAX}
+                      disabled={quizBusy || !!quizResult}
+                      placeholder={t('workspace.quizShortPlaceholder')}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground resize-y min-h-[80px] focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-60"
+                    />
+                    {quizText.length >= ANSWER_MAX * 0.75 && (
+                      <p className={cn(
+                        'text-[11px] tabular-nums text-right mt-0.5',
+                        quizText.length >= ANSWER_MAX ? 'text-red-400' : 'text-amber-300/90',
+                      )}>
+                        {quizText.length} / {ANSWER_MAX}
+                      </p>
+                    )}
+                  </div>
                 )}
                 {/* EVIDENCE CHECKPOINT — the answer is the real thing: a
                     photo/screenshot/file from the student's device, graded
@@ -1435,6 +1495,26 @@ function WorkspaceInner() {
               </div>
             )}
 
+            {/* QUEUED MESSAGE — text sent while Bob was answering. Shown as
+                a dashed not-yet-sent bubble (never silently withheld);
+                auto-sends when the stream ends, or pull it back to edit. */}
+            {queued && (
+              <div className="flex flex-col items-end">
+                <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                  {queued}
+                  <div className="mt-2 flex items-center gap-2.5 text-[11px] text-muted-foreground border-t border-border/50 pt-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" /> {t('workspace.queuedNote')}
+                    <button
+                      onClick={() => { const q = queued; setQueued(null); setInput(i => (i.trim() ? `${q}\n\n${i}` : q)) }}
+                      className="ml-auto underline hover:text-foreground transition-colors"
+                    >
+                      {t('workspace.queuedEdit')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Tree-level outcome of the verifying answer: the trophy when
                 the whole tree is proven, or the HONEST QUESTION when only the
                 seed is — a 3-node seed is a plan, not a mastered problem. */}
@@ -1456,12 +1536,23 @@ function WorkspaceInner() {
                       <Trophy className="w-3.5 h-3.5" /> {t('workspace.treeCompleteTitle')}
                     </p>
                     <p className="text-sm text-foreground mt-1.5">{t('workspace.treeCompleteBody')}</p>
-                    <button
-                      onClick={() => router.push(`/dashboard/tree/${treeId}`)}
-                      className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.treeCompleteCta')}
-                    </button>
+                    {/* Straight to the payoff DOCUMENT (the full-width
+                        reader), not a dead-end drop on the graph with
+                        nothing selected. */}
+                    <div className="mt-2.5 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => router.push(`/dashboard/tree/${treeId}/answer`)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors"
+                      >
+                        <FileText className="w-3.5 h-3.5" /> {t('tree.rootAnswerExpand')}
+                      </button>
+                      <button
+                        onClick={() => router.push(`/dashboard/tree/${treeId}`)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.treeCompleteCta')}
+                      </button>
+                    </div>
                   </>
                 ) : treeOutcome === 'buildPending' ? (
                   <>
@@ -1626,13 +1717,23 @@ function WorkspaceInner() {
           Hidden until the transcript has loaded: a brand-new node drops
           straight into the chat instead. */}
       {view === 'board' && node && messages.length > 0 && (
+        // A VERIFIED node has nothing left to continue — the pill drops to a
+        // quiet secondary "Chat" (the conversation stays reachable for
+        // review/grinding) unless a checkpoint is actually armed.
         <button
           onClick={() => setView('chat')}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-bold shadow-xl shadow-primary/25 hover:bg-primary/90 transition-colors"
+          className={cn(
+            'fixed bottom-6 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-2 rounded-full text-sm font-bold transition-colors',
+            node.status === 'understood' && !(activeQuiz && !streaming)
+              ? 'px-4 py-2 border border-border bg-card/90 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-accent shadow-lg'
+              : 'px-5 py-2.5 bg-primary text-primary-foreground shadow-xl shadow-primary/25 hover:bg-primary/90',
+          )}
         >
           {activeQuiz && !streaming
             ? <><HelpCircle className="w-4 h-4" /> {t('board.checkpointWaiting')}</>
-            : <><MessageCircle className="w-4 h-4" /> {t('board.continueLesson')} <ArrowRight className="w-4 h-4" /></>}
+            : node.status === 'understood'
+              ? <><MessageCircle className="w-4 h-4" /> {t('board.tabChat')}</>
+              : <><MessageCircle className="w-4 h-4" /> {t('board.continueLesson')} <ArrowRight className="w-4 h-4" /></>}
         </button>
       )}
 
