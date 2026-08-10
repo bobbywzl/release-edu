@@ -32,6 +32,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => clearInterval(interval)
   }, [])
 
+  // Phones land on the mobile app. Dashboard HOME only — deep links
+  // (workspace, canvas, settings) stay reachable — and "Desktop site"
+  // inside /m sets the opt-out.
+  useEffect(() => {
+    if (pathname !== '/dashboard') return
+    try {
+      if (localStorage.getItem('tree-mobile-optout') === '1') return
+      if (window.innerWidth <= 768 && window.matchMedia('(pointer: coarse)').matches) {
+        window.location.replace('/m')
+      }
+    } catch { /* non-critical */ }
+  }, [pathname])
+
   // The legacy setup/onboarding redirect chain is GONE. It bounced users
   // into deleted Release EDU flows whenever the student-data fetch was slow
   // or transiently failed. New users simply see the dashboard's
