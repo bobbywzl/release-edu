@@ -48,12 +48,19 @@ export async function middleware(request: NextRequest) {
   if (isUserApi) {
     const secret = process.env.NEXTAUTH_SECRET
     const slotHeader = request.headers.get('x-account-slot')
-    let authed = false
     if (slotHeader && /^[0-4]$/.test(slotHeader)) {
-      authed = !!(await getToken({ req: request, secret, cookieName: `tree-session-slot-${slotHeader}` }))
+      // A BOUND tab: its claim is honored or the request is unauthenticated —
+      // no fallthrough to the main cookie (main is "the latest login
+      // anywhere"; falling through silently switches the tab's account).
+      // x-account-uid pins the claim to the account the tab believes it is,
+      // so a slot re-occupied by a different login can never answer for it.
+      const tok = await getToken({ req: request, secret, cookieName: `tree-session-slot-${slotHeader}` })
+      const uid = request.headers.get('x-account-uid')
+      const authed = !!tok && (!uid || tok.sub === uid)
+      if (!authed) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.next()
     }
-    if (!authed) authed = !!(await getToken({ req: request, secret }))
-    if (!authed) {
+    if (!(await getToken({ req: request, secret }))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     return NextResponse.next()

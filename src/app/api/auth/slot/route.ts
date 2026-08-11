@@ -96,7 +96,7 @@ export async function GET() {
 }
 
 export async function DELETE(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as { slot?: number }
+  const body = (await req.json().catch(() => ({}))) as { slot?: number; scope?: string }
   const n = Number(body.slot)
   if (!Number.isInteger(n) || n < 0 || n >= MAX_SLOTS) {
     return NextResponse.json({ error: 'Invalid slot' }, { status: 400 })
@@ -104,10 +104,18 @@ export async function DELETE(req: NextRequest) {
   const store = cookies()
   const slotTok = await decodeSessionCookie(readSlotCookieValue(store, n))
   const res = NextResponse.json({ ok: true })
-  clearChunkedCookie(res, slotCookieName(n))
+  // scope 'tab' (slotSignOut): sign out THIS TAB only. Same-account tabs
+  // share one slot cookie, so the cookie must SURVIVE — killing it signed
+  // out every tab of the account (and freed the number for the next login
+  // to adopt, silently switching stale tabs; the uid claim now also guards
+  // that). scope 'account' (default, and all older clients): remove the
+  // account from the browser entirely — slot cookie included.
+  if (body.scope !== 'tab') {
+    clearChunkedCookie(res, slotCookieName(n))
+  }
   // The main cookie is "the latest login" — if it holds the account being
-  // logged out, clear it too so new tabs can't resurrect it. A DIFFERENT
-  // account's main cookie (someone logged in after this tab bound) survives.
+  // logged out, clear it so a bare /login (or a fresh tab) can't silently
+  // resurrect it. A DIFFERENT account's main cookie survives.
   const main = readMainSessionCookie(store)
   const mainTok = await decodeSessionCookie(main?.value)
   if (main && mainTok?.sub && slotTok?.sub && mainTok.sub === slotTok.sub) {
