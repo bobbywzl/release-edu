@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-c0784da9-3936-48a9-864c-422970f399ba/styles.css">
+<script src="_ds/nocturne-c0784da9-3936-48a9-864c-422970f399ba/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#0b0c16;color:#e9e9ed}
+a{color:#9184d9}a:hover{color:#b5abfc}
+::-webkit-scrollbar{width:0;height:0}
+</style>
+</helmet>
+<div style="display:flex;justify-content:center;padding:24px;font-family:var(--font-body)">
+
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+<div style="height:100%;display:flex;flex-direction:column;min-height:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
+
+<sc-if value="{{ inTabs }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;min-height:0">
+  <div style="flex:1;overflow-y:auto;min-height:0">
+
+    <sc-if value="{{ tabToday }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:70px 22px 28px;display:flex;flex-direction:column;gap:22px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+        <div>
+          <p style="margin:0 0 3px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-500)">Sunday, August 10</p>
+          <h4 style="margin:0;font-size:24px;letter-spacing:-.015em">Good evening, Bobby</h4>
+        </div>
+        <div style="position:relative;width:48px;height:48px;flex:none" title="Daily goal">
+          <svg width="48" height="48" style="transform:rotate(-90deg)"><circle cx="24" cy="24" r="20" fill="none" stroke="var(--color-neutral-900)" stroke-width="4.5"></circle><circle cx="24" cy="24" r="20" fill="none" stroke="var(--color-accent)" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="125.7" stroke-dashoffset="{{ ringOffset }}" style="transition:stroke-dashoffset .8s cubic-bezier(.16,1,.3,1)"></circle></svg>
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums">{{ xpToday }}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;font-size:12.5px;color:var(--color-neutral-400)">
+        <span style="display:inline-flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.4-.5-2-1-3-1.1-2.1-.2-4 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.2.4-2.3 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>6-day streak</span>
+        <span style="font-variant-numeric:tabular-nums;white-space:nowrap">{{ xpToday }}/200 XP</span>
+        <sc-if value="{{ goalMet }}" hint-placeholder-val="{{ false }}"><span style="color:var(--color-accent)">Goal met ✓</span></sc-if>
+      </div>
+
+      <div class="card elev-sm" style="gap:10px;padding:16px;cursor:pointer" onClick="{{ openReader }}">
+        <span class="card-kicker">{{ resumeKicker }}</span>
+        <p class="card-title" style="margin:0;font-size:18px;line-height:1.25">Event loop blocking: why one slow handler stalls every request</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+          <div style="flex:1;height:3px;border-radius:99px;background:var(--color-neutral-900);overflow:hidden"><div style="{{ resumeBarCss }}"></div></div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span style="font-size:11.5px;color:var(--color-neutral-400);font-variant-numeric:tabular-nums">{{ nodeProgressLabel }}</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" style="font-size:12.5px;padding:5px 10px" onClick="{{ openReaderListen }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M4 14a8 8 0 0 1 16 0"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>Listen</button>
+            <button class="btn btn-primary" style="font-size:12.5px;padding:5px 12px" onClick="{{ openReader }}">Continue<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="m10 6 6 6-6 6"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <h6 style="margin:0;font-size:11px;color:var(--color-neutral-400)">Bob's plan for today</h6>
+
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--radius-md);background:var(--color-surface);cursor:pointer" onClick="{{ startReview }}">
+          <sc-if value="{{ reviewDone }}" hint-placeholder-val="{{ false }}">
+            <span style="width:26px;height:26px;flex:none;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="m5 13 4 4L19 7"/></svg></span>
+          </sc-if>
+          <sc-if value="{{ reviewNotDone }}" hint-placeholder-val="{{ true }}">
+            <span style="width:26px;height:26px;flex:none;border-radius:50%;border:1px solid var(--color-neutral-700);color:var(--color-neutral-400);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">1</span>
+          </sc-if>
+          <p style="margin:0;flex:1;min-width:0;font-size:14.5px;font-weight:500;line-height:1.3">{{ reviewRowTitle }}</p>
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-600)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:none"><path d="m10 6 6 6-6 6"/></svg>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--radius-md);background:var(--color-surface);cursor:pointer" onClick="{{ openReader }}">
+          <sc-if value="{{ nodeVerified }}" hint-placeholder-val="{{ false }}">
+            <span style="width:26px;height:26px;flex:none;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="m5 13 4 4L19 7"/></svg></span>
+          </sc-if>
+          <sc-if value="{{ nodeNotVerified }}" hint-placeholder-val="{{ true }}">
+            <span style="width:26px;height:26px;flex:none;border-radius:50%;border:1px solid var(--color-neutral-700);color:var(--color-neutral-400);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">2</span>
+          </sc-if>
+          <p style="margin:0;flex:1;min-width:0;font-size:14.5px;font-weight:500;line-height:1.3">{{ nodeRowTitle }}</p>
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-600)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:none"><path d="m10 6 6 6-6 6"/></svg>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--radius-md);background:var(--color-surface);cursor:pointer" onClick="{{ openReaderListen }}">
+          <span style="width:26px;height:26px;flex:none;border-radius:50%;border:1px solid var(--color-neutral-700);color:var(--color-neutral-400);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">3</span>
+          <p style="margin:0;flex:1;min-width:0;font-size:14.5px;font-weight:500;line-height:1.3">Listen to what's next</p>
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-600)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;flex:none"><path d="M4 14a8 8 0 0 1 16 0"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
+        </div>
+      </div>
+
+      <p style="margin:0;padding:12px 14px;border-radius:var(--radius-md);border:1px solid var(--color-divider);font-size:12.5px;line-height:1.5;color:var(--color-neutral-400)">While you were away — Bob refreshed <strong style="font-weight:500;color:var(--color-neutral-200)">Offloading strategies</strong> and queued 1 review for tomorrow.</p>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ tabTrees }}" hint-placeholder-val="{{ false }}">
+    <div style="padding:70px 22px 28px;display:flex;flex-direction:column;gap:18px">
+      <h4 style="margin:0;font-size:24px;letter-spacing:-.015em">Your trees</h4>
+      <div style="display:flex;gap:18px;font-size:12px;color:var(--color-neutral-400)">
+        <span><strong style="font-weight:600;color:var(--color-text);font-size:15px">2</strong> active</span>
+        <span><strong style="font-weight:600;color:var(--color-text);font-size:15px">{{ nodesUnderstood }}</strong>/24 nodes</span>
+        <span><strong style="font-weight:600;color:var(--color-accent);font-size:15px">1</strong> mastered</span>
+      </div>
+      <div class="card" style="gap:9px;padding:15px;cursor:pointer" onClick="{{ openReader }}">
+        <p class="card-title" style="margin:0;font-size:16px;line-height:1.3">Why does my Node.js API slow to a crawl under load?</p>
+        <div style="height:3px;border-radius:99px;background:var(--color-neutral-900);overflow:hidden"><div style="height:100%;border-radius:99px;background:var(--color-accent);width:56%"></div></div>
+        <div class="card-meta" style="justify-content:space-between"><span>{{ treeOneNodes }} nodes</span><span style="color:var(--color-accent)">Continue →</span></div>
+      </div>
+      <div class="card" style="gap:9px;padding:15px">
+        <p class="card-title" style="margin:0;font-size:16px;line-height:1.3">How do lithium-ion batteries degrade — and can I slow it?</p>
+        <div style="height:3px;border-radius:99px;background:var(--color-neutral-900);overflow:hidden"><div style="height:100%;border-radius:99px;background:var(--color-accent);width:29%"></div></div>
+        <div class="card-meta" style="justify-content:space-between"><span>2/7 nodes</span><span class="tag tag-accent" style="font-size:10px;padding:2px 8px">1 review due</span></div>
+      </div>
+      <div class="card" style="gap:6px;padding:15px;border:1px solid var(--color-accent-800);background:transparent">
+        <div style="display:flex;align-items:center;gap:8px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;flex:none"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+          <p class="card-title" style="margin:0;font-size:15px;line-height:1.3;flex:1">How does a neural network actually learn?</p>
+        </div>
+        <div class="card-meta"><span class="tag tag-outline" style="font-size:10px;padding:2px 8px">Mastered</span></div>
+      </div>
+    </div>
+    </sc-if>
+
+  </div>
+
+  <div style="flex:none;display:flex;border-top:1px solid var(--color-divider);background:color-mix(in srgb, var(--color-bg) 92%, black);padding:6px 10px 30px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0;min-height:44px;cursor:pointer" style-hover="opacity:.85" onClick="{{ goToday }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="{{ todayTabIconCss }}"><path d="M12 3v2"/><path d="M18.4 5.6 17 7"/><path d="M5.6 5.6 7 7"/><path d="M7 15a5 5 0 0 1 10 0"/><path d="M3 15h18"/><path d="M6 19h12"/></svg>
+      <span style="{{ todayTabTextCss }}">Today</span>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0;min-height:44px;cursor:pointer" onClick="{{ goTrees }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="{{ treesTabIconCss }}"><path d="M12 22V13"/><path d="M12 13C12 10 9.5 9 8 6.5"/><path d="M12 13C12 10 14.5 9 16 6.5"/><path d="M8 6.5C7.2 5 5.8 4.6 5 3.5"/><path d="M8 6.5C8.4 4.8 8 3.8 8.6 2.4"/><path d="M16 6.5C16.8 5 18.2 4.6 19 3.5"/><path d="M16 6.5C15.6 4.8 16 3.8 15.4 2.4"/><path d="M12 9.5C12 7.6 12 6.4 12 4.8"/></svg>
+      <span style="{{ treesTabTextCss }}">Trees</span>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0;min-height:44px;cursor:pointer;position:relative" onClick="{{ startReview }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="{{ reviewTabIconCss }}"><rect x="4" y="7" width="16" height="13" rx="2"/><path d="M8 4h8"/><path d="m9 13 2 2 4-4"/></svg>
+      <span style="{{ reviewTabTextCss }}">Review</span>
+      <sc-if value="{{ reviewNotDone }}" hint-placeholder-val="{{ true }}"><span style="position:absolute;top:6px;right:26%;width:7px;height:7px;border-radius:50%;background:var(--color-accent)"></span></sc-if>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ inReader }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;min-height:0">
+  <div style="flex:none;display:flex;align-items:center;gap:10px;padding:66px 16px 10px;border-bottom:1px solid var(--color-divider)">
+    <button class="btn btn-ghost" style="padding:4px 6px;font-size:13px" onClick="{{ closeOverlay }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="m14 6-6 6 6 6"/></svg>Today</button>
+    <div style="flex:1"></div>
+    <div class="seg" style="border-radius:99px">
+      <span class="seg-opt" style="{{ segReadCss }}" onClick="{{ modeRead }}">Read</span>
+      <span class="seg-opt" style="{{ segChatCss }}" onClick="{{ modeChat }}">Ask Bob</span>
+    </div>
+    <button class="btn btn-icon btn-secondary" style="width:32px;height:32px;border-radius:99px" onClick="{{ togglePlay }}" title="Listen mode">
+      <sc-if value="{{ notPlaying }}" hint-placeholder-val="{{ true }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M4 14a8 8 0 0 1 16 0"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></sc-if>
+      <sc-if value="{{ playing }}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8" stroke-linecap="round" style="width:14px;height:14px"><path d="M8 5v14"/><path d="M16 5v14"/></svg></sc-if>
+    </button>
+  </div>
+
+  <sc-if value="{{ readerRead }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;overflow-y:auto;min-height:0">
+    <div style="padding:22px 24px 40px;display:flex;flex-direction:column;gap:18px">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <p style="margin:0;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--color-accent)">Node · Node.js API under load</p>
+        <h3 style="margin:0;font-size:23px;line-height:1.18;letter-spacing:-.015em">Event loop blocking: why one slow handler stalls every request</h3>
+        <p style="margin:0;font-size:12px;color:var(--color-neutral-500)">{{ nodeProgressLabel }}</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px;font-size:{{ readerFontSize }}px;line-height:1.72;color:var(--color-neutral-200)">
+        <p style="margin:0">Your API is a restaurant with <strong style="font-weight:600;color:var(--color-text)">one waiter</strong>. He is quick, but there is exactly one of him: every request is a table, and the event loop is his route between them. He never stands still waiting — slow jobs like disk and network go back to the kitchen, and he returns only when a plate is ready.</p>
+        <div style="border-left:2px solid var(--color-accent);padding:2px 0 2px 14px">
+          <p style="margin:0;font-size:{{ calloutFontSize }}px;line-height:1.6;color:var(--color-accent-300)">Blocking is the waiter stopping to <em>cook at the table</em>. Nothing else gets served — not because the restaurant is full, but because the only person who serves is stuck.</p>
+        </div>
+        <p style="margin:0">That is why one slow handler stalls <strong style="font-weight:600;color:var(--color-text)">every</strong> request. Three things cook at the table:</p>
+        <div style="display:flex;flex-direction:column;gap:10px;font-size:{{ listFontSize }}px">
+          <div style="display:flex;gap:10px"><span style="color:var(--color-accent);flex:none">—</span><span>Synchronous I/O: <span style="font-family:ui-monospace,monospace;font-size:.88em;background:var(--color-surface);padding:2px 6px;border-radius:4px">fs.readFileSync</span>, blocking DB drivers</span></div>
+          <div style="display:flex;gap:10px"><span style="color:var(--color-accent);flex:none">—</span><span>Big CPU work on the thread: parsing a 40&nbsp;MB JSON body, image resizing, crypto</span></div>
+          <div style="display:flex;gap:10px"><span style="color:var(--color-accent);flex:none">—</span><span>Tight loops that never yield back to the loop</span></div>
+        </div>
+        <div style="border:1px dashed var(--color-neutral-700);border-radius:var(--radius-md);padding:18px;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-600)" stroke-width="1.5" style="width:20px;height:20px"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 15 4-4 4 4 5-5 5 5"/></svg>
+          <p style="margin:0;font-size:11.5px;color:var(--color-neutral-500);text-align:center">Bob's sketch: the request's path through the loop</p>
+        </div>
+        <p style="margin:0">The fix is never “more cores” — your JavaScript runs on one thread no matter the hardware. The fix is <strong style="font-weight:600;color:var(--color-text)">getting the cooking out of the dining room</strong>: worker threads for CPU work, job queues for anything that can finish later.</p>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="card elev-sm" style="gap:12px;padding:16px">
+        <span class="card-kicker">Checkpoint</span>
+        <p style="margin:0;font-size:15.5px;line-height:1.5;font-weight:500">Your image-resize endpoint's p99 latency explodes under load while p50 looks fine. What do you check first?</p>
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <sc-for list="{{ cpOpts }}" as="o" hint-placeholder-count="4">
+            <div style="{{ o.css }}" onClick="{{ o.pick }}">
+              <span style="{{ o.letterCss }}">{{ o.letter }}</span>
+              <span style="flex:1">{{ o.text }}</span>
+              <sc-if value="{{ o.showTick }}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:none"><path d="m5 13 4 4L19 7"/></svg></sc-if>
+              <sc-if value="{{ o.showCross }}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-500)" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px;flex:none"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ cpUnanswered }}" hint-placeholder-val="{{ true }}">
+          <button class="btn btn-primary btn-block" style="margin-top:0" onClick="{{ submitCp }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>Submit answer</button>
+        </sc-if>
+        <sc-if value="{{ cpVerdictCorrect }}" hint-placeholder-val="{{ false }}">
+          <div style="border-top:1px solid var(--color-divider);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+            <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--color-accent);display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>Correct — node verified · +25 XP</p>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:var(--color-neutral-300)">p99-only pain under load is the blocking signature: most requests are fine until one lands behind the cook. Resize on the loop = cooking at the table.</p>
+            <button class="btn btn-secondary" style="font-size:12.5px;align-self:flex-start" onClick="{{ closeOverlay }}">Back to Today</button>
+          </div>
+        </sc-if>
+        <sc-if value="{{ cpVerdictWrong }}" hint-placeholder-val="{{ false }}">
+          <div style="border-top:1px solid var(--color-divider);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+            <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--color-neutral-300)">Not quite — the p99/p50 split is the clue</p>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:var(--color-neutral-300)">RAM, indexes and keep-alive hurt <em>all</em> percentiles. Only a blocked event loop makes the median fine while the tail explodes — check the synchronous resize first.</p>
+            <button class="btn btn-secondary" style="font-size:12.5px;align-self:flex-start" onClick="{{ retryCp }}">Try again</button>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ readerChat }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column">
+    <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px;flex:1">
+      <sc-for list="{{ chatMsgs }}" as="m" hint-placeholder-count="2">
+        <sc-if value="{{ m.isBob }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;justify-content:flex-start"><div style="max-width:88%;border-radius:14px 14px 14px 4px;padding:11px 14px;background:var(--color-surface);font-size:14.5px;line-height:1.6">{{ m.text }}</div></div>
+        </sc-if>
+        <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;justify-content:flex-end"><div style="max-width:82%;border-radius:14px 14px 4px 14px;padding:11px 14px;background:var(--color-accent-900);border:1px solid var(--color-accent-800);font-size:14.5px;line-height:1.6">{{ m.text }}</div></div>
+        </sc-if>
+      </sc-for>
+      <sc-if value="{{ bobTyping }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;justify-content:flex-start"><div style="border-radius:14px;padding:11px 16px;background:var(--color-surface);font-size:14px;color:var(--color-neutral-500)">Bob is thinking…</div></div>
+      </sc-if>
+    </div>
+  </div>
+  <div style="flex:none;display:flex;align-items:center;gap:8px;padding:10px 16px 34px;border-top:1px solid var(--color-divider)">
+    <input class="input" style="flex:1;border-radius:99px;padding:8px 16px;min-height:40px" placeholder="Ask about this node…" value="{{ draft }}" onChange="{{ setDraft }}" onKeyDown="{{ draftKey }}">
+    <button class="btn btn-icon btn-primary" style="border-radius:99px;width:40px;height:40px;flex:none" onClick="{{ sendChat }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M21.5 2.5 10.6 13.4"/><path d="m21.5 2.5-7 19-3.9-8.1L2.5 9.5z"/></svg></button>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ playing }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:none;display:flex;align-items:center;gap:12px;padding:10px 18px 32px;border-top:1px solid var(--color-divider);background:color-mix(in srgb, var(--color-bg) 90%, black)">
+    <button class="btn btn-icon btn-primary" style="border-radius:99px;width:36px;height:36px;flex:none" onClick="{{ togglePlay }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="width:13px;height:13px"><path d="M8 5v14"/><path d="M16 5v14"/></svg></button>
+    <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+      <p style="margin:0;font-size:11.5px;color:var(--color-neutral-400);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Listening · Event loop blocking — read by Bob</p>
+      <div style="height:3px;border-radius:99px;background:var(--color-neutral-900);overflow:hidden"><div style="{{ listenBarCss }}"></div></div>
+    </div>
+    <span style="font-size:11px;color:var(--color-neutral-500);font-variant-numeric:tabular-nums;flex:none">{{ listenRemaining }}</span>
+    <button class="btn btn-secondary" style="font-size:11.5px;padding:3px 9px;flex:none;border-radius:99px" onClick="{{ cycleSpeed }}">{{ speedLabel }}</button>
+  </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ inReview }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;min-height:0">
+  <div style="flex:none;display:flex;align-items:center;gap:12px;padding:66px 18px 12px">
+    <button class="btn btn-icon btn-secondary" style="width:30px;height:30px;border-radius:99px" onClick="{{ closeOverlay }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="width:13px;height:13px"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></button>
+    <div style="flex:1">
+      <p style="margin:0;font-size:13.5px;font-weight:600">Weak-spot review</p>
+      <p style="margin:0;font-size:11px;color:var(--color-neutral-500)">{{ reviewProgressLabel }}</p>
+    </div>
+    <div style="display:flex;gap:4px">
+      <sc-for list="{{ reviewDots }}" as="d" hint-placeholder-count="3">
+        <span style="{{ d.css }}"></span>
+      </sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ reviewActive }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;overflow-y:auto;min-height:0">
+    <div style="padding:14px 22px 40px;display:flex;flex-direction:column;gap:16px">
+      <p style="margin:0;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--color-accent)">{{ rContext }}</p>
+      <p style="margin:0;font-size:18.5px;line-height:1.45;font-weight:500;text-wrap:pretty">{{ rQuestion }}</p>
+
+      <sc-if value="{{ rIsMcq }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <sc-for list="{{ rOpts }}" as="o" hint-placeholder-count="4">
+            <div style="{{ o.css }}" onClick="{{ o.pick }}">
+              <span style="{{ o.letterCss }}">{{ o.letter }}</span>
+              <span style="flex:1">{{ o.text }}</span>
+              <sc-if value="{{ o.showTick }}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:none"><path d="m5 13 4 4L19 7"/></svg></sc-if>
+              <sc-if value="{{ o.showCross }}" hint-placeholder-val="{{ false }}"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-500)" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px;flex:none"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ rIsShort }}" hint-placeholder-val="{{ false }}">
+        <textarea class="input" style="min-height:110px;font-size:14.5px;line-height:1.6;border-radius:var(--radius-md)" placeholder="Answer in your own words…" value="{{ rText }}" onChange="{{ setRText }}"></textarea>
+      </sc-if>
+
+      <sc-if value="{{ rAsking }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11.5px;color:var(--color-neutral-500)">How sure?</span>
+          <span style="{{ confSureCss }}" onClick="{{ pickSure }}">Sure</span>
+          <span style="{{ confUnsureCss }}" onClick="{{ pickUnsure }}">Not sure</span>
+        </div>
+        <button class="btn btn-primary btn-block" onClick="{{ submitReview }}">Submit answer</button>
+      </sc-if>
+
+      <sc-if value="{{ rVerdictCorrect }}" hint-placeholder-val="{{ false }}">
+        <div class="card elev-sm" style="gap:8px;padding:15px;border-left:2px solid var(--color-accent)">
+          <p style="margin:0;font-size:14px;font-weight:600;color:var(--color-accent);display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="m5 13 4 4L19 7"/></svg>Correct — hole closed · +15 XP</p>
+          <p style="margin:0;font-size:13.5px;line-height:1.6;color:var(--color-neutral-300)">{{ rExplain }}</p>
+        </div>
+        <button class="btn btn-primary btn-block" onClick="{{ nextReview }}">{{ nextLabel }}</button>
+      </sc-if>
+      <sc-if value="{{ rVerdictWrong }}" hint-placeholder-val="{{ false }}">
+        <div class="card elev-sm" style="gap:8px;padding:15px;border-left:2px solid var(--color-neutral-600)">
+          <p style="margin:0;font-size:14px;font-weight:600;color:var(--color-neutral-300);display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>Not quite — remember it this way</p>
+          <p style="margin:0;font-size:13.5px;line-height:1.6;color:var(--color-neutral-300)">{{ rExplain }}</p>
+        </div>
+        <button class="btn btn-primary btn-block" onClick="{{ nextReview }}">{{ nextLabel }}</button>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ reviewComplete }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow-y:auto;min-height:0">
+    <div style="padding:36px 26px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center">
+      <span style="width:64px;height:64px;border-radius:50%;border:1px solid var(--color-accent);display:flex;align-items:center;justify-content:center;box-shadow:0 0 24px color-mix(in srgb, var(--color-accent) 30%, transparent)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px"><path d="m5 13 4 4L19 7"/></svg></span>
+      <div>
+        <h4 style="margin:0 0 4px;font-size:22px">Review complete</h4>
+        <p style="margin:0;font-size:13px;color:var(--color-neutral-400)">Streak safe ✓</p>
+      </div>
+      <div style="display:flex;gap:12px;width:100%">
+        <div class="card" style="flex:1;gap:2px;padding:12px;align-items:center"><p style="margin:0;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums">{{ firstTryLabel }}</p><p style="margin:0;font-size:10.5px;color:var(--color-neutral-500)">first try</p></div>
+        <div class="card" style="flex:1;gap:2px;padding:12px;align-items:center"><p style="margin:0;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--color-accent)">+{{ reviewXp }}</p><p style="margin:0;font-size:10.5px;color:var(--color-neutral-500)">XP earned</p></div>
+        <div class="card" style="flex:1;gap:2px;padding:12px;align-items:center"><p style="margin:0;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums">{{ holesClosed }}</p><p style="margin:0;font-size:10.5px;color:var(--color-neutral-500)">holes closed</p></div>
+      </div>
+      <button class="btn btn-primary" style="min-width:180px" onClick="{{ closeOverlay }}">Back to Today</button>
+    </div>
+  </div>
+  </sc-if>
+</div>
+</sc-if>
+
+</div>
+</x-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 620, &quot;height&quot;: 940}, &quot;screen&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Today&quot;, &quot;Trees&quot;, &quot;Review&quot;, &quot;Review complete&quot;, &quot;Reader&quot;, &quot;Listening&quot;, &quot;Ask Bob&quot;], &quot;default&quot;: &quot;Today&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Page&quot;}, &quot;readerType&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Cozy&quot;, &quot;Comfort&quot;, &quot;Large&quot;], &quot;default&quot;: &quot;Comfort&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Reading&quot;}}">
+class Component extends DCLogic {
+  baseState = {
+    tab: 'today', view: 'tabs', readerMode: 'read',
+    playing: false, listenPct: 22, speedIdx: 0,
+    nodeProven: 2, nodeVerified: false,
+    cpSel: null, cpPhase: 'q',
+    rIdx: 0, rSel: null, rText: '', rConf: null, rPhase: 'q', rResults: [], reviewDone: false,
+    xpToday: 140,
+    chatMsgs: [
+      { isBob: true, isUser: false, text: "You're 2 of 3 on this node — offloading is what's left. Ask me anything, or say “quiz me” when you're ready." },
+    ],
+    draft: '', bobTyping: false,
+  };
+  presets = {
+    'Today': {},
+    'Trees': { tab: 'trees' },
+    'Review': { view: 'review' },
+    'Review complete': { view: 'review', rIdx: 3, rResults: [true, true, false], reviewDone: true, xpToday: 170 },
+    'Reader': { view: 'reader' },
+    'Listening': { view: 'reader', playing: true, listenPct: 38 },
+    'Ask Bob': { view: 'reader', readerMode: 'chat' },
+  };
+  state = { ...this.baseState, ...(this.presets[this.props.screen] ?? {}) };
+  componentDidUpdate(prevProps) {
+    if (prevProps.screen !== this.props.screen) this.setState({ ...this.baseState, ...(this.presets[this.props.screen] ?? {}) });
+  }
+  cards = [
+    { kind: 'mcq', context: 'What actually blocks',
+      q: 'A handler calls fs.readFileSync on a 40 MB file. What happens to the other requests in flight?',
+      opts: ['They continue — Node handles I/O on background threads', 'They all wait — the sync read holds the only JS thread', 'Only requests to the same route wait', 'They fail immediately with a timeout'],
+      correct: 1,
+      expl: 'Async I/O goes to the pool — the *Sync variants never do. The read runs on the one JS thread, so every request queues behind it: the waiter stopped to cook.' },
+    { kind: 'short', context: 'The single-threaded event loop',
+      q: 'In one sentence: why does one blocked handler delay every request, even on a 32-core server?',
+      expl: 'Cores don\u2019t matter — your JavaScript runs on one thread. Node\u2019s concurrency is interleaving, not parallelism: if the thread is busy, nothing else gets scheduled.' },
+    { kind: 'mcq', context: 'SEI layer growth',
+      q: 'Why does holding a battery at 100% charge age it faster?',
+      opts: ['High cell voltage accelerates electrolyte breakdown at the anode', 'Full batteries run hotter on their own', 'The charger keeps pushing current forever', 'Lithium evaporates near the top of charge'],
+      correct: 0,
+      expl: 'At high state-of-charge the anode sits at an extreme potential — the SEI layer grows faster and permanently locks lithium away. Voltage stress, not heat, is the everyday killer.' },
+  ];
+  bobReplies = [
+    'Short version: the loop runs exactly one callback at a time. A "slow request" isn\u2019t slow for itself — it\u2019s slow for everyone behind it. That\u2019s why p99 blows up before p50 moves.',
+    'Good instinct. Try it on your own API: wrap the resize in worker_threads and watch the tail latency collapse — bring me the before/after numbers as evidence.',
+  ];
+  replyIdx = 0;
+  componentDidMount() {
+    this.timer = setInterval(() => {
+      if (this.state.playing) this.setState(s => ({ listenPct: s.listenPct + 0.5 >= 100 ? 0 : s.listenPct + 0.5 }));
+    }, 350);
+  }
+  componentWillUnmount() { clearInterval(this.timer); }
+  optRow(list, sel, phase, correct, pick) {
+    const letters = ['A', 'B', 'C', 'D'];
+    return list.map((text, i) => {
+      const isSel = sel === i, verdict = phase === 'v';
+      const showTick = verdict && i === correct;
+      const showCross = verdict && isSel && i !== correct;
+      return {
+        text, letter: letters[i], showTick, showCross,
+        pick: verdict ? () => {} : () => pick(i),
+        css: {
+          display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '11px 13px',
+          borderRadius: '8px', fontSize: '14px', lineHeight: '1.5', cursor: verdict ? 'default' : 'pointer',
+          border: showTick ? '1px solid var(--color-accent)' : isSel ? '1px solid var(--color-accent)' : '1px solid var(--color-divider)',
+          background: showTick ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : isSel && !verdict ? 'color-mix(in srgb, var(--color-accent) 7%, transparent)' : 'var(--color-surface)',
+          opacity: verdict && !showTick && !isSel ? 0.55 : 1,
+          color: 'var(--color-text)',
+        },
+        letterCss: { fontSize: '11px', fontWeight: 600, marginTop: '3px', color: isSel || showTick ? 'var(--color-accent)' : 'var(--color-neutral-500)', flex: 'none' },
+      };
+    });
+  }
+  renderVals() {
+    const s = this.state;
+    const speeds = [1, 1.2, 1.5, 2];
+    const card = this.cards[Math.min(s.rIdx, 2)];
+    const rVerdict = s.rPhase === 'v';
+    const rCorrect = card.kind === 'short' ? true : s.rSel === card.correct;
+    const goal = 200;
+    const pct = Math.min(1, s.xpToday / goal);
+    const seg = (on) => ({
+      padding: '5px 13px', fontSize: '12.5px', cursor: 'pointer', borderRadius: '99px',
+      color: on ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+      boxShadow: on ? 'inset 0 0 0 1px var(--color-accent)' : 'none',
+    });
+    const conf = (on) => ({
+      padding: '3px 12px', borderRadius: '99px', fontSize: '11.5px', cursor: 'pointer',
+      border: on ? '1px solid var(--color-accent)' : '1px solid var(--color-divider)',
+      color: on ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+    });
+    const tabIcon = (on) => ({ width: '21px', height: '21px', color: on ? 'var(--color-accent)' : 'var(--color-neutral-600)' });
+    const tabText = (on) => ({ fontSize: '10px', fontWeight: 500, letterSpacing: '.02em', color: on ? 'var(--color-accent)' : 'var(--color-neutral-600)' });
+    const readerBase = { Cozy: 15, Comfort: 16.5, Large: 18 }[this.props.readerType ?? 'Comfort'] ?? 16.5;
+    const remaining = Math.max(0, Math.round(262 * (1 - s.listenPct / 100) / speeds[s.speedIdx]));
+    const done = s.rResults.length;
+    const correctCount = s.rResults.filter(Boolean).length;
+    return {
+      inTabs: s.view === 'tabs', inReader: s.view === 'reader', inReview: s.view === 'review',
+      tabToday: s.tab === 'today', tabTrees: s.tab === 'trees',
+      goToday: () => this.setState({ tab: 'today' }),
+      goTrees: () => this.setState({ tab: 'trees' }),
+      todayTabIconCss: tabIcon(s.tab === 'today'), todayTabTextCss: tabText(s.tab === 'today'),
+      treesTabIconCss: tabIcon(s.tab === 'trees'), treesTabTextCss: tabText(s.tab === 'trees'),
+      reviewTabIconCss: tabIcon(false), reviewTabTextCss: tabText(false),
+      xpToday: s.xpToday, goalMet: s.xpToday >= goal,
+      ringOffset: 125.7 * (1 - pct),
+      resumeKicker: s.nodeVerified ? 'Verified ✓' : 'Continue',
+      nodeProgressLabel: s.nodeVerified ? 'Verified ✓' : `${s.nodeProven}/3 proven`,
+      nodeVerified: s.nodeVerified, nodeNotVerified: !s.nodeVerified,
+      resumeBarCss: { height: '100%', borderRadius: '99px', background: 'var(--color-accent)', width: (s.nodeProven / 3 * 100) + '%', transition: 'width .6s ease' },
+      nodeRowTitle: s.nodeVerified ? 'Node verified — nice work' : 'Finish the node — 1 checkpoint left',
+      reviewDone: s.reviewDone, reviewNotDone: !s.reviewDone,
+      reviewRowTitle: s.reviewDone ? 'Weak spots reviewed' : 'Review 3 weak spots',
+      nodesUnderstood: 12 + (s.nodeVerified ? 1 : 0),
+      treeOneNodes: s.nodeVerified ? '6/9' : '5/9',
+      openReader: () => this.setState({ view: 'reader', readerMode: 'read' }),
+      openReaderListen: () => this.setState({ view: 'reader', readerMode: 'read', playing: true }),
+      closeOverlay: () => this.setState({ view: 'tabs', playing: false }),
+      modeRead: () => this.setState({ readerMode: 'read' }),
+      modeChat: () => this.setState({ readerMode: 'chat' }),
+      readerRead: s.readerMode === 'read', readerChat: s.readerMode === 'chat',
+      segReadCss: seg(s.readerMode === 'read'), segChatCss: seg(s.readerMode === 'chat'),
+      playing: s.playing, notPlaying: !s.playing,
+      togglePlay: () => this.setState(p => ({ playing: !p.playing })),
+      listenBarCss: { height: '100%', borderRadius: '99px', background: 'var(--color-accent)', width: s.listenPct + '%' },
+      listenRemaining: `-${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`,
+      speedLabel: speeds[s.speedIdx] + '\u00d7',
+      cycleSpeed: () => this.setState(p => ({ speedIdx: (p.speedIdx + 1) % speeds.length })),
+      readerFontSize: readerBase, calloutFontSize: readerBase + 0.5, listFontSize: readerBase - 1,
+      cpOpts: this.optRow(
+        ['Whether the resize runs synchronously on the event loop', 'Whether the database is missing an index', 'Whether the server needs more RAM', 'Whether HTTP keep-alive is enabled'],
+        s.cpSel, s.cpPhase, 0, (i) => this.setState({ cpSel: i })),
+      cpUnanswered: s.cpPhase === 'q',
+      cpVerdictCorrect: s.cpPhase === 'v' && s.cpSel === 0,
+      cpVerdictWrong: s.cpPhase === 'v' && s.cpSel !== 0,
+      submitCp: () => {
+        if (s.cpSel === null) return;
+        const ok = s.cpSel === 0;
+        this.setState(p => ({ cpPhase: 'v', nodeProven: ok ? 3 : p.nodeProven, nodeVerified: ok || p.nodeVerified, xpToday: ok ? p.xpToday + 25 : p.xpToday }));
+      },
+      retryCp: () => this.setState({ cpPhase: 'q', cpSel: null }),
+      chatMsgs: s.chatMsgs, bobTyping: s.bobTyping, draft: s.draft,
+      setDraft: (e) => this.setState({ draft: e.target.value }),
+      draftKey: (e) => { if (e.key === 'Enter') this.sendChat(); },
+      sendChat: () => this.sendChat(),
+      startReview: () => this.setState({ view: 'review', rIdx: 0, rSel: null, rText: '', rConf: null, rPhase: 'q', rResults: [] }),
+      reviewActive: s.rIdx < 3, reviewComplete: s.rIdx >= 3,
+      reviewProgressLabel: s.rIdx >= 3 ? 'Done' : `${s.rIdx + 1} of 3`,
+      reviewDots: [0, 1, 2].map(i => ({
+        css: {
+          width: '18px', height: '4px', borderRadius: '99px',
+          background: i < done ? (s.rResults[i] ? 'var(--color-accent)' : 'var(--color-neutral-600)') : i === s.rIdx && s.rIdx < 3 ? 'var(--color-neutral-400)' : 'var(--color-neutral-800)',
+        },
+      })),
+      rContext: card.context, rQuestion: card.q,
+      rIsMcq: card.kind === 'mcq', rIsShort: card.kind === 'short',
+      rOpts: card.kind === 'mcq' ? this.optRow(card.opts, s.rSel, s.rPhase, card.correct, (i) => this.setState({ rSel: i })) : [],
+      rText: s.rText, setRText: (e) => this.setState({ rText: e.target.value }),
+      rAsking: !rVerdict, rVerdictCorrect: rVerdict && rCorrect, rVerdictWrong: rVerdict && !rCorrect,
+      rExplain: card.expl,
+      confSureCss: conf(s.rConf === 'sure'), confUnsureCss: conf(s.rConf === 'unsure'),
+      pickSure: () => this.setState({ rConf: 'sure' }), pickUnsure: () => this.setState({ rConf: 'unsure' }),
+      submitReview: () => {
+        if (card.kind === 'mcq' && s.rSel === null) return;
+        if (card.kind === 'short' && !s.rText.trim()) return;
+        const ok = card.kind === 'short' ? true : s.rSel === card.correct;
+        this.setState(p => ({ rPhase: 'v', rResults: [...p.rResults, ok], xpToday: ok ? p.xpToday + 15 : p.xpToday }));
+      },
+      nextReview: () => this.setState(p => ({
+        rIdx: p.rIdx + 1, rSel: null, rText: '', rConf: null, rPhase: 'q',
+        reviewDone: p.rIdx + 1 >= 3 ? true : p.reviewDone,
+      })),
+      nextLabel: s.rIdx >= 2 ? 'Finish' : 'Next',
+      firstTryLabel: `${correctCount}/3`,
+      reviewXp: correctCount * 15,
+      holesClosed: correctCount,
+    };
+  }
+  sendChat() {
+    const text = this.state.draft.trim();
+    if (!text || this.state.bobTyping) return;
+    this.setState(p => ({ chatMsgs: [...p.chatMsgs, { isUser: true, isBob: false, text }], draft: '', bobTyping: true }));
+    setTimeout(() => {
+      const reply = this.bobReplies[this.replyIdx % this.bobReplies.length];
+      this.replyIdx += 1;
+      this.setState(p => ({ chatMsgs: [...p.chatMsgs, { isBob: true, isUser: false, text: reply }], bobTyping: false }));
+    }, 900);
+  }
+}
+</script>
+</body>
+</html>

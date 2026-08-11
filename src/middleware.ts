@@ -34,10 +34,12 @@ export async function middleware(request: NextRequest) {
   // generated-visual cache).
   const isUserApi = /^\/api\/(tree|xp|insights|files|conversations|portfolio|chat|student-profile|student-data|highlights|feedback|teacher|account|user|drive)(\/|$)/.test(pathname)
 
-  // Everything below only guards the app's own gated areas.
+  // Everything below only guards the app's own gated areas. /m is the mobile
+  // app — same login requirement as /dashboard.
   const isDashboard = pathname.startsWith('/dashboard')
+  const isMobileApp = pathname === '/m' || pathname.startsWith('/m/')
   const isAdminArea = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
-  if (!isDashboard && !isAdminArea && !isUserApi) return NextResponse.next()
+  if (!isDashboard && !isMobileApp && !isAdminArea && !isUserApi) return NextResponse.next()
 
   // Authenticated-caller gate for the user-data APIs (a 401, never a redirect
   // — these are fetch() targets). /api/teacher/* additionally enforces admin
