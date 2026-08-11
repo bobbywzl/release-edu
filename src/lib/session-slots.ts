@@ -33,6 +33,12 @@ import { authOptions } from '@/lib/auth'
 
 export const MAX_SLOTS = 5
 export const SLOT_HEADER = 'x-account-slot'
+/** The account the tab BELIEVES its slot holds. Slot numbers get re-occupied
+ *  (sign out X, sign in Y → Y can adopt X's freed slot) — without this check
+ *  a tab still stamping the old number silently BECOMES the new account
+ *  (the "all my tabs switched" entanglement). Like the slot header it grants
+ *  nothing: it only constrains which verified cookie may answer. */
+export const SLOT_UID_HEADER = 'x-account-uid'
 /** Browsers cap a cookie at ~4096 bytes incl. name/attrs — same margin NextAuth uses. */
 export const COOKIE_CHUNK_SIZE = 3800
 /** Upper bound on chunk parts we ever write/clear per cookie name. */
@@ -86,14 +92,28 @@ export function readSlotCookieValue(store: CookieReader, n: number): string | nu
   return readChunkedCookie(store, slotCookieName(n))
 }
 
-/** The tab-bound identity: a valid slot header AND its signed cookie. */
-export async function slotToken(): Promise<JWT | null> {
+/**
+ * The tab's slot CLAIM, resolved.
+ *   claimed=false → the tab presented no slot header (unbound): the caller
+ *   may fall back to the main NextAuth session as before.
+ *   claimed=true  → the tab explicitly claims a per-tab identity: tok is the
+ *   verified token ONLY when the slot cookie exists AND (when the tab also
+ *   sent x-account-uid) holds that exact account. A claim that cannot be
+ *   honored yields tok=null and the caller must treat the request as
+ *   UNAUTHENTICATED — never fall through to the main session, because main
+ *   is "the latest login anywhere in this browser": falling through is
+ *   precisely the silent account-switch this system exists to prevent.
+ */
+export async function resolveSlotClaim(): Promise<{ claimed: boolean; tok: JWT | null }> {
   try {
     const h = headers().get(SLOT_HEADER)
-    if (!h || !/^[0-4]$/.test(h)) return null
-    return await decodeSessionCookie(readSlotCookieValue(cookies(), Number(h)))
+    if (!h || !/^[0-4]$/.test(h)) return { claimed: false, tok: null }
+    const tok = await decodeSessionCookie(readSlotCookieValue(cookies(), Number(h)))
+    const uid = headers().get(SLOT_UID_HEADER)
+    if (tok && uid && tok.sub !== uid) return { claimed: true, tok: null }
+    return { claimed: true, tok }
   } catch {
-    return null
+    return { claimed: false, tok: null }
   }
 }
 
@@ -104,10 +124,14 @@ export interface SlotAwareSession {
 
 /**
  * Drop-in replacement for getServerSession in user-data routes:
- * tab-bound slot identity first, then the regular NextAuth session.
+ * tab-bound slot identity first; the regular NextAuth session ONLY for
+ * unbound tabs. A bound tab whose claim can't be honored (slot gone or now
+ * held by a different account) is unauthenticated — a 401 that logs the tab
+ * out truthfully, instead of a fallthrough that switches it silently.
  */
 export async function getSlotAwareSession(): Promise<SlotAwareSession | null> {
-  const tok = await slotToken()
+  const claim = await resolveSlotClaim()
+  const tok = claim.tok
   if (tok?.sub) {
     return {
       user: {
@@ -120,6 +144,7 @@ export async function getSlotAwareSession(): Promise<SlotAwareSession | null> {
       accessToken: tok.accessToken as string | undefined,
     }
   }
+  if (claim.claimed) return null
   const session = await getServerSession(authOptions)
   if (!session?.user) return null
   return {
