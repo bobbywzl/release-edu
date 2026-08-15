@@ -48,6 +48,32 @@ vertex should have its own simplified description), and should expand as users a
 more questions and give permission for it to be added to the tree, with freedom to
 annotate AI generated comprehensive explainers/ summaries.
 
+## The Goal (law — the master criterion)
+
+> The goal should be to solve your issue and produce complete understanding as
+> simply and efficiently as possible.
+
+Stated verbatim. Everything below serves this sentence; every feature, prompt,
+and learner-facing step is judged against its three parts:
+
+- **Solve your issue** — the session exists to solve the learner's stated
+  problem, not to cover a subject.
+- **Complete understanding** — mastery of everything the solution needs,
+  verified (syllabus coverage), never assumed — and nothing beyond what it
+  needs.
+- **As simply and efficiently as possible** — the shortest honest path there.
+  Whatever doesn't move the learner toward solved-and-understood is waste:
+  unnecessary nodes, repeated teaching, uncalled-for depth, extra steps,
+  bloated context, redundant AI calls.
+
+The laws in this document are its enforcement arms: Goal-Necessity (no
+unnecessary nodes), the Answer Standard (no irrelevant or empty answers),
+Per-Node Redundancy Avoidance (nothing taught twice), Bottleneck-Triggered
+Teaching (no lecturing without a proven gap), syllabus-coverage verification
+(completeness proven, not assumed). Before adding or changing anything, ask:
+does it shorten or strengthen the path from problem to complete understanding?
+If not, it's waste — leave it out.
+
 ## The Tree Model
 
 - **Root** — the learner's specific problem, stated in their own words at session start.
