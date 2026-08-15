@@ -70,6 +70,11 @@ Read this before making changes.
 
 ## The Product Model (what everything serves)
 
+Master criterion — **The Goal** (law, FOUNDATION.md, user-stated verbatim): *solve
+your issue and produce complete understanding as simply and efficiently as
+possible.* Judge every feature, prompt, and step against it; what doesn't serve
+it is waste.
+
 One **ProblemTree** per problem-mastery **session**: root (the problem) → solution
 branches → component/leaf nodes (pain points). Growth is permission-based only:
 learner questions → AI proposals (pending ghost nodes) → explicit approval; plus
@@ -277,6 +282,8 @@ destructive/irreversible data operations still get a confirm first.
 
 ## Quick Sanity Checks Before Shipping
 
+- Does it shorten or strengthen the path from problem to complete understanding
+  (The Goal, FOUNDATION.md)? If it serves nothing on that path, drop it.
 - Does this work for a brand-new user (no profile, no trees, no insights)?
 - Is every new user-facing API under the middleware login gate (no
   unauthenticated path — demo mode no longer exists)?
