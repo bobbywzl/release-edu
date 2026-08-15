@@ -55,70 +55,52 @@ function safeParse<T>(str: string | null | undefined, fallback: T): T {
 }
 
 /**
- * Contextual thinking (Haiku pre-pass) — the fast read of the student's
- * latest message against the exchange, handing Bob an adaptive directive
- * before he speaks. Same ideology as Release EDU's reflection engine:
- * detect the gap, track the wrong-streak, choose re-explain vs Socratic
- * probe vs advance — and stay supportive when the student is struggling.
+ * FOLDED ASSESSMENT (was: a blocking Haiku pre-pass before every turn).
+ * The main teaching call now runs the contextual read itself — confusion
+ * state, analogy bridge, wheel-spinning, discovery, progress — and reports
+ * the structured half on a trailing [[ASSESS]] line, captured server-side
+ * and never shown to the student. One less model call per turn, faster
+ * first token, and the read rides tokens the turn already pays for.
  */
-async function haikuReflect(
-  apiKey: string,
-  nodeTitle: string,
-  nodeId: string,
-  treeSketch: string,
-  recentUserMsgs: string[],
-  lastBobMsg: string,
-  studentMsg: string,
-  prior: Reflection | null,
-  sessionLang?: string,
-): Promise<Reflection | null> {
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default
-    const client = new Anthropic({ apiKey })
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-    const result = await client.messages.create({
-      model: pickBackgroundModel(),
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: `Fast tutoring read. Concept under study: "${nodeTitle}" (node id ${nodeId}).
+interface Assess {
+  streakWrong?: number
+  suggestNode?: { title?: string; summary?: string } | null
+  moveToTitle?: string | null
+  projectProgress?: { text?: string; evidence?: { kind?: string; name?: string; quote?: string } } | null
+  misconception?: string | null
+}
 
-THE FULL TREE (every node has an id-less sketch; titles are unique enough to reference):
-${treeSketch.slice(0, 2500)}
+const ASSESS_MARK = '[[ASSESS]]'
 
-Student's recent questions in this node (oldest first):
-${recentUserMsgs.slice(-4).map(m => `- "${m.slice(0, 200)}"`).join('\n') || '(first question)'}
-Tutor's last message (context): "${lastBobMsg.slice(0, 400)}"
-Student's NEW message: "${studentMsg.slice(0, 900)}"
-Prior wrong-streak: ${prior?.streakWrong ?? 0}
-
-Assess and return ONLY JSON:
-{"state": "one-line read of where the student is right now",
- "gapDepth": "none|partial|deep",
- "streakWrong": <prior+1 if this message shows confusion/an incorrect idea, else 0>,
- "directive": "one sentence: the tutor's best next move (re-explain from a new angle / Socratic probe / concrete example / advance)",
- "suggestNode": <ONLY if the student's questions have REPEATEDLY (2+ times) circled a coherent field/pain-point that NO existing tree node covers AND that is NECESSARY for the root goal (goal-necessity law: if mastering everything else would leave a hole the goal cannot close without this, suggest it; merely related/interesting fields get null): {"title": "2-6 words", "summary": "1-2 plain sentences"} — otherwise null. Be conservative: most turns warrant null.>,
- "moveToTitle": <ONLY if the discussion clearly belongs to a DIFFERENT existing node in the sketch: that node's exact title — otherwise null>,
- "projectProgress": <ONLY if there is CITABLE PROOF of CONCRETE, COMPLETED real-world execution (ran an experiment, wrote code, built something, measured results). ALL of these must hold, otherwise null:
-   (a) the student EXPLICITLY reports having done the thing in their own words, OR an attached artifact's ANALYSIS text explicitly demonstrates the completed work;
-   (b) you cite it VERBATIM: evidence.quote is copied EXACTLY from the student's message (kind "message") or from an attachment's analysis (kind "file", name = that attachment's name) — the system verifies the quote character-for-character and silently drops the entry if it does not match;
-   (c) NEVER infer execution from a file merely existing, being uploaded, or being named — only from what its content/analysis actually demonstrates; and if the tutor's last message judged the shared artifact as NOT demonstrating the work, this is null;
-   (d) intentions, plans, and questions are never progress.
-   Shape: {"text": "one line describing the progress made", "evidence": {"kind": "message"|"file", "name": "<file name when kind=file>", "quote": "<verbatim snippet>"}} — otherwise null>,
- "misconception": <ONLY if the student expressed a SYSTEMATIC wrong belief (stated as their model of how things work, or the same wrong idea as before — NOT a one-off slip): "the wrong belief, stated precisely" — otherwise null>}
-Write the human-readable strings — suggestNode's "title" and "summary", "projectProgress", and "misconception" — entirely in ${sessionLang === 'zh' ? 'Simplified Chinese (简体中文)' : 'English'} (the session language; these are persisted and shown to the student, e.g. an approved suggestNode becomes a real tree node).`,
-      }],
-    })
-    try {
-      const { recordAnthropicUsage } = await import('@/lib/usage')
-      recordAnthropicUsage(result.usage, { userId: null, model: pickBackgroundModel(), feature: 'reflection' })
-    } catch { /* non-critical */ }
-    const text = (result.content[0] as { text?: string })?.text ?? ''
-    const match = text.match(/\{[\s\S]*\}/)
-    return match ? (JSON.parse(match[0]) as Reflection) : null
-  } catch {
-    return null
+/** Strip the [[ASSESS]] line from the model output and parse its JSON
+ *  (balanced-brace scan — the payload may sit before a [[QUIZ]] block). */
+function extractAssess(full: string): [string, Assess | null] {
+  const idx = full.indexOf(ASSESS_MARK)
+  if (idx === -1) return [full, null]
+  const rest = full.slice(idx + ASSESS_MARK.length)
+  const start = rest.indexOf('{')
+  let parsed: Assess | null = null
+  let end = -1
+  if (start !== -1 && start <= 3) {
+    let depth = 0
+    let inStr = false
+    for (let i = start; i < rest.length; i++) {
+      const ch = rest[i]
+      if (inStr) {
+        if (ch === '\\') i++
+        else if (ch === '"') inStr = false
+      } else if (ch === '"') inStr = true
+      else if (ch === '{') depth++
+      else if (ch === '}') { depth--; if (depth === 0) { end = i; break } }
+    }
+    if (end !== -1) {
+      try { parsed = JSON.parse(rest.slice(start, end + 1)) as Assess } catch { parsed = null }
+    }
   }
+  // No trimming before the marker: bytes up to idx may already be streamed,
+  // and shortening them would desync every index the caller holds.
+  const cleaned = `${full.slice(0, idx)}${end !== -1 ? rest.slice(end + 1) : ''}`
+  return [cleaned, parsed]
 }
 
 /**
@@ -152,10 +134,12 @@ async function deriveSyllabusContract(apiKey: string, userId: string, nodeId: st
     if (!row || parseQuizState(row.quizState).facets) return
     const Anthropic = (await import('@anthropic-ai/sdk')).default
     const client = new Anthropic({ apiKey })
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const bgModel = await getBackgroundModel()
     const res = await client.messages.create({
-      model: pickBackgroundModel(),
+      model: bgModel,
       max_tokens: 300,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `This is a tutoring node's opening syllabus. Extract its "What you'll cover" sub-points as short facet names (the bolded terms, 2-6 words each), 3-6 entries, in the SAME language as the text. If the text has no recognizable sub-point roadmap, return an empty list.\n\n${introText.slice(0, 4000)}\n\nReturn ONLY JSON: {"facets":["...","..."]}`,
@@ -163,7 +147,7 @@ async function deriveSyllabusContract(apiKey: string, userId: string, nodeId: st
     })
     try {
       const { recordAnthropicUsage } = await import('@/lib/usage')
-      recordAnthropicUsage(res.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
+      recordAnthropicUsage(res.usage, { userId, model: bgModel, feature: 'tree-verify' })
     } catch { /* non-critical */ }
     const text = (res.content[0] as { text?: string })?.text ?? ''
     const payload = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '{}') as { facets?: unknown[] }
@@ -354,189 +338,59 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ? `${msgText}${msgText ? '\n' : ''}[Shared: ${analyses.map(a => a.name).join(', ')}] ${analyses.map(a => a.analysis).join(' · ').slice(0, 800)}`
     : msgText
 
-  // Contextual thinking (Haiku) before Bob speaks — persisted on the
-  // conversation so the wrong-streak survives across turns. The same pass
-  // watches for DISCOVERY: repeated questions circling an uncovered field
-  // (→ suggest a new node) or a discussion that belongs to another node
-  // (→ recommend moving). Suggestions render as approve buttons in chat.
+  // Adaptive layer, PRE-PASS FOLDED: the blocking Haiku read before every
+  // turn is gone. Bob runs the contextual read HIMSELF this turn (rules in
+  // the STUDENT ASSESSMENT section below) and reports the structured half —
+  // streak, discovery, move, progress, misconception — on a trailing
+  // [[ASSESS]] line, processed after the stream. The server still assembles
+  // the PERSISTED state the read needs: the prior streak, and (in the risk
+  // zone) the analogy anchors and unverified prerequisites the
+  // Insight-Constellation laws teach from.
   let reflectionBlock = ''
   let suggestion: { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string } | null = null
   // XP earned server-side during this turn (perseverance tiers) — appended to
   // the stream as a [[XP]] marker so the client can toast it.
   const turnXp: XpAwardLite[] = []
+  const priorReflection = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
+  // JUDGED ANSWERS ARE GROUND TRUTH: typed-confusion streaks live in the
+  // stored reflection; checkpoint misses in quizState (written by the quiz
+  // route). The live streak is whichever is worse.
+  const priorStreak = Math.max(priorReflection?.streakWrong ?? 0, quizStateNow.wrongStreak ?? 0)
   if (!isTrigger) {
-    const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
-    const lastBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
-    const recentUserMsgs = (conv!.messages ?? []).filter(m => m.role === 'user').map(m => m.content)
-    // turnContent carries the attachment analyses too — a photo/voice note
-    // of the student's real work is exactly what the project-progress and
-    // misconception detectors should see.
-    const r = await haikuReflect(apiKey, node.title, nodeId, sketchTree(tree.nodes), recentUserMsgs, lastBob, turnContent, prior, tree.language ?? lang)
-    if (r) {
-      // JUDGED ANSWERS ARE GROUND TRUTH: the Haiku read only sees typed
-      // messages, so a run of wrong CHECKPOINT answers used to leave
-      // streakWrong at 0 and every escalation threshold unreachable. The
-      // quizState wrong-streak (written by the quiz route) is merged in.
-      r.streakWrong = Math.max(r.streakWrong ?? 0, quizStateNow.wrongStreak ?? 0)
-      // ── ANALOGY BRIDGE (the insight moat at work) ──
-      // 2+ confused turns → stop re-explaining in the abstract. Pull the
-      // student's verified ACQUIRED KNOWLEDGE and strengths from memory and
-      // hand Bob the raw material to teach THIS concept as an explicit
-      // analogy from something they already demonstrably understand.
-      let analogyBlock = ''
-      if (r.streakWrong >= 2) {
-        try {
-          const { getTopInsights } = await import('@/lib/insight-memory')
-          const anchors = await getTopInsights(userId, { limit: 8, types: ['knowledge', 'strength', 'interest'] })
-          if (anchors.length > 0) {
-            analogyBlock = `\n- ANALOGY BRIDGE: the student verifiably knows / is strong in:\n${anchors.map(a => `    · [${a.type}] ${a.content}`).join('\n')}\n  Build your re-explanation as an EXPLICIT analogy: map the structure of one of these onto "${node.title}" step by step ("you already know X — this works the same way, except…"). Anchor the new concept to their existing knowledge, then show where the analogy breaks.`
-          }
-        } catch { /* non-critical */ }
-      }
-
-      // ── PREREQUISITE BACKWARD-CHAIN ──
-      // Research: when a learner keeps failing a skill, the deficit is often
-      // UPSTREAM. Surface unverified ancestors so Bob can check foundations
-      // instead of drilling the same wall.
-      let prereqBlock = ''
-      if (r.streakWrong >= 2) {
-        const ancestors = nodePath(tree.nodes, nodeId).slice(0, -1).filter(a => a.parentId !== null && a.status !== 'understood')
-        if (ancestors.length > 0) {
-          prereqBlock = `\n- PREREQUISITE CHECK: these upstream nodes are NOT yet verified: ${ancestors.map(a => `"${a.title}"`).join(', ')}. The real gap may live there — probe one prerequisite briefly; if confirmed, recommend moving to that node.`
+    let analogyBlock = ''
+    let prereqBlock = ''
+    if (priorStreak >= 1) {
+      // One confused/wrong turn already on record — this turn can cross the
+      // 2-streak threshold, so the bridge material rides along now.
+      try {
+        const { getTopInsights } = await import('@/lib/insight-memory')
+        const anchors = await getTopInsights(userId, { limit: 8, types: ['knowledge', 'strength', 'interest'] })
+        if (anchors.length > 0) {
+          analogyBlock = `\n- ANALOGY BRIDGE (apply at 2+ confused turns): the student verifiably knows / is strong in:\n${anchors.map(a => `    · [${a.type}] ${a.content}`).join('\n')}\n  Build the re-explanation as an EXPLICIT analogy: map the structure of one of these onto "${node.title}" step by step ("you already know X — this works the same way, except…"). Anchor the new concept to their existing knowledge, then show where the analogy breaks.`
         }
+      } catch { /* non-critical */ }
+      const ancestors = nodePath(tree.nodes, nodeId).slice(0, -1).filter(a => a.parentId !== null && a.status !== 'understood')
+      if (ancestors.length > 0) {
+        prereqBlock = `\n- PREREQUISITE CHECK (apply at 2+ confused turns): these upstream nodes are NOT yet verified: ${ancestors.map(a => `"${a.title}"`).join(', ')}. The real gap may live there — probe one prerequisite briefly; if confirmed, recommend moving to that node.`
       }
-
-      // Systematic misconception → direct refutation + remembered.
-      let misconceptionBlock = ''
-      if (r.misconception) {
-        misconceptionBlock = `\n- MISCONCEPTION DETECTED: "${r.misconception}" — this is a systematic wrong model, not a slip. Refute it DIRECTLY and memorably (name the belief, show precisely why it fails, replace it), per repair theory. More examples alone will not fix it.`
-        // Reinforce-over-duplicate: haikuReflect emits a misconception when it
-        // RECURS, so an unconditional create would stack near-identical rows
-        // (the same bug fixed for struggles). Bump the existing one instead.
-        const zhSession = (tree.language ?? lang) === 'zh'
-        void (async () => {
-          try {
-            const { clampText } = await import('@/lib/clamp')
-            // Localized wrapper (no English scaffolding in a 中文 panel); dedup
-            // matches on the BARE title so it works across both quote styles.
-            const tag = zhSession ? `（出现在「${node.title}」）` : `(at "${node.title}")`
-            const existing = await prisma.insight.findFirst({
-              where: {
-                userId, type: 'misconception', status: 'active',
-                OR: [{ content: { contains: `"${node.title}"` } }, { content: { contains: `「${node.title}」` } }],
-              },
-              orderBy: { lastConfirmedAt: 'desc' },
-            })
-            if (existing) {
-              await prisma.insight.update({
-                where: { id: existing.id },
-                data: {
-                  timesObserved: { increment: 1 },
-                  lastConfirmedAt: new Date(),
-                  confidence: Math.min(1, (existing.confidence ?? 0.5) + 0.05),
-                },
-              })
-            } else {
-              await prisma.insight.create({
-                data: {
-                  userId, type: 'misconception',
-                  content: `${clampText(r.misconception!, 250)} ${tag}`,
-                  confidence: 0.7, importance: 0.6, source: 'reflection',
-                  treeId: id,
-                },
-              })
-            }
-          } catch { /* non-critical */ }
-        })()
-      }
-
-      // Perseverance XP: struggle that keeps going is visibly rewarded —
-      // awarded once per tier crossing (2 → 3 → 4 confused turns).
-      if (r.streakWrong >= 2 && r.streakWrong <= 4 && r.streakWrong > (prior?.streakWrong ?? 0)) {
-        try {
-          const { awardXp } = await import('@/lib/xp-engine')
-          const a = await awardXp(userId, 'perseverance', { streakWrong: r.streakWrong })
-          if (a) turnXp.push(a)
-        } catch { /* non-critical */ }
-      }
-
-      // Wheel-spinning: research says ~10 failed opportunities almost never
-      // self-resolve — and it's predictable by 3-5. Change the intervention.
-      const wheelBlock = r.streakWrong >= 4
-        ? `\n- WHEEL-SPINNING: ${r.streakWrong} confused turns. More of the same teaching will NOT work. Switch intervention entirely: a fully worked example start-to-finish, OR a different representation (visual/concrete/numeric), OR the prerequisite route above. Say openly that you're changing approach.`
-        : ''
-
-      if (r.projectProgress) {
-        // ── BUILD-LOG EVIDENCE GATE (trust-critical) ──
-        // The build log feeds the Tree Digest and, through it, the
-        // portfolio — surfaces that certify the learner actually DID
-        // things. A fabricated entry ("set up a profiler on a real
-        // device") is a credibility-destroying failure, so a progress
-        // claim is written ONLY when its citation verifies against this
-        // turn's actual inputs: a verbatim quote from the student's own
-        // message, or from an attachment's Gemini analysis (the vision
-        // judgement) — never from a file merely existing. Everything
-        // else is dropped, loudly.
-        const pp = r.projectProgress
-        const claim = typeof pp === 'object' && pp !== null ? pp : null
-        const text = (claim?.text ?? '').trim()
-        const quote = (claim?.evidence?.quote ?? '').trim()
-        const norm = (s: string) => s.replace(/\s+/g, ' ').toLowerCase()
-        let evidence: { kind: 'message' | 'file'; name?: string; quote: string } | null = null
-        if (text && quote.length >= 8) {
-          if (claim?.evidence?.kind === 'message' && norm(msgText).includes(norm(quote))) {
-            evidence = { kind: 'message', quote: quote.slice(0, 300) }
-          } else if (claim?.evidence?.kind === 'file') {
-            const hit = analyses.find(a => norm(a.analysis).includes(norm(quote)))
-            if (hit) evidence = { kind: 'file', name: hit.name.slice(0, 120), quote: quote.slice(0, 300) }
-          }
-        }
-        if (evidence) {
-          const cited = evidence
-          void (async () => {
-            try {
-              const row = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { progressLog: true } })
-              const log = safeParse<Array<{ text: string; source: string; createdAt: string; evidence?: unknown }>>(row?.progressLog, [])
-              log.push({ text: text.slice(0, 300), source: 'chat', createdAt: new Date().toISOString(), evidence: cited })
-              await prisma.treeNode.update({ where: { id: nodeId }, data: { progressLog: JSON.stringify(log.slice(-30)) } })
-            } catch { /* non-critical */ }
-          })()
-        } else {
-          console.warn('[tree] progress claim DROPPED — citation failed verification', {
-            nodeId, text: text.slice(0, 120), kind: claim?.evidence?.kind ?? (typeof pp === 'string' ? 'legacy-string' : 'missing'),
-          })
-        }
-      }
-      // Discovery cards are gated for timing (simulation findings):
-      // never two turns in a row (card fatigue at peak cognitive load), no
-      // add-cards while the student is confused (competing CTAs mid-struggle),
-      // and no move-cards while this node's mastery tally is in progress
-      // (don't invite abandoning a nearly-done node).
-      const suggestedLastTurn = !!prior?.suggestNode || !!prior?.moveToTitle
-      if (r.suggestNode?.title && !suggestedLastTurn && r.streakWrong < 2) {
-        suggestion = { type: 'add', title: r.suggestNode.title.slice(0, 120), summary: (r.suggestNode.summary ?? '').slice(0, 300) }
-      } else if (r.moveToTitle && !suggestedLastTurn) {
-        const qs = parseQuizState(node.quizState)
-        const midTally = node.status !== 'understood' && qs.correct > 0
-        if (!midTally) {
-          const target = tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase() === r.moveToTitle!.toLowerCase())
-            ?? tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase().includes(r.moveToTitle!.toLowerCase()))
-          if (target) suggestion = { type: 'move', nodeId: target.id, title: target.title }
-        }
-      }
-      reflectionBlock = `
-
-## CONTEXTUAL READ (your silent pre-pass — act on it, never mention it)
-- Where the student is: ${r.state}
-- Gap depth: ${r.gapDepth} · consecutive confused turns: ${r.streakWrong}
-- Your next move: ${r.directive}
-${r.streakWrong >= 2 ? '- SUPPORT FIRST: two or more confused turns in a row — open with genuine, specific reassurance, then teach from a COMPLETELY different angle. No checkpoint question this turn. Struggling IS the learning here.' : ''}
-${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well — a Socratic probe ("why do you think that works?") beats another explanation.' : ''}${analogyBlock}${prereqBlock}${misconceptionBlock}${wheelBlock}`
-      void prisma.conversation.update({
-        where: { id: conv!.id },
-        data: { summary: JSON.stringify({ lastReflection: r }) },
-      }).catch(() => null)
     }
+    const misconceptionBlock = priorReflection?.misconception
+      ? `\n- KNOWN MISCONCEPTION (recorded earlier): "${priorReflection.misconception}" — if this turn shows it again, refute the belief itself DIRECTLY and memorably (repair theory); more examples alone will not fix it.`
+      : ''
+    reflectionBlock = `
+
+## STUDENT ASSESSMENT (silent — run it before answering; never mention it)
+- Consecutive confused/incorrect turns BEFORE this message: ${priorStreak}${(quizStateNow.wrongStreak ?? 0) > 0 ? ` (incl. ${quizStateNow.wrongStreak} judged checkpoint misses)` : ''}
+- Read this message against the exchange first: is the student tracking, partially there, or lost? Confusion or an incorrect idea → the streak becomes ${priorStreak + 1}; a sound message → it resets to 0. Then act:
+- Tracking well → a Socratic probe ("why do you think that works?") beats another explanation.
+- Streak at 2+ → SUPPORT FIRST: open with genuine, specific reassurance, then teach from a COMPLETELY different angle. NO checkpoint question this turn — struggling IS the learning here.
+- Streak at 4+ → WHEEL-SPINNING: more of the same teaching will NOT work. Switch intervention entirely — a fully worked example start-to-finish, a different representation (visual/concrete/numeric), or the prerequisite route — and say openly that you're changing approach.
+- A SYSTEMATIC wrong belief (stated as their model of how things work, or repeated) → refute it DIRECTLY and memorably: name the belief, show precisely why it fails, replace it (repair theory). More examples alone will not fix it.${analogyBlock}${prereqBlock}${misconceptionBlock}
+THEN — after your reply's last prose line, BEFORE any [[QUIZ]] block, emit this on ONE single line (never mention or explain it; it is stripped before the student sees anything):
+[[ASSESS]]{"streakWrong":<${priorStreak + 1} if this message shows confusion/an incorrect idea, else 0>,"suggestNode":<usually null — see DISCOVERY>,"moveToTitle":<usually null — the exact title of the DIFFERENT existing tree node this discussion clearly belongs to>,"projectProgress":<usually null — see PROGRESS>,"misconception":<"the systematic wrong belief, stated precisely" — or null>}
+- DISCOVERY (suggestNode): ONLY when the student's questions have REPEATEDLY (2+ times) circled a coherent field NO existing tree node covers AND the root goal has a hole without it (goal-necessity law; merely related/interesting → null): {"title":"2-6 words","summary":"1-2 plain sentences"}. Be conservative — most turns warrant null.
+- PROGRESS (projectProgress): ONLY for citable, COMPLETED real-world execution (ran an experiment, wrote code, built something, measured results): {"text":"one line","evidence":{"kind":"message"|"file","name":"<file name when kind=file>","quote":"<snippet copied VERBATIM from the student's message or an attachment's analysis>"}}. The system verifies the quote character-for-character and silently drops mismatches. Intentions, plans, and questions are never progress; a file merely existing is never progress.
+- suggestNode / projectProgress / misconception strings follow the session language — they are persisted and shown to the student.`
   } else if (isRemediate) {
     // ── THE ADAPTIVE LAYER, ON THE TURN IT EXISTS FOR (deep-audit §5) ──
     // The remediation turn used to run with reflectionBlock = '' — no
@@ -545,8 +399,7 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
     // having TYPED something. A trigger turn has no utterance, so it is
     // assembled from PERSISTED state instead: the judged wrong-streak and
     // the last stored reflection.
-    const prior = safeParse<{ lastReflection?: Reflection }>(conv!.summary, {}).lastReflection ?? null
-    const wrong = Math.max(prior?.streakWrong ?? 0, quizStateNow.wrongStreak ?? 0)
+    const wrong = priorStreak
     let analogyBlock = ''
     if (wrong >= 2) {
       try {
@@ -564,8 +417,8 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
         prereqBlock = `\n- PREREQUISITE CHECK: these upstream nodes are NOT yet verified: ${ancestors.map(a => `"${a.title}"`).join(', ')}. The real gap may live there — after teaching this gap, briefly check one prerequisite; if confirmed, recommend moving to that node.`
       }
     }
-    const misconceptionBlock = prior?.misconception
-      ? `\n- KNOWN MISCONCEPTION (recorded earlier): "${prior.misconception}" — if this miss traces to it, refute the belief itself DIRECTLY and memorably (repair theory); more examples alone will not fix it.`
+    const misconceptionBlock = priorReflection?.misconception
+      ? `\n- KNOWN MISCONCEPTION (recorded earlier): "${priorReflection.misconception}" — if this miss traces to it, refute the belief itself DIRECTLY and memorably (repair theory); more examples alone will not fix it.`
       : ''
     const wheelBlock = wrong >= 4
       ? `\n- WHEEL-SPINNING: ${wrong} consecutive missed checkpoints. More of the same teaching will NOT work. Switch intervention entirely: a fully worked example start-to-finish, OR a different representation (visual/concrete/numeric), OR the prerequisite route above. Say openly that you're changing approach.`
@@ -693,27 +546,27 @@ ${r.gapDepth === 'none' && r.streakWrong === 0 ? '- The student is tracking well
   // ride into every workspace turn.
   const groundingBlock = await studentGrounding(userId)
 
-  // PROMPT CACHING: the per-node-stable prefix (tree sketch, node identity,
-  // explainer, the teaching laws) is one cache block — identical across every
-  // turn of a node session until the tree itself changes — and the per-turn
-  // material (files, coverage, mastery state, triggers, reflection) rides in
-  // a second uncached block. This drops the dominant repeated input cost ~10×.
-  const systemStatic = `You are Bob, the student's expert mentor inside the Tree EDU problem-mastery tree.
-
-## THE TREE (the student's whole learning world right now)
-PROBLEM (root): "${tree.title}"
-${tree.framing ? `FRAMING: ${tree.framing}` : ''}
-FULL TREE:
-${sketchTree(tree.nodes)}
+  // ── PROMPT CACHING LAYOUT (prefix rule: stable first, volatile last) ──
+  // Block 1 (cached): everything stable for the whole node session —
+  // identity, node position, explainer, every teaching law, the static
+  // checkpoint/visual rules, session directives. Block 2 (its own breakpoint,
+  // AFTER block 1, so a status flip anywhere on the tree busts only the
+  // sketch, never the big block): the full tree sketch. Per-turn material —
+  // files, coverage, mastery state, trigger scripts, assessment — rides
+  // INSIDE the final user message, AFTER the cached history, so history
+  // prefixes keep hitting too (a chunk-anchored window keeps them stable).
+  const systemCore = `You are Bob, the student's expert mentor inside the Tree EDU problem-mastery tree.
 
 ## WHERE YOU ARE
-The student is working on the node: "${node.title}" — ${node.summary}
+PROBLEM (root): "${tree.title}"
+${tree.framing ? `FRAMING: ${tree.framing}\n` : ''}The student is working on the node: "${node.title}" — ${node.summary}
 Path from root: ${path.map(n => `"${n.title}"`).join(' → ')}
+(The FULL TREE sketch is the next system block; the live per-turn material — the student's files, what the branch below already covered, the LIVE MASTERY STATE, and this turn's script — arrives inside the latest user message as TURN CONTEXT.)
 ${node.explainer ? `\nThe node's explainer (already shown to the student):\n${node.explainer.slice(0, 2500)}` : ''}
 
 ## HOW TO TEACH HERE
 - Everything you say serves ONE goal: this student genuinely understanding THIS node in service of the root problem.
-- NO REDUNDANCY: when the ALREADY COVERED section (later in this prompt) shows the branch below taught something this node touches, build FROM it by reference ("as you saw at '<node>'…") — never re-explain it. Teach only what is NEW at this node.
+- NO REDUNDANCY: when the ALREADY COVERED section (in the TURN CONTEXT) shows the branch below taught something this node touches, build FROM it by reference ("as you saw at '<node>'…") — never re-explain it. Teach only what is NEW at this node.
 - Dense, precise, zero praise-padding. Concrete examples over abstractions.
 - **Be Socratic where it earns its place**: when the student is tracking well, probe ("why would that break if…?") instead of explaining more. When they're lost, teach directly — Socratic questioning of a confused student is theatre, not teaching.
 - Connect answers back to the root problem and this node's branch whenever natural.
@@ -728,23 +581,11 @@ ${ANSWER_STANDARD}
 - Body text in full sentences and short paragraphs; **bold** the key terms where they're defined.
 - Use numbered/bulleted lists for sequences and enumerations; > blockquotes for the one takeaway worth remembering; KaTeX ($...$) for any math.
 - Short conversational replies (a quick answer, a Socratic probe) need no headers — never decorate a one-liner.
-- If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: use the "Grow branch" button at the top of this workspace — or the "Grow this into a branch" action under any message — with that question, so the tree can propose new child nodes here for their approval. The tree only grows with their permission; do not pretend to add nodes yourself.`
+- If their question opens genuinely NEW ground that this node cannot teach (a distinct concept deserving its own branch), answer briefly, then tell them: use the "Grow branch" button at the top of this workspace — or the "Grow this into a branch" action under any message — with that question, so the tree can propose new child nodes here for their approval. The tree only grows with their permission; do not pretend to add nodes yourself.
 
-  const systemDynamic = `${filesBlock}
-${lockerBlock}
-${coverageBlock}
-${groundingBlock}
-${attachBlock}
-
-## CHECKPOINT QUESTIONS (mastery is proven HERE in chat — there is no separate test)
-${node.status === 'understood'
-  ? '- This node is already VERIFIED. Checkpoints are optional deepening now (exception: on a RETENTION REVIEW turn you MUST ask one) — focus on connections onward to the root problem.'
-  : `- Mastery state: ${masteryFilled(quizStateNow)}/${masteryTarget(quizStateNow)} ${quizStateNow.facets ? 'syllabus facets proven' : 'checkpoint answers correct'} so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met' : ' — own-words requirement met'}. The node verifies automatically when ${quizStateNow.facets ? 'EVERY facet in the coverage map below is proven by a correct checkpoint' : `${MASTERY_TARGET} answers are correct`} (incl. ${MASTERY_MIN_SHORT} own-words short answer), and the student is told in the feedback.`}
-${node.status !== 'understood' && quizStateNow.facets ? `- SYLLABUS COVERAGE MAP (the node's VERIFICATION CONTRACT — the sub-points this node's syllabus promised): ${quizStateNow.facets.map(f => `${f.done ? '✅' : '⬜'} "${f.name}"`).join(' · ')}
-- EVERY checkpoint must include "facet":"<exact name from the map>" naming the ⬜ UNDONE facet it probes. Target undone facets — a correct answer proves that facet; questions on already-✅ facets never advance verification. Every promised facet must be probed and proven — none may be skipped, and verification is COVERAGE, not a count. If you omit the tag or misname the facet, that correct answer CANNOT advance coverage — copy the facet name EXACTLY from the map.${(quizStateNow.untaggedStreak ?? 0) >= 1 ? `
-- TAGGING ALERT: the student's last ${quizStateNow.untaggedStreak} correct answer(s) carried a missing or unmatchable "facet" tag and could NOT advance coverage — there is NO automatic credit, ever. On your next checkpoint, copy one ⬜ facet name from the map CHARACTER-FOR-CHARACTER into the "facet" field.` : ''}` : ''}
-- VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the mastery state above says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
-- THE MASTERY STATE ABOVE IS THE ONLY TRUTH about progress. If the conversation's visible ✅ count, the student's belief, or your own memory disagrees with it, the mastery state WINS: say plainly how many answers are recorded (e.g. "the system has 2 of 3 recorded — one more correct answer verifies it") and simply continue with the next checkpoint. NEVER speculate about display bugs, sync issues, or tell the student to "trust the header over me" / refresh the page — the header and this state are the same number, and inventing a discrepancy story erodes the exact trust verification exists to build.
+## CHECKPOINT QUESTIONS — THE RULES (mastery is proven HERE in chat — there is no separate test; the LIVE MASTERY STATE in each turn's TURN CONTEXT is the live tally)
+- VERIFICATION INTEGRITY (trust-critical): you NEVER declare this node verified — only the checkpoint system announces verification, in the feedback after a passing answer. Until the LIVE MASTERY STATE says otherwise, the node is NOT verified, no matter how well the conversation is going. The three pips in the workspace header always display this node's correct-checkpoint tally (e.g. 2/3) — if the student asks about them, say exactly that; never invent UI meanings.
+- THE LIVE MASTERY STATE IS THE ONLY TRUTH about progress. If the conversation's visible ✅ count, the student's belief, or your own memory disagrees with it, the mastery state WINS: say plainly how many answers are recorded (e.g. "the system has 2 of 3 recorded — one more correct answer verifies it") and simply continue with the next checkpoint. NEVER speculate about display bugs, sync issues, or tell the student to "trust the header over me" / refresh the page — the header and this state are the same number, and inventing a discrepancy story erodes the exact trust verification exists to build.
 - To check understanding — after teaching a chunk, when the student sounds ready, or when they ask to be quizzed — end your message with EXACTLY ONE checkpoint block as the very last line:
 [[QUIZ]]{"kind":"mcq","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"1-2 sentences: the science of why the right answer is right and why the tempting distractor fails","hint":"a nudge that narrows the student's thinking WITHOUT revealing or eliminating the answer","facet":"the exact coverage-map facet this probes (when a map exists)"}
 or
@@ -753,18 +594,17 @@ or
 [[QUIZ]]{"kind":"artifact","question":"name the EXACT real-world evidence to produce and attach — the artifact itself, never prose about it (e.g. 'Attach your actual 10-minute profiler capture' / 'A photo of the wired relay with the pump running')","rubric":"what the attached artifact must visibly SHOW to prove this facet (never shown to the student)","hint":"where or how to capture it, without doing it for them","facet":"the exact coverage-map facet this probes (when a map exists)"}
 
 ARTIFACT CHECKPOINTS — when a facet is proven by DOING (a measurement taken, a circuit wired, code run and its output, a capture recorded), prefer kind "artifact": the card lets the student attach a photo/screenshot/file from their device, and the judge grades what the artifact actually shows — their build, not their wording. On a session whose target level is advanced/professional, make at least ONE checkpoint on this node an artifact checkpoint whenever any facet is genuinely doable at the student's stage. Never demand an artifact the student cannot plausibly produce yet, and never use kind "artifact" for purely conceptual facets.
+- When a SYLLABUS COVERAGE MAP rides in the LIVE MASTERY STATE, EVERY checkpoint must include "facet":"<exact name from the map>" naming the ⬜ UNDONE facet it probes. Target undone facets — a correct answer proves that facet; questions on already-✅ facets never advance verification. Every promised facet must be probed and proven — none may be skipped, and verification is COVERAGE, not a count. If you omit the tag or misname the facet, that correct answer CANNOT advance coverage — copy the facet name EXACTLY from the map.
 - The "hint" ships to the card's Hint button — write it so a stuck student gets un-stuck but still has to do the understanding themselves (point at the mechanism to consider, never at the answer).
 - NEVER paste a checkpoint's question or options as plain chat text — plain text cannot be answered, graded, or counted toward mastery. If the student says they can't see the card or its options, do NOT work around it in prose: tell them briefly that a fresh interactive card is attached right below your message (the system attaches it automatically on such turns).
 - Every checkpoint obeys the Differentiator Principle: transfer to an UNSEEN context, a why/what-if, or an edge case where the memorized rule breaks — never answerable by reciting the explainer. MCQ distractors are the tempting misconceptions, not filler.
-- SCOPE — test ONLY what THIS node ("${node.title}") teaches, using its explainer and this conversation as the whole-node content. Use the FULL TREE above to see the BOUNDARIES: concepts owned by OTHER nodes (siblings, children, other branches) are out of scope, and a correct answer here must NEVER require the student to explain another node's mechanism. Example of the trap to avoid: if this node is about the genetic/variety ceiling, do NOT make passing depend on naming a soil/watering/sunlight mechanism — that is a different node's material; ask instead about THIS node's own claim (e.g. why care alone can't beat the variety's ceiling). Cover the WHOLE of this node's material, and stay strictly inside it.
-- "short" (own-words) carries the mastery weight — use it for the WHY/transfer probes${node.status !== 'understood' && quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' (the student still needs one)' : ''}; "mcq" for quick discrimination checks. Vary the formats.
-- At most one checkpoint per message. Never in your opening hook. Skip it on turns where the contextual read says SUPPORT FIRST — and NEVER staple a checkpoint to a turn where the student just expressed confusion or you are clarifying a misunderstanding they voiced. Quizzing a lost student converts live confusion into a recorded failure; teach first, checkpoint only once they've re-explained or responded confidently (saying "no quiz yet — tell me back in your own words first" is itself good teaching).
+- SCOPE — test ONLY what THIS node ("${node.title}") teaches, using its explainer and this conversation as the whole-node content. Use the FULL TREE sketch to see the BOUNDARIES: concepts owned by OTHER nodes (siblings, children, other branches) are out of scope, and a correct answer here must NEVER require the student to explain another node's mechanism. Example of the trap to avoid: if this node is about the genetic/variety ceiling, do NOT make passing depend on naming a soil/watering/sunlight mechanism — that is a different node's material; ask instead about THIS node's own claim (e.g. why care alone can't beat the variety's ceiling). Cover the WHOLE of this node's material, and stay strictly inside it.
+- "short" (own-words) carries the mastery weight — use it for the WHY/transfer probes; "mcq" for quick discrimination checks. Vary the formats.
+- At most one checkpoint per message. Never in your opening hook. Skip it on turns where the STUDENT ASSESSMENT rules say SUPPORT FIRST — and NEVER staple a checkpoint to a turn where the student just expressed confusion or you are clarifying a misunderstanding they voiced. Quizzing a lost student converts live confusion into a recorded failure; teach first, checkpoint only once they've re-explained or responded confidently (saying "no quiz yet — tell me back in your own words first" is itself good teaching).
 - READINESS INVITATION: on a teaching/discussion turn where the student sounds ready to be tested but you are NOT firing a checkpoint this same turn (the explanation should land first, or you want their consent), end with ONE short natural invitation in the session's language ("Ready for a challenge?" / "Want to prove this one?") and then [[QUIZ_OFFER]] alone on the very last line — the UI renders it as a "Quiz me" button in the chat. Rules: never [[QUIZ_OFFER]] and a [[QUIZ]] block in the same message; never on a SUPPORT-FIRST or remediation turn; never mention the marker itself. If they accept, your next turn opens with the checkpoint.
 - The chat UI renders the block as an interactive card — introduce it naturally in prose ("Quick check:"), but do NOT repeat the question or options in your prose, and NEVER mention the JSON or the marker.
 - Question, options, explanation and rubric all follow the session's language.
 - There is NO "Verify understanding" button — never mention one. When the node verifies, congratulate briefly and point to the next unverified node in service of the root problem.
-${quizStateNow.sureWrong >= 2 && quizStateNow.sureWrong > quizStateNow.sureRight ? `- CONFIDENCE CALIBRATION: the student has been confidently wrong ${quizStateNow.sureWrong} times on this node (vs ${quizStateNow.sureRight} confidently right) — a real blind-spot pattern, not a slip. Aim checkpoints at exactly the claims they were sure-but-wrong about, and weight a confident tone in their answers as weak evidence until their calibration recovers.` : ''}
-${retestTarget ? `- DELAYED RETEST DUE: on their last visit the student MISSED this checkpoint: "${retestTarget.slice(0, 300)}". After addressing their current message, re-probe that exact gap THIS TURN with a checkpoint block asking it from a NEW angle (different scenario and wording — never reuse the old question), and include "retest": true inside that checkpoint's JSON so the system links it to the missed one (omit the flag on any unrelated checkpoint). If the contextual read says SUPPORT FIRST, teach now and retest on the next calm turn instead.` : ''}
 
 ## VISUAL EXPLANATIONS (a diagram where words strain)
 - Use a visual when the student explicitly asks for one, OR when the concept is inherently visual — structure, spatial layout, flow/sequence, timelines/waterfalls, comparisons, geometry — and prose alone is straining. Place EXACTLY this block at the point in your explanation where the diagram belongs:
@@ -779,27 +619,37 @@ one-sentence description of the diagram to draw — name every part and label ex
 [{"name": "PhET — Gas Properties", "url": "https://phet.colorado.edu/en/simulations/gas-properties", "why": "lets you drop the divider yourself and watch the atoms fill the volume", "look": "Set 100 particles, then remove the barrier"}]
 \`\`\`
 1-3 items, each with a real https URL, a one-line "why this one", and "look" naming exactly what to open/see (figure number, section, control to move). Never leave a recommended resource as plain prose — an inert name is a resource a beginner will never find.
-${sessionDirectives(tree, lang)}
-${isIntro ? `
+${sessionDirectives(tree, lang)}`
+
+  const systemTree = `## THE FULL TREE (the student's whole learning world right now)
+${sketchTree(tree.nodes)}`
+
+  // The LIVE MASTERY STATE — the per-turn tally the static checkpoint rules
+  // (system block 1) refer to. Rides in the TURN CONTEXT, never the cache.
+  const masteryStateBlock = `
+
+## LIVE MASTERY STATE (this node, right now)
+${node.status === 'understood'
+  ? '- This node is already VERIFIED. Checkpoints are optional deepening now (exception: on a RETENTION REVIEW turn you MUST ask one) — focus on connections onward to the root problem.'
+  : `- Mastery state: ${masteryFilled(quizStateNow)}/${masteryTarget(quizStateNow)} ${quizStateNow.facets ? 'syllabus facets proven' : 'checkpoint answers correct'} so far${quizStateNow.shortCorrect < MASTERY_MIN_SHORT ? ' — the own-words short-answer requirement is NOT yet met (make an upcoming checkpoint a "short" own-words probe)' : ' — own-words requirement met'}. The node verifies automatically when ${quizStateNow.facets ? 'EVERY facet in the coverage map below is proven by a correct checkpoint' : `${MASTERY_TARGET} answers are correct`} (incl. ${MASTERY_MIN_SHORT} own-words short answer), and the student is told in the feedback.`}
+${node.status !== 'understood' && quizStateNow.facets ? `- SYLLABUS COVERAGE MAP (the node's VERIFICATION CONTRACT — the sub-points this node's syllabus promised): ${quizStateNow.facets.map(f => `${f.done ? '✅' : '⬜'} "${f.name}"`).join(' · ')}${(quizStateNow.untaggedStreak ?? 0) >= 1 ? `
+- TAGGING ALERT: the student's last ${quizStateNow.untaggedStreak} correct answer(s) carried a missing or unmatchable "facet" tag and could NOT advance coverage — there is NO automatic credit, ever. On your next checkpoint, copy one ⬜ facet name from the map CHARACTER-FOR-CHARACTER into the "facet" field.` : ''}` : ''}
+${quizStateNow.sureWrong >= 2 && quizStateNow.sureWrong > quizStateNow.sureRight ? `- CONFIDENCE CALIBRATION: the student has been confidently wrong ${quizStateNow.sureWrong} times on this node (vs ${quizStateNow.sureRight} confidently right) — a real blind-spot pattern, not a slip. Aim checkpoints at exactly the claims they were sure-but-wrong about, and weight a confident tone in their answers as weak evidence until their calibration recovers.` : ''}
+${retestTarget ? `- DELAYED RETEST DUE: on their last visit the student MISSED this checkpoint: "${retestTarget.slice(0, 300)}". After addressing their current message, re-probe that exact gap THIS TURN with a checkpoint block asking it from a NEW angle (different scenario and wording — never reuse the old question), and include "retest": true inside that checkpoint's JSON so the system links it to the missed one (omit the flag on any unrelated checkpoint). If the STUDENT ASSESSMENT says SUPPORT FIRST, teach now and retest on the next calm turn instead.` : ''}`
+
+  const turnScript = `${isIntro ? `
 ## THIS TURN: THE NODE SYLLABUS (the student just arrived; they have NOT spoken)
-Open the workspace yourself with a proper SYLLABUS that frames this whole node — a well-structured chapter-syllabus, NOT a one-liner. It must be SPECIFIC to "${node.title}" (name the real mechanisms, choices, quantities, terms this node actually involves — never generic placeholders), comprehensive over the node's scope, and calibrated in depth/examples to the session's level, background, and PURPOSE. Use EXACTLY this markdown structure (\`##\`/\`###\` headers, short paragraphs, tight bullets):
+Open with a BAREBONES syllabus — an outline, not a lecture. The teaching happens in the checkpoint loop that follows; this opener only maps the ground. EXACTLY this structure:
 
 ## <name the concept as a title>
-**The big idea** — 2-3 sentences: what this node is really about and the single most important thing it establishes.
-**Why it matters here** — 1-2 sentences placing this node in the WHOLE tree: its position along the branch path (${path.map(n => `"${n.title}"`).join(' → ')}) and how mastering it moves the student toward the ROOT problem ("${tree.title}") and their stated purpose.
-${coverageBlock ? `**Building on what you've covered** — 1-2 sentences that NAME the specific points the branch below already established (from the ALREADY COVERED section — quote its actual content, e.g. "you've already verified how X works and taken notes on Y") and state what NEW ground this node adds on top. This is a callback, not a recap — one clause per point, zero re-explanation.` : ''}
+ONE sentence: ${coverageBlock ? 'a one-clause callback to what the branch below already established (from the ALREADY COVERED section — reference, zero re-explanation), then ' : ''}what this node establishes and why the ROOT problem ("${tree.title}") needs it.
 
 ### What you'll cover
-A roadmap of the 3-5 specific sub-points this node contains — each a **bolded term** + one concrete sentence. If this node already has child nodes in the tree above, use those as the sub-points; otherwise lay out the facets an expert would break this into. This is the node's table of contents — make it genuinely cover the node's scope. Every sub-point must be NEW ground owned by THIS node: anything the ALREADY COVERED section shows an ancestor's workspace already taught may appear only as a one-clause callback inside a sub-point ("builds on the water-uptake mechanism from 'Soil, Water & Nutrients'"), never as a sub-point of its own and never re-explained.
+The 3-5 specific sub-points this node owns — each a **bolded term** plus at most one short clause. SPECIFIC to "${node.title}" (the real mechanisms, choices, quantities, terms — never generic placeholders); if this node already has child nodes in the tree, use those as the sub-points. Every sub-point is NEW ground owned by THIS node — anything an ancestor's workspace already taught may appear only as a one-clause callback inside a bullet, never as its own sub-point.
 
-### You'll be able to
-3-4 concrete, checkable objectives ("<action verb> <specific skill>") — what the student will be able to DO, phrased for THIS problem, not vague ("understand X").
-
-### The trap to avoid
-The single most common misconception or failure mode on this concept, in 1-2 sentences — the mistake this node exists to prevent.
-
-Close with ONE line noting the full explainer is a click away (the "Generate the explainer" button) and that mastery is proven by answering the checkpoint questions right here in chat — then ONE engaging question that pulls them straight into the first sub-point (conversational prose; do NOT emit a [[QUIZ]] block in this opener).
-Dense and specific throughout — every line about THIS node, zero platform/welcome filler.
+OPTIONAL — only if the node's structure is inherently visual/spatial (a flow, a layout, interacting parts): ONE \`\`\`image concept-map block placing the sub-points in relation to each other. Skip it otherwise.
+Close with ONE line noting the full explainer is a click away (the "Generate the explainer" button) and that mastery is proven by answering the checkpoints right here in chat — then ONE engaging question that pulls them straight into the first sub-point (conversational prose; do NOT emit a [[QUIZ]] block in this opener).
+HARD LIMIT: no "big idea" paragraph, no objectives list, no trap section, no welcome filler — at most ~120 words of prose beyond the bullets. Barebones and specific beats comprehensive here.
 FINALLY — as the very LAST line of the message, emit this machine block (never mention or explain it):
 [[SYLLABUS]]{"facets":["<sub-point 1>","<sub-point 2>","..."]}
 — one entry per "What you'll cover" sub-point (3-5 entries), each the short bolded term you used, in the session's language. THIS LIST IS THE NODE'S VERIFICATION CONTRACT: every facet you promise here must later be proven by a correct checkpoint before the node verifies, so promise exactly what this node truly owns — no filler facets, no facets belonging to other nodes.` : ''}${isReview ? `
@@ -841,13 +691,29 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
   // Excerpt any oversized past entry so a message stored before the length
   // cap (or a huge assistant turn) can't keep exceeding the model context.
   const HISTORY_MSG_CAP = 4000
-  const history = (conv!.messages ?? [])
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-20)
-    .map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content.length > HISTORY_MSG_CAP ? `${m.content.slice(0, HISTORY_MSG_CAP)}\n…[truncated]` : m.content,
-    }))
+  // CHUNK-ANCHORED WINDOW: a plain "last 20" slides one step every turn,
+  // changing the prompt prefix and busting the history cache on every
+  // message. The window START instead advances in steps of 12 (the window
+  // holds 20-31 messages), so the history prefix stays byte-stable for ~6
+  // turns at a stretch and the breakpoint on its tail keeps hitting.
+  const allMsgs = (conv!.messages ?? []).filter(m => m.role === 'user' || m.role === 'assistant')
+  const totalMsgs = allMsgs.length >= 40
+    ? Math.max(allMsgs.length, await prisma.message.count({ where: { conversationId: conv!.id } }).then(n => n - (isTrigger ? 0 : 1)).catch(() => allMsgs.length))
+    : allMsgs.length
+  const HIST_CHUNK = 12
+  const winLen = Math.min(allMsgs.length, totalMsgs - Math.floor(Math.max(0, totalMsgs - 20) / HIST_CHUNK) * HIST_CHUNK)
+  const history = allMsgs.slice(allMsgs.length - winLen).map(m => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content.length > HISTORY_MSG_CAP ? `${m.content.slice(0, HISTORY_MSG_CAP)}\n…[truncated]` : m.content,
+  }))
+
+  // Per-turn material rides in the FINAL user message — after the cached
+  // history — the only part of the prompt that changes every turn.
+  const turnContext = `${filesBlock}
+${lockerBlock}
+${coverageBlock}
+${groundingBlock}
+${attachBlock}${masteryStateBlock}${turnScript}`
 
   const encoder = new TextEncoder()
   const convId = conv!.id
@@ -860,18 +726,18 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
       // Opus release, pinned fallback) — upgrades land without a deploy.
       const model = await getTeachingModel()
       // Machine-marker protection: the [[QUIZ]] JSON must never stream to
-      // the client (it carries correctIndex/rubric), and the [[SYLLABUS]]
-      // contract block is server-only bookkeeping. We forward text with a
+      // the client (it carries correctIndex/rubric), and the [[SYLLABUS]] /
+      // [[ASSESS]] blocks are server-only bookkeeping. We forward text with a
       // holdback the length of the longest marker, so no byte at or past a
       // possible marker start ever leaves before we know what it is.
-      const MARK_HOLD = Math.max(QUIZ_MARK.length, SYL_MARK.length)
+      const MARK_HOLD = Math.max(QUIZ_MARK.length, SYL_MARK.length, ASSESS_MARK.length)
       let sentLen = 0
       // TRUNCATION: set when the model was guillotined by the token cap.
       // A half-finished explanation is worse than none — the learner
       // cannot tell whether they misread it or the app broke.
       let truncated = false
       const forwardSafe = () => {
-        const idxs = [full.indexOf(QUIZ_MARK), full.indexOf(SYL_MARK)].filter(i => i !== -1)
+        const idxs = [full.indexOf(QUIZ_MARK), full.indexOf(SYL_MARK), full.indexOf(ASSESS_MARK)].filter(i => i !== -1)
         const firstMark = idxs.length ? Math.min(...idxs) : -1
         const safeLen = firstMark !== -1 ? firstMark : Math.max(sentLen, full.length - MARK_HOLD)
         if (safeLen > sentLen) {
@@ -889,13 +755,21 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
           // the truncation marker below still catches the tail cases.
           max_tokens: 3200,
           ...NO_THINKING,
-          // Two system blocks: the per-node-stable prefix carries the cache
-          // breakpoint; the per-turn block rides uncached behind it.
+          // Cached prefix: core laws (block 1) + tree sketch (block 2), each
+          // with its own breakpoint so a sketch change never re-bills the
+          // core. A third breakpoint rides the last HISTORY message so the
+          // conversation prefix re-reads from cache and grows incrementally;
+          // the per-turn context sits after it, inside the final user turn.
           system: [
-            { type: 'text' as const, text: systemStatic, cache_control: { type: 'ephemeral' as const } },
-            { type: 'text' as const, text: systemDynamic },
+            { type: 'text' as const, text: systemCore, cache_control: { type: 'ephemeral' as const } },
+            { type: 'text' as const, text: systemTree, cache_control: { type: 'ephemeral' as const } },
           ],
-          messages: [...history, { role: 'user' as const, content: msgText || '(see the attachments above)' }],
+          messages: [
+            ...history.map((m, i) => i === history.length - 1
+              ? { role: m.role, content: [{ type: 'text' as const, text: m.content, cache_control: { type: 'ephemeral' as const } }] }
+              : m),
+            { role: 'user' as const, content: `<turn_context>${turnContext}\n</turn_context>\n\n${msgText || '(see the attachments above)'}` },
+          ],
         })
         for await (const event of response) {
           if (event.type === 'content_block_delta' && 'text' in event.delta) {
@@ -921,6 +795,122 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
           controller.enqueue(encoder.encode(zhSession
             ? '现在连接有些问题，请稍后再试。'
             : "I'm having trouble connecting right now. Please try again in a moment."))
+        }
+      }
+
+      // ── Folded assessment capture ([[ASSESS]] on free-chat turns) ──
+      // The structured half of the contextual read Bob just ran: stripped
+      // from the output, then processed exactly as the old pre-pass was.
+      if (!isTrigger) {
+        const [cleaned, assess] = extractAssess(full)
+        full = cleaned
+        if (assess) {
+          const streak = Math.max(Number(assess.streakWrong) || 0, quizStateNow.wrongStreak ?? 0)
+          void prisma.conversation.update({
+            where: { id: convId },
+            data: { summary: JSON.stringify({ lastReflection: { state: '', gapDepth: 'none', streakWrong: streak, directive: '', suggestNode: assess.suggestNode ?? null, moveToTitle: assess.moveToTitle ?? null, misconception: assess.misconception ?? null } }) },
+          }).catch(() => null)
+          // Perseverance XP: struggle that keeps going is visibly rewarded —
+          // once per tier crossing (2 → 3 → 4 confused turns).
+          if (streak >= 2 && streak <= 4 && streak > priorStreak) {
+            try {
+              const { awardXp } = await import('@/lib/xp-engine')
+              const a = await awardXp(userId, 'perseverance', { streakWrong: streak })
+              if (a) turnXp.push(a)
+            } catch { /* non-critical */ }
+          }
+          // Systematic misconception → remembered (reinforce-over-duplicate:
+          // the same belief bumps the existing row instead of stacking).
+          if (assess.misconception && typeof assess.misconception === 'string') {
+            const zhSession = (tree.language ?? lang) === 'zh'
+            const belief = assess.misconception
+            void (async () => {
+              try {
+                const { clampText } = await import('@/lib/clamp')
+                // Localized wrapper (no English scaffolding in a 中文 panel);
+                // dedup matches on the BARE title across both quote styles.
+                const tag = zhSession ? `（出现在「${node.title}」）` : `(at "${node.title}")`
+                const existing = await prisma.insight.findFirst({
+                  where: {
+                    userId, type: 'misconception', status: 'active',
+                    OR: [{ content: { contains: `"${node.title}"` } }, { content: { contains: `「${node.title}」` } }],
+                  },
+                  orderBy: { lastConfirmedAt: 'desc' },
+                })
+                if (existing) {
+                  await prisma.insight.update({
+                    where: { id: existing.id },
+                    data: {
+                      timesObserved: { increment: 1 },
+                      lastConfirmedAt: new Date(),
+                      confidence: Math.min(1, (existing.confidence ?? 0.5) + 0.05),
+                    },
+                  })
+                } else {
+                  await prisma.insight.create({
+                    data: {
+                      userId, type: 'misconception',
+                      content: `${clampText(belief, 250)} ${tag}`,
+                      confidence: 0.7, importance: 0.6, source: 'reflection',
+                      treeId: id,
+                    },
+                  })
+                }
+              } catch { /* non-critical */ }
+            })()
+          }
+          // ── BUILD-LOG EVIDENCE GATE (trust-critical) ──
+          // A progress claim is written ONLY when its citation verifies
+          // verbatim against this turn's actual inputs — the student's own
+          // message or an attachment's Gemini analysis. Everything else is
+          // dropped, loudly (a fabricated build-log entry poisons the
+          // digest and the portfolio).
+          if (assess.projectProgress) {
+            const claim = typeof assess.projectProgress === 'object' && assess.projectProgress !== null ? assess.projectProgress : null
+            const text = (claim?.text ?? '').trim()
+            const quote = (claim?.evidence?.quote ?? '').trim()
+            const norm = (s: string) => s.replace(/\s+/g, ' ').toLowerCase()
+            let evidence: { kind: 'message' | 'file'; name?: string; quote: string } | null = null
+            if (text && quote.length >= 8) {
+              if (claim?.evidence?.kind === 'message' && norm(msgText).includes(norm(quote))) {
+                evidence = { kind: 'message', quote: quote.slice(0, 300) }
+              } else if (claim?.evidence?.kind === 'file') {
+                const hit = analyses.find(a => norm(a.analysis).includes(norm(quote)))
+                if (hit) evidence = { kind: 'file', name: hit.name.slice(0, 120), quote: quote.slice(0, 300) }
+              }
+            }
+            if (evidence) {
+              const cited = evidence
+              void (async () => {
+                try {
+                  const row = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { progressLog: true } })
+                  const log = safeParse<Array<{ text: string; source: string; createdAt: string; evidence?: unknown }>>(row?.progressLog, [])
+                  log.push({ text: text.slice(0, 300), source: 'chat', createdAt: new Date().toISOString(), evidence: cited })
+                  await prisma.treeNode.update({ where: { id: nodeId }, data: { progressLog: JSON.stringify(log.slice(-30)) } })
+                } catch { /* non-critical */ }
+              })()
+            } else {
+              console.warn('[tree] progress claim DROPPED — citation failed verification', {
+                nodeId, text: text.slice(0, 120), kind: claim?.evidence?.kind ?? 'missing',
+              })
+            }
+          }
+          // Discovery cards, gated for timing (simulation findings): never
+          // two turns in a row, no add-cards mid-struggle, no move-cards
+          // while this node's mastery tally is in progress.
+          const suggestedLastTurn = !!priorReflection?.suggestNode || !!priorReflection?.moveToTitle
+          const addTitle = (assess.suggestNode?.title ?? '').trim()
+          if (addTitle && !suggestedLastTurn && streak < 2) {
+            suggestion = { type: 'add', title: addTitle.slice(0, 120), summary: (assess.suggestNode?.summary ?? '').slice(0, 300) }
+          } else if (assess.moveToTitle && !suggestedLastTurn) {
+            const moveTitle = String(assess.moveToTitle)
+            const midTally = node.status !== 'understood' && quizStateNow.correct > 0
+            if (!midTally) {
+              const target = tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase() === moveTitle.toLowerCase())
+                ?? tree.nodes.find(n => !n.pending && n.id !== nodeId && n.title.toLowerCase().includes(moveTitle.toLowerCase()))
+              if (target) suggestion = { type: 'move', nodeId: target.id, title: target.title }
+            }
+          }
         }
       }
 
@@ -1163,12 +1153,14 @@ or
           let recitable = false
           try {
             const Anthropic = (await import('@anthropic-ai/sdk')).default
-            const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+            const { getBackgroundModel } = await import('@/lib/model-resolver')
+            const lintModel = await getBackgroundModel()
             const lintClient = new Anthropic({ apiKey })
             const prevBob = [...(conv!.messages ?? [])].reverse().find(m => m.role === 'assistant')?.content ?? ''
             const lint = await lintClient.messages.create({
-              model: pickBackgroundModel(),
+              model: lintModel,
               max_tokens: 60,
+              ...NO_THINKING,
               messages: [{
                 role: 'user',
                 content: `Quality lint for a tutoring checkpoint (the Differentiator Principle: it must separate understanding from recall).
@@ -1187,7 +1179,7 @@ Return ONLY JSON: {"recitable": true|false}`,
             })
             try {
               const { recordAnthropicUsage } = await import('@/lib/usage')
-              recordAnthropicUsage(lint.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
+              recordAnthropicUsage(lint.usage, { userId, model: lintModel, feature: 'tree-verify' })
             } catch { /* non-critical */ }
             recitable = /"recitable"\s*:\s*true/.test((lint.content[0] as { text?: string })?.text ?? '')
           } catch { /* lint unavailable — fail open, keep the checkpoint */ }

@@ -154,10 +154,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const Anthropic = (await import('@anthropic-ai/sdk')).default
           const apiKey = process.env.ANTHROPIC_API_KEY
           if (apiKey) {
-            const { pickBackgroundModel } = await import('@/lib/chat-model-router')
+            const { getBackgroundModel } = await import('@/lib/model-resolver')
+            const bgModel = await getBackgroundModel()
             const client = new Anthropic({ apiKey })
             const res = await client.messages.create({
-              model: pickBackgroundModel(),
+              model: bgModel,
               max_tokens: 300,
               messages: [{
                 role: 'user',
@@ -170,7 +171,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
             }, { timeout: 15000, maxRetries: 1 })
             try {
               const { recordAnthropicUsage } = await import('@/lib/usage')
-              recordAnthropicUsage(res.usage, { userId, model: pickBackgroundModel(), feature: 'tree-verify' })
+              recordAnthropicUsage(res.usage, { userId, model: bgModel, feature: 'tree-verify' })
             } catch { /* non-critical */ }
             refutation = clampText(((res.content[0] as { text?: string })?.text ?? ''), 400)
           }
@@ -198,7 +199,7 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
           const b64 = (row.content as string).split(',', 2)[1] ?? ''
           if (b64) {
             const { analyzeImage } = await import('@/lib/gemini')
-            analysis = (await analyzeImage(b64, `the student's checkpoint evidence "${row.name}" — describe exactly what it shows, including any readings, numbers, connections, or outputs visible`, row.mimeType ?? 'image/png')).slice(0, 8000)
+            analysis = (await analyzeImage(b64, `the student's checkpoint evidence "${row.name}" — describe exactly what it shows, including any readings, numbers, connections, or outputs visible`, row.mimeType ?? 'image/png', userId)).slice(0, 8000)
             await prisma.linkedFile.update({ where: { id: row.id }, data: { analysis } }).catch(() => null)
           }
         } catch { /* analysis unavailable — judged conservatively below */ }

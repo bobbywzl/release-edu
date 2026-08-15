@@ -50,7 +50,7 @@ export async function analyzeAndPersistAttachments(
         const mime = /data:([^;]+)/.exec(head)?.[1] ?? (a.type || 'image/jpeg')
         if (!b64) return null
         const { analyzeImage } = await import('@/lib/gemini')
-        const analysis = await analyzeImage(b64, opts.context, mime)
+        const analysis = await analyzeImage(b64, opts.context, mime, userId)
         // Small images keep their raw data URI in `content` (so they still
         // render in the Files tab); heavy media keeps the analysis text there.
         // EITHER way the Gemini analysis is ALSO stored in `analysis`, so a

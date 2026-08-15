@@ -1258,7 +1258,18 @@ function TreeCanvasInner() {
               onNodesChange={handleNodesChange}
               onNodeDragStart={onNodeDragStart}
               onNodeDragStop={onNodeDragStop}
-              onNodeClick={(_, node) => setSelectedId(node.id)}
+              onNodeClick={(_, node) => {
+                // ONE CLICK INTO THE WORKSPACE (efficiency law): a real node
+                // opens its workspace directly — no select-then-confirm, no
+                // camera choreography. The side panel stays for the root
+                // (The Answer) and pending ghosts (approve/dismiss).
+                const tn = tree?.nodes.find(n => n.id === node.id)
+                if (tn && !tn.pending && tn.parentId !== null) {
+                  router.push(`/dashboard/workspace?tree=${tree.id}&node=${tn.id}`)
+                } else {
+                  setSelectedId(node.id)
+                }
+              }}
               onPaneClick={() => setSelectedId(null)}
               fitView
               fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
@@ -1351,12 +1362,7 @@ function TreeCanvasInner() {
                       motivation read BEFORE the button. */}
                   <NodeProgressCard node={selected} />
                   <button
-                    onClick={() => {
-                      try {
-                        flow.fitView({ nodes: [{ id: selected.id }], duration: 550, maxZoom: 1.75 })
-                      } catch { /* instance not ready — just navigate */ }
-                      setTimeout(() => router.push(`/dashboard/workspace?tree=${tree.id}&node=${selected.id}`), 560)
-                    }}
+                    onClick={() => router.push(`/dashboard/workspace?tree=${tree.id}&node=${selected.id}`)}
                     className="flex items-center justify-center gap-2 w-full rounded-xl bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors"
                   >
                     <MessageSquare className="w-4 h-4" />

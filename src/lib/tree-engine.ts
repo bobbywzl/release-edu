@@ -178,8 +178,8 @@ export async function generateTreeDisplayTitle(
 ): Promise<string | null> {
   try {
     const client = await anthropic()
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-    const model = pickBackgroundModel()
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
       model,
       max_tokens: 60,
@@ -219,8 +219,8 @@ export async function firstProblemRead(
 ): Promise<string | null> {
   try {
     const client = await anthropic()
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-    const model = pickBackgroundModel()
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
       model,
       max_tokens: 260,
@@ -257,8 +257,8 @@ export async function suggestPurposeIdeas(
 ): Promise<string[] | null> {
   try {
     const client = await anthropic()
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-    const model = pickBackgroundModel()
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
       model,
       max_tokens: 220,
@@ -738,8 +738,8 @@ export async function refreshNodeContextSummary(userId: string, treeId: string, 
       : qs.attempts > 0 ? `in progress (${qs.correct} correct / ${qs.attempts} attempts)` : 'opened, not yet verified'
 
     const client = await anthropic()
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-    const model = pickBackgroundModel()
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
       model,
       max_tokens: 500,
@@ -863,8 +863,8 @@ export async function refreshNodeBoardDigest(userId: string, treeId: string, nod
       : qs.attempts > 0 ? `in progress (${qs.correct} correct / ${qs.attempts} checkpoint answers)` : 'opened, not yet tested'
 
     const client = await anthropic()
-    const { pickBackgroundModel } = await import('@/lib/chat-model-router')
-    const model = pickBackgroundModel()
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
       model,
       max_tokens: 900,
@@ -962,11 +962,13 @@ export async function proposeExpansion(
   })).filter(h => h.content.trim())
 
   const client = await anthropic()
-  // The TEACHING model — the same tier Bob uses in the workspace chat. The
-  // grow box is a teaching conversation (what should you learn next, and
-  // why); the judge tier was producing turns the parser couldn't use, which
-  // surfaced as the canned "tell me more" dead-end on every send.
-  const model = await getTeachingModel()
+  // The JUDGE tier: this call's output is ~200 tokens of structured JSON
+  // (titles + summaries + a 1-3 sentence reply) — structured-extraction
+  // work, not deep teaching. The parser failures that once forced the
+  // teaching tier predated NO_THINKING (hidden thinking was eating the
+  // token budget and truncating the JSON); with thinking pinned off the
+  // judge tier parses reliably at a fraction of the cost.
+  const model = await getJudgeModel()
 
   // Join ALL text blocks — content[0] is not guaranteed to be the text block,
   // and losing the text here silently degrades every turn to the fallback.
@@ -988,11 +990,14 @@ export async function proposeExpansion(
   // not allowed to stall again — it must produce proposals.
   const mustPropose = history.some(h => h.role === 'assistant') && replaceIds.length === 0
 
+  // One serialization, shared by every pass this turn.
+  const treeSketch = sketchTree(tree.nodes)
+
   const system = `You are Bob, growing a problem-mastery learning tree through a short CONVERSATION in the "Grow this branch" box. The student talks to you about what they don't understand at one node; you reply conversationally AND propose the sub-branches (child nodes) that would teach it.
 
 PROBLEM (root): "${tree.title}"
 CURRENT TREE:
-${sketchTree(tree.nodes)}
+${treeSketch}
 
 TARGET NODE they are growing from: "${node.title}" — ${node.summary}
 
@@ -1017,10 +1022,15 @@ Return ONLY JSON:
 
   const turnMessages = [...history, { role: 'user' as const, content: question.slice(0, 800) }]
 
+  // The shared prefix carries a cache breakpoint: a retry pass re-reads it
+  // at ~0.1× instead of re-billing the whole system (the addition rides as
+  // a SEPARATE block after the breakpoint — string-concat would miss).
+  const cachedSystem = [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }]
+
   // Pass 1: the conversational turn.
   let parsed: GrowParsed | null = null
   {
-    const result = await client.messages.create({ model, max_tokens: 3000, ...NO_THINKING, system, messages: turnMessages })
+    const result = await client.messages.create({ model, max_tokens: 3000, ...NO_THINKING, system: cachedSystem, messages: turnMessages })
     void recordUsage(result, userId, model, 'tree-expand')
     parsed = parseGrow(textOf(result))
   }
@@ -1030,9 +1040,10 @@ Return ONLY JSON:
     try {
       const result = await client.messages.create({
         model, max_tokens: 3000, ...NO_THINKING,
-        system: `${system}
-
-CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.`,
+        system: [
+          ...cachedSystem,
+          { type: 'text' as const, text: 'CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.' },
+        ],
         messages: turnMessages,
       })
       void recordUsage(result, userId, model, 'tree-expand')
@@ -1051,7 +1062,7 @@ ${GOAL_NECESSITY}
 PROBLEM (root): "${tree.title}"
 TARGET NODE: "${node.title}" — ${node.summary}
 EXISTING TREE (do not duplicate):
-${sketchTree(tree.nodes)}
+${treeSketch}
 ${sessionDirectives(tree, lang)}
 
 Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf"}], "reply": "1-2 sentences on what you proposed and why (session language)"}`,
@@ -1300,10 +1311,16 @@ OR a recall request first (function 7):
   }
   const turnMessages = [...history, { role: 'user' as const, content: message.slice(0, 2000) }]
 
+  // The ~3k-token prefix carries a cache breakpoint. Retry and recall passes
+  // append their additions as SEPARATE blocks after it (string-concat would
+  // change the prefix bytes and miss), so a recall turn's second full call
+  // re-reads the prefix at ~0.1× instead of re-billing it.
+  const cachedSystem = [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }]
+
   let parsed: CopilotParsed | null = null
   let firstText = ''
   {
-    const result = await client.messages.create({ model, max_tokens: 3500, ...NO_THINKING, system, messages: turnMessages })
+    const result = await client.messages.create({ model, max_tokens: 3500, ...NO_THINKING, system: cachedSystem, messages: turnMessages })
     void recordUsage(result, userId, model, 'tree-copilot')
     firstText = textOf(result)
     parsed = parseTurn(firstText)
@@ -1312,7 +1329,10 @@ OR a recall request first (function 7):
     try {
       const result = await client.messages.create({
         model, max_tokens: 3500, ...NO_THINKING,
-        system: `${system}\n\nCRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.`,
+        system: [
+          ...cachedSystem,
+          { type: 'text' as const, text: 'CRITICAL: your ENTIRE output must be the JSON object alone — no prose, no code fences, nothing before or after it.' },
+        ],
         messages: turnMessages,
       })
       void recordUsage(result, userId, model, 'tree-copilot')
@@ -1342,12 +1362,18 @@ OR a recall request first (function 7):
     const fetched = await fetchRequestedContext(userId, treeId, real, parsed.contextRequest.nodes)
     if (fetched.block) {
       recalled = fetched.recalled
-      const system2 = `${system}
-
-## RECALLED STORED CONTEXT (you requested this — it is now in front of you)
+      // Same cached prefix + the recalled content as a separate trailing
+      // block — the expensive part of this second call is a cache read.
+      const system2 = [
+        ...cachedSystem,
+        {
+          type: 'text' as const,
+          text: `## RECALLED STORED CONTEXT (you requested this — it is now in front of you)
 ${fetched.block}
 
-Answer the student NOW, grounded in the content above; quote or reference it concretely. contextRequest is NOT available on this pass. A synthesis the student explicitly asked for may run up to ~5 short sentences despite the conciseness rule.`
+Answer the student NOW, grounded in the content above; quote or reference it concretely. contextRequest is NOT available on this pass. A synthesis the student explicitly asked for may run up to ~5 short sentences despite the conciseness rule.`,
+        },
+      ]
       let secondText = ''
       parsed = null
       try {
@@ -1516,6 +1542,34 @@ export async function generateExplainer(userId: string, treeId: string, nodeId: 
   const locker = await evidenceLocker(userId, tree.nodes)
   const coverage = await branchCoverage(userId, tree.nodes, nodeId)
 
+  // THIS NODE'S OWN WORKSPACE — the explainer used to be written blind to
+  // the node's chat, restating whatever Bob had already taught there. The
+  // node digest, proven facets, and latest exchanges ground it so it builds
+  // on the conversation instead of re-lecturing it.
+  let ownWork = ''
+  try {
+    const { parseQuizState } = await import('@/lib/mastery')
+    const conv = await prisma.conversation.findFirst({
+      where: { userId, context: `tree-node:${nodeId}` },
+      orderBy: { createdAt: 'asc' },
+      include: { messages: { orderBy: { createdAt: 'desc' }, take: 8 } },
+    })
+    const recent = (conv?.messages ?? []).reverse()
+      .map(m => `${m.role === 'user' ? 'Student' : 'Bob'}: ${m.content.slice(0, 350)}`)
+      .join('\n')
+    const qs = parseQuizState(node.quizState)
+    const proven = (qs.facets ?? []).filter(f => f.done).map(f => `"${f.name}"`).join(', ')
+    if (node.contextSummary?.trim() || recent || proven) {
+      ownWork = `
+THIS NODE'S WORKSPACE SO FAR (the chat may already have covered ground here — BUILD ON it, never restate it):${node.contextSummary?.trim() ? `
+Digest: ${node.contextSummary.trim().slice(0, 1200)}` : ''}${proven ? `
+Facets already PROVEN by correct checkpoints: ${proven} — treat these as understood; reference them in a clause, don't re-teach them.` : ''}${recent ? `
+Latest exchanges:
+${recent.slice(0, 2000)}` : ''}
+`
+    }
+  } catch { /* non-critical — the explainer still writes */ }
+
   const model = await getTeachingModel()
   const result = await client.messages.create({
     model,
@@ -1533,11 +1587,10 @@ SIBLING/TREE CONTEXT:
 ${sketchTree(tree.nodes)}
 ${grounding}
 ${locker}
-${coverage}
-
+${coverage}${ownWork}
 Write in markdown (400-700 words):
 1. **What this is** — precise but plain-language definition
-2. **Why the problem needs it** — connect it explicitly BACK to the root problem and its parent branch; where the ALREADY COVERED section shows the branch below established something this builds on, reference it in one clause instead of re-explaining it
+2. **Why the problem needs it** — connect it explicitly BACK to the root problem and its parent branch; where the ALREADY COVERED section shows the branch below established something this builds on, reference it in one clause instead of re-explaining it. Same law for THIS NODE'S WORKSPACE above: what the chat already taught or proved gets a one-clause callback, and the words go to what the chat has NOT yet covered — the explainer completes the picture, it never re-lectures the conversation
 3. **How it works** — the core mechanism with ONE concrete worked example
 4. **Where beginners go wrong** — the main misconception or failure mode
 5. **How you'll know you understand it** — 1-2 sentences describing the transfer test

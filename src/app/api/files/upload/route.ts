@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
         const { inBackground } = await import('@/lib/background')
         inBackground((async () => {
           const { analyzeImage } = await import('@/lib/gemini')
-          const analysis = await analyzeImage(b64, `the student's uploaded evidence "${name}"`, mimeType)
+          const analysis = await analyzeImage(b64, `the student's uploaded evidence "${name}"`, mimeType, userId)
           await prisma.linkedFile.update({
             where: { id: record.id },
             data: { analysis: analysis.slice(0, 8000) },

@@ -18,7 +18,6 @@ function isResetInProgress() {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [resetActive, setResetActive] = useState(false)
-  const isOnboardingFlow = pathname === '/dashboard/onboarding'
   const isChrome = pathname === '/dashboard/portfolio/print'
   // The Workspace and the tree canvas are immersive, full-height experiences:
   // they manage their own panels and height, so we drop the shared mobile
@@ -45,11 +44,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     } catch { /* non-critical */ }
   }, [pathname])
 
-  // The legacy setup/onboarding redirect chain is GONE. It bounced users
-  // into deleted Release EDU flows whenever the student-data fetch was slow
-  // or transiently failed. New users simply see the dashboard's
-  // plant-your-first-tree empty state; the Bob interview at
-  // /dashboard/onboarding remains reachable but is never forced.
+  // The legacy Release EDU interview at /dashboard/onboarding is DELETED
+  // (Aug 2026): it duplicated the tree stepper's questions across 6-10 chat
+  // turns and collected fields no Tree EDU prompt reads. First-run users
+  // plant their first tree through the one-screen session setup instead.
 
   // (The legacy curriculum auto-recovery effect is gone with the Tree pivot —
   // a user with no trees simply sees the Tree page's empty state.)
@@ -63,10 +61,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // mount with the right x-account-slot header from the very first request.
   if (isChrome) {
     return <AccountSlotGate>{children}</AccountSlotGate>
-  }
-
-  if (isOnboardingFlow) {
-    return <AccountSlotGate><div className="h-screen overflow-y-auto bg-background">{children}</div></AccountSlotGate>
   }
 
   return (

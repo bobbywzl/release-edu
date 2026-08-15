@@ -508,7 +508,7 @@ export default function PortfolioPage() {
               color: rgba(0, 0, 0, 0.5);
             }
             @top-right {
-              content: "RELEASE EDU";
+              content: "TREE EDU";
               font-size: 8px;
               letter-spacing: 0.15em;
               color: rgba(0, 0, 0, 0.4);
@@ -525,8 +525,7 @@ export default function PortfolioPage() {
           <div className="space-y-2">
             <h1 className="text-2xl font-bold text-foreground">{tr("portfolio.title")}</h1>
             <p className="text-muted-foreground max-w-md mx-auto">
-              Generate a professional portfolio based on your projects, skills, and learning journey.
-              Perfect for university applications and employer reviews.
+              {tr('portfolio.generateDesc')}
             </p>
           </div>
           <button
@@ -534,7 +533,7 @@ export default function PortfolioPage() {
             className="inline-flex items-center gap-2 bg-primary text-primary-foreground rounded-lg px-6 py-3 text-sm font-medium hover:bg-primary/90 transition-colors"
           >
             <Sparkles className="w-4 h-4" />
-            Generate My Portfolio
+            {tr('portfolio.generateBtn')}
           </button>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </motion.div>
@@ -547,8 +546,8 @@ export default function PortfolioPage() {
             <Sparkles className="w-6 h-6 text-primary" />
           </div>
           <div className="space-y-1 text-center">
-            <p className="text-sm font-medium text-foreground">Analyzing your learning journey…</p>
-            <p className="text-xs text-muted-foreground">Bob is reviewing your projects, conversations, and progress. Safe to leave — we&apos;ll keep working in the background.</p>
+            <p className="text-sm font-medium text-foreground">{tr('portfolio.analyzing')}</p>
+            <p className="text-xs text-muted-foreground">{tr('portfolio.analyzingSub')}</p>
           </div>
           {/* Indeterminate progress bar — animates back and forth, never stops */}
           <div className="w-64 h-1.5 bg-muted rounded-full overflow-hidden relative">
@@ -567,14 +566,14 @@ export default function PortfolioPage() {
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-2">
               <h1 className="text-3xl font-bold text-foreground">{student.name}</h1>
-              <p className="text-lg text-muted-foreground">Portfolio — Getting Started</p>
+              <p className="text-lg text-muted-foreground">{tr('portfolio.gettingStarted')}</p>
             </div>
             <button
               onClick={generate}
               className="flex items-center gap-2 text-xs border border-border rounded-lg px-3 py-2 hover:bg-accent transition-colors text-muted-foreground"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Regenerate
+              {tr('portfolio.regenerate')}
             </button>
           </div>
 
@@ -583,17 +582,17 @@ export default function PortfolioPage() {
               <BookOpen className="w-7 h-7 text-muted-foreground" />
             </div>
             <div className="space-y-2 max-w-lg mx-auto">
-              <h2 className="text-lg font-semibold text-foreground">Not enough data yet</h2>
+              <h2 className="text-lg font-semibold text-foreground">{tr('portfolio.notEnough')}</h2>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 {portfolio.summary}
               </p>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-md mx-auto pt-4">
               {[
-                { label: 'Conversations', value: '0', needed: 'Chat with Bob' },
-                { label: 'Completed work', value: '0%', needed: 'Do assignments' },
-                { label: 'Insights', value: '0', needed: 'Keep learning' },
-                { label: 'Projects', value: '0', needed: 'Start a project' },
+                { label: tr('portfolio.statConversations'), value: '0', needed: tr('portfolio.statConversationsNeed') },
+                { label: tr('portfolio.statVerified'), value: '0', needed: tr('portfolio.statVerifiedNeed') },
+                { label: tr('portfolio.statInsights'), value: '0', needed: tr('portfolio.statInsightsNeed') },
+                { label: tr('portfolio.statTrees'), value: '0', needed: tr('portfolio.statTreesNeed') },
               ].map(item => (
                 <div key={item.label} className="p-3 rounded-lg bg-muted/30 border border-border/50 text-center">
                   <p className="text-lg font-bold text-muted-foreground">{item.value}</p>
@@ -603,7 +602,7 @@ export default function PortfolioPage() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground pt-2">
-              Every claim in your portfolio will be backed by real evidence from your work and conversations with Bob. No fabrication, ever.
+              {tr('portfolio.evidenceNote')}
             </p>
           </div>
         </motion.div>
@@ -626,15 +625,14 @@ export default function PortfolioPage() {
                   className="inline-flex items-center gap-1.5 border border-border rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  Regenerate
+                  {tr('portfolio.regenerate')}
                 </button>
                 <button
                   onClick={() => window.open('/dashboard/portfolio/print', '_blank', 'noopener')}
                   className="inline-flex items-center gap-1.5 border border-border rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-                  title="Open print-ready view (select 'Save as PDF' in the dialog)"
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  Export PDF
+                  {tr('portfolio.exportPdf')}
                 </button>
               </div>
             </div>
@@ -646,20 +644,19 @@ export default function PortfolioPage() {
               <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5">
                 <RefreshCw className="w-4 h-4 text-amber-400 flex-shrink-0" />
                 <p className="text-xs text-amber-200/90 flex-1 min-w-[220px]">
-                  Your work has changed since this portfolio was generated
-                  {generatedAt ? ` (${new Date(generatedAt).toLocaleString()})` : ''} — refresh it before sharing.
+                  {tr('portfolio.stale')}{generatedAt ? ` (${new Date(generatedAt).toLocaleString()})` : ''}
                 </p>
                 <button
                   onClick={generate}
                   disabled={loading}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/30 transition-colors disabled:opacity-50"
                 >
-                  Refresh now
+                  {tr('portfolio.refreshNow')}
                 </button>
               </div>
             ) : generatedAt ? (
               <p className="text-[11px] text-muted-foreground">
-                Last generated {new Date(generatedAt).toLocaleString()}
+                {tr('portfolio.lastGenerated')} {new Date(generatedAt).toLocaleString()}
               </p>
             ) : null}
 
@@ -671,21 +668,21 @@ export default function PortfolioPage() {
               </Badge>
               <Badge variant="outline" className="gap-1.5">
                 <TrendingUp className="w-3 h-3 text-emerald-400" />
-                {student.streak} day streak
+                {student.streak} {tr('portfolio.dayStreak')}
               </Badge>
               <Badge variant="outline" className="gap-1.5">
                 <Target className="w-3 h-3 text-blue-400" />
-                {liveStats ? liveStats.pct : toNumber(portfolio.metrics?.completionRate)}% completion
+                {liveStats ? liveStats.pct : toNumber(portfolio.metrics?.completionRate)}% {tr('portfolio.completion')}
               </Badge>
               {liveStats && (
                 <Badge variant="outline" className="gap-1.5">
                   <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  {liveStats.verified}/{liveStats.total} nodes verified · {liveStats.problems} problems
+                  {tr('portfolio.verifiedBadge').replace('{v}', String(liveStats.verified)).replace('{t}', String(liveStats.total)).replace('{p}', String(liveStats.problems))}
                 </Badge>
               )}
               <Badge variant="outline" className="gap-1.5">
                 <Star className="w-3 h-3 text-purple-400" />
-                {sortedSkills.length} skills
+                {tr('portfolio.skillsCount').replace('{n}', String(sortedSkills.length))}
               </Badge>
             </div>
           </motion.div>
@@ -702,7 +699,7 @@ export default function PortfolioPage() {
           <motion.section {...fadeUp} className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-muted-foreground" />
-              Professional Summary
+              {tr('portfolio.summaryHeading')}
             </h2>
             <div className="text-sm text-foreground/80 leading-relaxed whitespace-pre-line">
               {portfolio.summary}
@@ -714,13 +711,13 @@ export default function PortfolioPage() {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <FileText className="w-4 h-4 text-muted-foreground" />
-                Personal Statement
+                {tr('portfolio.personalStatement')}
               </h2>
               <button
                 onClick={() => setEditingStatement(!editingStatement)}
                 className="text-[11px] text-primary hover:text-primary/80 transition-colors"
               >
-                {editingStatement ? 'Done editing' : 'Edit'}
+                {editingStatement ? tr('portfolio.editDone') : tr('portfolio.edit')}
               </button>
             </div>
             {editingStatement ? (
@@ -740,7 +737,7 @@ export default function PortfolioPage() {
           <motion.section {...fadeUp} className="space-y-4">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-muted-foreground" />
-              Skills & Competencies
+              {tr('portfolio.skillsHeading')}
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {sortedSkills.map((skill, i) => (
@@ -770,7 +767,7 @@ export default function PortfolioPage() {
             <motion.section {...fadeUp} className="space-y-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Target className="w-4 h-4 text-muted-foreground" />
-                Projects
+                {tr('portfolio.projectsHeading')}
               </h2>
               <div className="space-y-3">
                 {portfolio.projects.map((project, i) => (
@@ -797,10 +794,10 @@ export default function PortfolioPage() {
             <motion.section {...fadeUp} className="space-y-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Star className="w-4 h-4 text-muted-foreground" />
-                Character & Strengths
+                {tr('portfolio.strengthsHeading')}
               </h2>
               <p className="text-[11px] text-muted-foreground -mt-2">
-                Identified through AI analysis of learning conversations — each strength is backed by evidence.
+                {tr('portfolio.strengthsSub')}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {portfolio.strengths.map((s, i) => (
@@ -824,7 +821,7 @@ export default function PortfolioPage() {
             <motion.section {...fadeUp} className="space-y-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-muted-foreground" />
-                Growth Areas
+                {tr('portfolio.growthHeading')}
               </h2>
               <div className="space-y-3">
                 {portfolio.growthAreas.map((area, i) => (
@@ -846,18 +843,18 @@ export default function PortfolioPage() {
             <motion.section {...fadeUp} className="space-y-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-muted-foreground" />
-                Metrics
+                {tr('portfolio.metricsHeading')}
               </h2>
               <div className="border border-border/50 rounded-lg p-6">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
                   {/* Completion Rate */}
                   <div className="flex flex-col items-center relative">
-                    <CircularProgress value={toNumber(portfolio.metrics.completionRate)} label="Completion" />
+                    <CircularProgress value={toNumber(portfolio.metrics.completionRate)} label={tr('portfolio.metricCompletion')} />
                   </div>
 
                   {/* Consistency */}
                   <div className="flex flex-col items-center relative">
-                    <CircularProgress value={toNumber(portfolio.metrics.consistencyScore)} label="Consistency" />
+                    <CircularProgress value={toNumber(portfolio.metrics.consistencyScore)} label={tr('portfolio.metricConsistency')} />
                   </div>
 
                   {/* Pace */}
@@ -871,7 +868,7 @@ export default function PortfolioPage() {
                     >
                       {toShortString(portfolio.metrics.averagePace, 50)}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">Pace</span>
+                    <span className="text-[10px] text-muted-foreground">{tr('portfolio.metricPace')}</span>
                   </div>
 
                   {/* Quality */}
@@ -880,7 +877,7 @@ export default function PortfolioPage() {
                       <Award className="w-5 h-5 text-emerald-400" />
                     </div>
                     <span className="text-lg font-bold text-foreground">{Array.isArray(portfolio.metrics.qualityIndicators) ? portfolio.metrics.qualityIndicators.length : 0}</span>
-                    <span className="text-[10px] text-muted-foreground">Quality Signals</span>
+                    <span className="text-[10px] text-muted-foreground">{tr('portfolio.metricQuality')}</span>
                   </div>
                 </div>
 
@@ -900,7 +897,7 @@ export default function PortfolioPage() {
           <div className="border-t border-border/50 pt-6">
             <div className="rounded-lg bg-muted/30 border border-border/50 px-4 py-3">
               <p className="text-[11px] text-muted-foreground leading-relaxed italic">
-                This is an AI-generated user portfolio made by Tree EDU. It seeks to be objective, transparent, and accurate, but please note that AI may make mistakes.
+                {tr('portfolio.disclaimer')}
               </p>
             </div>
           </div>
@@ -908,7 +905,7 @@ export default function PortfolioPage() {
           {/* Footer */}
           <div className="text-center pt-2">
             <p className="text-[11px] text-muted-foreground">
-              Generated by Tree EDU · AI-powered learning portfolio · {generatedAt ? new Date(generatedAt).toLocaleString() : '—'}
+              {tr('portfolio.footer')} · {generatedAt ? new Date(generatedAt).toLocaleString() : '—'}
             </p>
           </div>
         </div>

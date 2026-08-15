@@ -190,9 +190,15 @@ export async function maybeConsolidateInsights(userId: string, apiKey: string): 
 
     const Anthropic = (await import('@anthropic-ai/sdk')).default
     const client = new Anthropic({ apiKey })
+    const [{ getBackgroundModel }, { NO_THINKING }] = await Promise.all([
+      import('@/lib/model-resolver'),
+      import('@/lib/chat-model-router'),
+    ])
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: 1500,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `You curate a student's long-term memory for an AI tutor. Below are the student's current insights and their CURRENT learning direction. Consolidate the memory.
@@ -219,7 +225,7 @@ Rules:
 
     try {
       const { recordAnthropicUsage } = await import('@/lib/usage')
-      recordAnthropicUsage(result.usage, { userId, model: 'claude-haiku-4-5-20251001', feature: 'insight' })
+      recordAnthropicUsage(result.usage, { userId, model, feature: 'insight' })
     } catch { /* non-critical */ }
 
     const text = (result.content[0] as { type: string; text?: string })?.text ?? ''

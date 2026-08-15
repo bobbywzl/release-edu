@@ -252,15 +252,18 @@ VISUAL CONFIDENCE rule in the node-chat, copilot, and explainer prompts.
 
 ## Sessions
 
-Every tree is a self-contained **session**, onboarded at creation by a stepper of
-**at most five questions**: language (EN/中文), the specific problem, the **purpose**
-behind it (what the learner will do with mastery — this defines "relevant" for the
-whole session, per the Answer Standard), the learner's personal background, and
-target depth on the **explainable ↔ deployable axis** (beginner "general
-understanding you can explain" → professional "real-life deployable understanding").
-These calibrate every AI output inside the session. The global first-run interview
-ends with the bolded question — **"What is the specific problem you want to master?"**
-— whose answer plants the first tree.
+Every tree is a self-contained **session**. Setup is ONE screen with ONE required
+question — **"What is the specific problem you want to master?"** — plus four
+optional calibrators collapsed behind an "add context" toggle: language (EN/中文),
+the **purpose** behind the problem (what the learner will do with mastery — this
+defines "relevant" for the whole session, per the Answer Standard), personal
+background, and target depth on the **explainable ↔ deployable axis** (beginner
+"general understanding you can explain" → professional "real-life deployable
+understanding"). The calibrators pre-fill from the app language and the previous
+session, so most sessions start from the problem alone — The Goal applied to
+setup: the bare minimum stands between the learner and their tree. These
+calibrate every AI output inside the session. There is no separate first-run
+interview; a new user's first session setup IS their onboarding.
 
 ## Product Surfaces
 

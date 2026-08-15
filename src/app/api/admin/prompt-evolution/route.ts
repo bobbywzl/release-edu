@@ -126,8 +126,10 @@ Output JSON only:
 Rules: Never propose changes based on fewer than 3 examples. Never suggest removing core Socratic method. Only propose additions/clarifications, not rewrites.`
 
   try {
+    const { getTeachingModel } = await import('@/lib/model-resolver')
+    const model = await getTeachingModel()
     const result = await client.messages.create({
-      model: 'claude-opus-4-8',
+      model,
       max_tokens: 1500,
       ...NO_THINKING,
       messages: [{ role: 'user', content: analysisPrompt }],
@@ -135,7 +137,7 @@ Rules: Never propose changes based on fewer than 3 examples. Never suggest remov
 
     {
       const { recordAnthropicUsage } = await import('@/lib/usage')
-      recordAnthropicUsage(result.usage, { model: 'claude-opus-4-8', feature: 'other' })
+      recordAnthropicUsage(result.usage, { model, feature: 'other' })
     }
     const text = (result.content[0] as { type: string; text?: string })?.text?.trim() ?? '{}'
     let parsed: { patterns?: string[]; proposed_changes?: Array<{ section: string; rationale: string; proposed_addition: string; sampleSize: number }> }
