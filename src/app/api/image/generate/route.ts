@@ -73,10 +73,12 @@ export async function POST(req: NextRequest) {
       const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl)
       if (!m) return { confidence: null as number | null, issue: '', redirect: null as { name: string; url: string; why: string } | null }
       const { evaluateGeneratedVisual, recommendVisualResource } = await import('@/lib/gemini')
-      const ev = await evaluateGeneratedVisual(m[2], m[1], prompt.trim(), ctx)
+      const { getUserId } = await import('@/lib/get-user-id')
+      const uid = await getUserId().catch(() => undefined)
+      const ev = await evaluateGeneratedVisual(m[2], m[1], prompt.trim(), ctx, uid)
       if (!ev) return { confidence: null, issue: '', redirect: null }
       const redirect = ev.confidence < CONFIDENCE_THRESHOLD
-        ? await recommendVisualResource(prompt.trim(), ctx)
+        ? await recommendVisualResource(prompt.trim(), ctx, uid)
         : null
       return { confidence: ev.confidence, issue: ev.issue, redirect }
     } catch {

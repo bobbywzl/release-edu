@@ -6,7 +6,8 @@
  * Anti-hallucination rules and reinforce-over-duplicate behavior are
  * critical here — see insight-memory.ts for the read path.
  */
-import { pickBackgroundModel } from '@/lib/chat-model-router'
+import { NO_THINKING } from '@/lib/chat-model-router'
+import { getBackgroundModel } from '@/lib/model-resolver'
 
 export async function extractInsightsBackground(
   apiKey: string,
@@ -42,11 +43,13 @@ export async function extractInsightsBackground(
     const lang = sessionLang === 'zh' || sessionLang === 'en' ? sessionLang : globalLang
     const existingListing = existing.map(i => `${i.id} | ${i.type} | ${i.content.slice(0, 120)}`).join('\n')
 
+    const model = await getBackgroundModel()
     const result = await client.messages.create({
       // Background insight extractor — emits new-insight / reinforce ops.
       // Classification with calibrated scoring, well within Haiku capability.
-      model: pickBackgroundModel(),
+      model,
       max_tokens: 600,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `You maintain an AI tutor's long-term memory about a student. Analyze this exchange and extract insights ABOUT THE STUDENT.
@@ -78,7 +81,7 @@ importance rubric: durable traits, aspirations, learning-style ≈ 0.7–1.0; ve
 
     try {
       const { recordAnthropicUsage } = await import('@/lib/usage')
-      recordAnthropicUsage(result.usage, { userId: storeUserId, model: pickBackgroundModel(), feature: 'insight' })
+      recordAnthropicUsage(result.usage, { userId: storeUserId, model, feature: 'insight' })
     } catch { /* non-critical */ }
     const text = (result.content[0] as { type: string; text?: string })?.text?.trim()
     if (!text || text === '[]') return

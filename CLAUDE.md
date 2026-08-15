@@ -59,8 +59,13 @@ Read this before making changes.
   `src/lib/model-resolver.ts`, which auto-adopts the NEWEST Opus/Sonnet release from
   the /v1/models catalog (6h cache; pinned `CHAT_MODELS` fallback — never hardcode
   a model id in a new Bob feature, use `getTeachingModel()`/`getJudgeModel()`).
-  Haiku (via `pickBackgroundModel()`) stays pinned for background passes (reflection,
-  insight extraction). Gemini for image/file analysis AND generated visuals: Bob
+  EVERY tier auto-adopts its family's newest release (user directive, Aug 2026):
+  the background tier via `getBackgroundModel()` (newest Haiku, same resolver,
+  pinned fallback — JSON-parsing background calls pin `NO_THINKING` so upgrades
+  stay parse-safe), Gemini multimodal via `getMultimodalModel()` in
+  `src/lib/gemini.ts` (newest plain-flash from ListModels, pinned fallback),
+  image generation via the ordered latest-first ladder in `/api/image/generate`.
+  Gemini for image/file analysis AND generated visuals: Bob
   emits ```image fenced blocks (chat + explainers) that `MarkdownRenderer` →
   `GeneratedVisual` turns into diagrams via `/api/image/generate` (latest Gemini
   flash image first, durable prompt-hash cache, usage tag `image`; needs
@@ -88,7 +93,10 @@ answer (`masteryMet` in `src/lib/mastery.ts`; static `MASTERY_TARGET`=3 is the
 fallback for contract-less nodes). There is no separate verify screen.
 Each session carries its own language / difficulty / personal background / PURPOSE
 (why the learner wants mastery — it defines "relevant" for the session), set by a
-5-question stepper at tree creation (never more than 5).
+ONE-SCREEN session setup: the problem is the only required question; the four
+calibrators (language/purpose/background/depth) sit in an optional "add context"
+expander pre-filled from the app language and the last session. The legacy
+Release EDU first-run interview is deleted — first-run onboarding IS the setup.
 
 ## Key Code Map
 
@@ -109,9 +117,17 @@ Each session carries its own language / difficulty / personal background / PURPO
   verification over `QuizState.facets`), `parseQuizState`, the `PendingQuiz`
   shape. UI strings interpolate `{n}` from it.
 - `src/app/api/tree/**` — tree CRUD, expand, per-node explainer/quiz/chat/review
-  routes. The node chat route holds Bob's workspace prompt, the Haiku contextual
-  pre-pass (gap/wrong-streak/directive + node-discovery + move-recommendation +
-  project-progress detection), the `[NODE_INTRO]`/`[NODE_REVIEW]`/`[NODE_CHECKPOINT]`
+  routes. The node chat route holds Bob's workspace prompt with the FOLDED
+  ASSESSMENT (the blocking Haiku pre-pass is gone: the main teaching call
+  self-assesses — wrong-streak, analogy bridge, wheel-spinning, SUPPORT FIRST —
+  and reports discovery/move/progress/misconception on a trailing `[[ASSESS]]`
+  line, captured server-side and processed exactly as the old pre-pass output
+  was), the PROMPT-CACHING LAYOUT (two cached system blocks — core laws, tree
+  sketch — a chunk-anchored history window whose tail carries a third
+  breakpoint, and ALL per-turn material inside the final user message as
+  `<turn_context>`; keep stable text out of that message and volatile text out
+  of the system blocks), the `[NODE_INTRO]` (barebones bullet syllabus, ~120
+  words max + the `[[SYLLABUS]]` contract)/`[NODE_REVIEW]`/`[NODE_CHECKPOINT]`
   hooks (the last keeps checkpoints coming until the node verifies; checkpoints
   are scoped to THIS node's content, using the full tree only for boundaries), and
   `[[TREE_SUGGEST]]`/`[[XP]]` stream markers. Bob's `[[QUIZ]]` blocks are captured

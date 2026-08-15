@@ -2,22 +2,22 @@
  * Model resolver — Bob automatically adopts the newest model of each family.
  *
  * Queries the Anthropic /v1/models catalog and picks the most recently
- * released concrete id per family (claude-opus-*, claude-sonnet-*), so a new
- * Opus/Sonnet release upgrades Bob's teaching and judging WITHOUT a deploy.
+ * released concrete id per family (claude-opus-*, claude-sonnet-*,
+ * claude-haiku-*), so a new release upgrades every surface WITHOUT a deploy
+ * (user directive, Aug 2026: every tier tracks the latest of its family).
  * Results are cached in-process for 6 hours; any failure falls back to the
  * pinned ids in CHAT_MODELS, so a catalog outage can never break chat.
- *
- * Deliberately NOT auto-resolved: the Haiku background tier
- * (pickBackgroundModel) — classification passes are tuned to a known-cheap
- * model and gain nothing from silent upgrades.
+ * Background calls that parse JSON pin NO_THINKING at the call site, so a
+ * silent Haiku upgrade can never re-introduce thinking-truncated output.
  */
 import { CHAT_MODELS } from '@/lib/chat-model-router'
 
-type Family = 'opus' | 'sonnet'
+type Family = 'opus' | 'sonnet' | 'haiku'
 
 const PINNED: Record<Family, string> = {
   opus: CHAT_MODELS.opus,
   sonnet: CHAT_MODELS.sonnet,
+  haiku: CHAT_MODELS.haiku,
 }
 
 const TTL_MS = 6 * 60 * 60 * 1000
@@ -52,7 +52,7 @@ async function fetchLatest(): Promise<Record<Family, string>> {
     const rows = (body.data ?? []).filter(m => typeof m.id === 'string')
 
     const ids = { ...PINNED }
-    for (const family of ['opus', 'sonnet'] as Family[]) {
+    for (const family of ['opus', 'sonnet', 'haiku'] as Family[]) {
       // Concrete versioned ids only (claude-opus-4-8, a future claude-opus-5…);
       // never aliases like -latest, so usage records stay exact.
       const re = new RegExp(`^claude-${family}-\\d`)
@@ -101,4 +101,11 @@ export async function getTeachingModel(): Promise<string> {
 /** The structured/judging model (expansion proposals, checkpoint judging). */
 export async function getJudgeModel(): Promise<string> {
   return (await resolve()).sonnet
+}
+
+/** The background tier (reflection, digests, extraction) — newest Haiku.
+ *  Replaces the pinned pickBackgroundModel() on active surfaces; keep
+ *  NO_THINKING on JSON-parsing calls so upgrades stay parse-safe. */
+export async function getBackgroundModel(): Promise<string> {
+  return (await resolve()).haiku
 }

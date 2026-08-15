@@ -368,6 +368,10 @@ function WorkspaceInner() {
           // it now, so the teaching a miss earns can't evaporate.
           setView('chat')
           void streamFromBob('[NODE_REMEDIATE]', false)
+        } else if (d.pending) {
+          // An ARMED CHECKPOINT is the next action — land straight on the
+          // card instead of parking it a click away behind the board.
+          setView('chat')
         }
       })
       .catch(() => {})
@@ -926,16 +930,23 @@ function WorkspaceInner() {
         setQuizErrorDetail(`HTTP ${res.status}${body?.code ? ` · ${body.code}` : ''}${body?.detail ? ` · ${String(body.detail).slice(0, 180)}` : ''}`)
         throw new Error('quiz error')
       }
-      if (Array.isArray(body.xp) && body.xp.length > 0) emitXpAwards(body.xp)
+      const verified = !!body.verified
+      const wasCorrect = !!body.correct
+      if (Array.isArray(body.xp) && body.xp.length > 0) {
+        // A miss still pays XP, but QUIETLY: the small toast shows the
+        // amount, while rank/level ceremonies and fanfares never fire on a
+        // wrong answer — the remediation that follows is the teaching moment
+        // and nothing celebrates over it. They fire on the next correct.
+        emitXpAwards(wasCorrect ? body.xp : body.xp.map((a: { awarded: number; label: string; levelUp: boolean; newLevel: number }) => ({ ...a, levelUp: false, rankUp: false, tierUp: false })))
+      }
       // Badge unlocks fire HERE, at the earning act — the big center-screen
       // celebration (satisfaction audit #2). Slightly delayed so the verdict
-      // lands first.
-      if (Array.isArray(body.newBadges) && body.newBadges.length > 0) {
+      // lands first. Correct answers only: a badge earned on a miss surfaces
+      // in the dashboard instead of celebrating over the remediation.
+      if (wasCorrect && Array.isArray(body.newBadges) && body.newBadges.length > 0) {
         const earned = body.newBadges
         setTimeout(() => emitBadgeEvents(earned), 1400)
       }
-      const verified = !!body.verified
-      const wasCorrect = !!body.correct
       // Server truth first (node row read at answer time); body.review and the
       // client tree state are mid-deploy fallbacks. Review cards only ever
       // exist on already-verified nodes.

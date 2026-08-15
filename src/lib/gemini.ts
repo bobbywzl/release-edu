@@ -6,11 +6,64 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 // Gemini is the sole engine for understanding the learner's visual & auditory
 // files (images, video, PDFs, voice notes) — it is more capable at multimodal
 // than the teaching tier, so ALL such processing routes here, on Gemini's best
-// FLASH model: strong at multimodal with the fast, low-cost latency that fits
-// analysis running BEFORE Bob's reply. (Pinned like every other Gemini id in
-// this file — the dynamic resolver governs the Anthropic teaching/judging
-// tiers only.)
+// FLASH model. The pinned id below is the permanent fallback; the resolver
+// underneath auto-adopts the newest flash release (user directive, Aug 2026:
+// every tier tracks the latest of its corresponding model family).
 export const GEMINI_MULTIMODAL_MODEL = 'gemini-3-flash-preview'
+
+// ── Latest-flash resolver ──
+// Google's ListModels carries no release dates, so "newest" is the highest
+// version number among generateContent-capable plain-flash models (previews
+// included; a stable id beats a preview at the same version). 6h cache on
+// success, 5min negative cache, 4s hard timeout — resolution can never hang
+// a turn, and any failure serves the pinned id.
+const FLASH_TTL_MS = 6 * 60 * 60 * 1000
+const FLASH_FAIL_TTL_MS = 5 * 60 * 1000
+let flashCache: { at: number; id: string; ok: boolean } | null = null
+let flashInflight: Promise<string> | null = null
+
+async function fetchLatestFlash(apiKey: string): Promise<string> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 4000)
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${apiKey}`, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`gemini models list ${res.status}`)
+    const body = (await res.json()) as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> }
+    let best: { id: string; ver: number; stable: number } | null = null
+    for (const m of body.models ?? []) {
+      const id = (m.name ?? '').replace(/^models\//, '')
+      // The plain flash line only — never -lite/-image/-tts/-live variants.
+      const match = id.match(/^gemini-(\d+(?:\.\d+)?)-flash(?:-preview)?(?:-\d[\d-]*)?$/)
+      if (!match) continue
+      if (!(m.supportedGenerationMethods ?? []).includes('generateContent')) continue
+      const ver = parseFloat(match[1])
+      const stable = id.includes('preview') ? 0 : 1
+      if (!best || ver > best.ver || (ver === best.ver && stable > best.stable)) best = { id, ver, stable }
+    }
+    return best?.id ?? GEMINI_MULTIMODAL_MODEL
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** The multimodal model — newest Gemini flash, pinned-id fallback. */
+export async function getMultimodalModel(): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) return GEMINI_MULTIMODAL_MODEL
+  const ttl = flashCache?.ok ? FLASH_TTL_MS : FLASH_FAIL_TTL_MS
+  if (flashCache && Date.now() - flashCache.at < ttl) return flashCache.id
+  if (!flashInflight) {
+    flashInflight = fetchLatestFlash(apiKey)
+      .then(id => { flashCache = { at: Date.now(), id, ok: true }; return id })
+      .catch(() => {
+        const id = flashCache?.id ?? GEMINI_MULTIMODAL_MODEL
+        flashCache = { at: Date.now(), id, ok: false }
+        return id
+      })
+      .finally(() => { flashInflight = null })
+  }
+  return flashInflight
+}
 
 function getClient(): GoogleGenerativeAI | null {
   const apiKey = process.env.GEMINI_API_KEY
@@ -62,8 +115,9 @@ export async function searchForResources(
   }
 }
 
-// Image/file analysis for multimodal learning
-export async function analyzeImage(imageBase64: string, context: string, mimeType?: string): Promise<string> {
+// Image/file analysis for multimodal learning. userId attributes the spend
+// to the learner so the per-user budget gate actually sees Gemini usage.
+export async function analyzeImage(imageBase64: string, context: string, mimeType?: string, userId?: string): Promise<string> {
   const genAI = getClient()
   if (!genAI) return 'Image analysis unavailable — no Gemini API key configured.'
   
@@ -83,19 +137,20 @@ export async function analyzeImage(imageBase64: string, context: string, mimeTyp
   // Genuine multimodal understanding on Gemini's best flash model, with a
   // graceful degrade if it errors (rate limit / unavailable) so a bad call
   // never kills the turn.
+  const mmModel = await getMultimodalModel()
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MULTIMODAL_MODEL })
+    const model = genAI.getGenerativeModel({ model: mmModel })
     const result = await model.generateContent([
       { text: prompt },
       { inlineData: { mimeType: detectedMime, data: imageBase64 } },
     ])
     {
       const { recordGeminiUsage } = await import('@/lib/usage')
-      recordGeminiUsage(result.response.usageMetadata, { model: GEMINI_MULTIMODAL_MODEL, feature: 'image' })
+      recordGeminiUsage(result.response.usageMetadata, { userId, model: mmModel, feature: 'image' })
     }
     return result.response.text()
   } catch (err) {
-    console.error(`Gemini multimodal analysis error (${GEMINI_MULTIMODAL_MODEL}):`, err)
+    console.error(`Gemini multimodal analysis error (${mmModel}):`, err)
   }
   // Degrade gracefully instead of killing the turn.
   return `I can see you've shared a ${isVideo ? 'video' : isAudio ? 'voice note' : isPDF ? 'PDF' : 'file'}. Could you tell me what you'd like to discuss about it?`
@@ -115,12 +170,13 @@ export async function analyzeVideo(videoBase64: string, mimeType: string, contex
  * confident).
  */
 export async function evaluateGeneratedVisual(
-  imageBase64: string, mimeType: string, request: string, context: string,
+  imageBase64: string, mimeType: string, request: string, context: string, userId?: string,
 ): Promise<{ confidence: number; issue: string } | null> {
   const genAI = getClient()
   if (!genAI) return null
+  const mmModel = await getMultimodalModel()
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MULTIMODAL_MODEL })
+    const model = genAI.getGenerativeModel({ model: mmModel })
     const result = await model.generateContent([
       { text: `You are a strict reviewer of educational diagrams. This image was generated to satisfy the request below. Score 0-100: does it ACCURATELY and CLEARLY deliver exactly what was requested, well enough to teach from?
 
@@ -134,7 +190,7 @@ Return ONLY JSON: {"confidence": 0-100, "issue": "the single biggest flaw, one s
     ])
     {
       const { recordGeminiUsage } = await import('@/lib/usage')
-      recordGeminiUsage(result.response.usageMetadata, { model: GEMINI_MULTIMODAL_MODEL, feature: 'image' })
+      recordGeminiUsage(result.response.usageMetadata, { userId, model: mmModel, feature: 'image' })
     }
     const text = result.response.text().trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     const parsed = JSON.parse(text) as { confidence?: number; issue?: string }
@@ -156,12 +212,13 @@ Return ONLY JSON: {"confidence": 0-100, "issue": "the single biggest flaw, one s
  * the visual-confidence law. Returns null on failure.
  */
 export async function recommendVisualResource(
-  request: string, context: string,
+  request: string, context: string, userId?: string,
 ): Promise<{ name: string; url: string; why: string } | null> {
   const genAI = getClient()
   if (!genAI) return null
+  const mmModel = await getMultimodalModel()
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MULTIMODAL_MODEL })
+    const model = genAI.getGenerativeModel({ model: mmModel })
     const result = await model.generateContent(
       `A learner needs to VISUALLY understand the following, and a generated static diagram was judged not good enough. Name the single BEST real, freely-accessible web resource for visually understanding exactly this — prefer interactive simulations and animations from well-known, reliable sources (PhET, GeoGebra, Desmos, Falstad, ophysics, 3Blue1Brown, Wikipedia's animated illustrations, university applets). The URL must be real and stable — if unsure of a deep link, give the site's search/landing URL that gets closest.
 
@@ -172,7 +229,7 @@ Return ONLY JSON: {"name": "resource name", "url": "https://...", "why": "one se
     )
     {
       const { recordGeminiUsage } = await import('@/lib/usage')
-      recordGeminiUsage(result.response.usageMetadata, { model: GEMINI_MULTIMODAL_MODEL, feature: 'image' })
+      recordGeminiUsage(result.response.usageMetadata, { userId, model: mmModel, feature: 'image' })
     }
     const text = result.response.text().trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     const parsed = JSON.parse(text) as { name?: string; url?: string; why?: string }

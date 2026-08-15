@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Sprout, Plus, Trash2, CheckCircle2, Loader2, RefreshCw, Sparkles, ClipboardList, Copy, X, Bot, Hammer } from 'lucide-react'
+import { Sprout, Plus, Trash2, CheckCircle2, Loader2, RefreshCw, Sparkles, ClipboardList, Copy, X, Bot } from 'lucide-react'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
@@ -36,12 +36,12 @@ export default function TreePage() {
   const [problem, setProblem] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Session onboarding — 5 questions, never more: language → the problem →
-  // the PURPOSE behind it (what "relevant" means for this session) → the
-  // student's background → target depth (explainable ↔ deployable). All of
-  // it calibrates every AI output before the first branch grows.
-  const [step, setStep] = useState(0)
-  const STEPS = 5
+  // Session onboarding — ONE required question (the problem) on one screen.
+  // The other four calibrators (language / purpose / background / depth) sit
+  // in a collapsed "add context" expander, pre-filled from the app language
+  // and the previous session — open only to adjust (efficiency law: the bare
+  // minimum stands between the learner and their tree).
+  const [showExtras, setShowExtras] = useState(false)
   // The session onboarding lives in a FULL-SCREEN conversational overlay,
   // opened by the New Session button — never an always-on inline form.
   const [showOnboard, setShowOnboard] = useState(false)
@@ -65,14 +65,10 @@ export default function TreePage() {
   // Haiku call (fired when the problem is submitted) swaps in problem-specific
   // ones if they arrive before the student types their own.
   const [purposeIdeas, setPurposeIdeas] = useState<string[] | null>(null)
-  // Reciprocity theater, honestly framed: each answered question gets Bob's
-  // "under construction" confirmation (the real build runs at the end).
-  const [confirms, setConfirms] = useState<string[]>([])
-  // End-of-onboarding construction indicator (the Release-EDU-style build
-  // screen): staged progress while the seed request runs.
+  // Construction indicator: staged progress while the seed request runs.
   const [buildStage, setBuildStage] = useState(0)
-  // RECIPROCITY gift: Bob's 2-3 sentence read on the problem, fetched the
-  // moment it's typed — value delivered before setup even finishes.
+  // RECIPROCITY gift: Bob's 2-3 sentence read on the problem, fetched when
+  // Grow is tapped — it lands as a bubble on the construction screen.
   const [firstRead, setFirstRead] = useState<string | null>(null)
   // ENDOWMENT: the "make it yours" moment after construction — editable
   // title (Haiku headline as the smart default) + accent swatch.
@@ -98,7 +94,7 @@ export default function TreePage() {
   }
 
   async function openOnboard() {
-    setShowOnboard(true); setStep(0); setError(null); setConfirms([]); setBuildStage(0); setFirstRead(null); setReadyTree(null); setAccentPick(null); setOpening(false)
+    setShowOnboard(true); setShowExtras(false); setError(null); setBuildStage(0); setFirstRead(null); setReadyTree(null); setAccentPick(null); setOpening(false)
     if (defaultsLoaded.current) return
     defaultsLoaded.current = true
     try {
@@ -116,14 +112,12 @@ export default function TreePage() {
     } catch { /* first-time user — built-in defaults stand */ }
   }
 
-  // Advance a step, recording Bob's construction confirmation for the answer
-  // just given (echo clamped so the bubble stays one line-ish).
-  function advanceFrom(s: number) {
-    const echo = (x: string) => (x.trim().length > 90 ? `${x.trim().slice(0, 90)}…` : x.trim())
-    if (s === 0) setConfirms(c => [...c, t('tree.confirmLang').replace('{lang}', sessLang === 'zh' ? '中文' : 'English')])
-    if (s === 1) {
-      setConfirms(c => [...c, t('tree.confirmProblem').replace('{echo}', echo(problem))])
-      // Fire the purpose-chip draft in the background — never blocks the flow.
+  // Open/close the optional calibrators; problem-specific purpose chips are
+  // drafted in the background the first time they open with a problem typed.
+  function toggleExtras() {
+    const opening = !showExtras
+    setShowExtras(opening)
+    if (opening && problem.trim() && !purposeIdeas) {
       fetch('/api/tree/purpose-ideas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -132,28 +126,7 @@ export default function TreePage() {
         .then(r => (r.ok ? r.json() : null))
         .then(d => { if (Array.isArray(d?.ideas) && d.ideas.length === 3) setPurposeIdeas(d.ideas) })
         .catch(() => { /* canned chips stand */ })
-      // Reciprocity: Bob's first read on the problem — a real gift of insight
-      // that lands as a bubble while the remaining questions are answered.
-      fetch('/api/tree/first-read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ problem: problem.trim(), lang: sessLang }),
-      })
-        .then(r => (r.ok ? r.json() : null))
-        .then(d => { if (typeof d?.read === 'string' && d.read.trim()) setFirstRead(d.read.trim()) })
-        .catch(() => { /* gift is optional */ })
     }
-    if (s === 2) {
-      setConfirms(c => [...c, purpose.trim()
-        ? t('tree.confirmPurpose').replace('{echo}', echo(purpose))
-        : t('tree.confirmPurposeSkip')])
-    }
-    if (s === 3) {
-      setConfirms(c => [...c, background.trim()
-        ? t('tree.confirmBackground')
-        : t('tree.confirmBackgroundSkip')])
-    }
-    setStep(s + 1)
   }
 
   // Staged construction progress while the seed request runs. Stages advance
@@ -181,6 +154,18 @@ export default function TreePage() {
     if (!p || creating) return
     setCreating(true)
     setError(null)
+    // Reciprocity: Bob's first read on the problem — a real gift of insight
+    // that lands as a bubble on the construction screen while the tree grows.
+    if (!firstRead) {
+      fetch('/api/tree/first-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ problem: p, lang: sessLang }),
+      })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (typeof d?.read === 'string' && d.read.trim()) setFirstRead(d.read.trim()) })
+        .catch(() => { /* gift is optional */ })
+    }
     try {
       const res = await fetch('/api/tree', {
         method: 'POST',
@@ -311,13 +296,6 @@ export default function TreePage() {
               <p className="text-sm font-bold text-foreground truncate">{t('tree.newSession')}</p>
               <p className="text-[11px] text-muted-foreground truncate">{t('tree.sessionSetup')}</p>
             </div>
-            {!creating && !readyTree && (
-              <div className="flex items-center gap-1.5 mr-2">
-                {Array.from({ length: STEPS }, (_, i) => (
-                  <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-primary' : i < step ? 'w-3 bg-primary/50' : 'w-3 bg-muted'}`} />
-                ))}
-              </div>
-            )}
             <button
               onClick={() => { if (!creating) setShowOnboard(false) }}
               aria-label={t('common.dismiss')}
@@ -400,37 +378,21 @@ export default function TreePage() {
                   <div className="w-full max-w-sm h-1.5 rounded-full bg-muted overflow-hidden">
                     <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${[18, 45, 72, 90][Math.min(buildStage, 3)]}%` }} />
                   </div>
+                  {/* Bob's first read — the reciprocity gift lands while the
+                      tree grows, so the wait itself delivers value. */}
+                  {firstRead && (
+                    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm rounded-2xl border border-emerald-400/30 bg-emerald-500/[0.06] px-4 py-3 text-left">
+                      <p className="text-[11px] font-bold text-emerald-300 uppercase tracking-wide mb-1">{t('tree.firstReadTitle')}</p>
+                      <p className="text-[13px] text-foreground/90 leading-relaxed">{firstRead}</p>
+                    </motion.div>
+                  )}
                 </div>
               ) : (
                 <>
-              {/* Bob's construction confirmations — every answered question
-                  is visibly "already in the build" (goal gradient + trust). */}
-              {confirms.length > 0 && (
-                <div className="space-y-2">
-                  {confirms.map((c, i) => (
-                    <div key={i} className="flex items-start gap-3 opacity-80">
-                      <div className="w-9 flex-shrink-0" />
-                      <p className="text-[13px] text-emerald-300/90 leading-snug flex items-start gap-1.5">
-                        <Hammer className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                        <span>{c}</span>
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {firstRead && step > 1 && (
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
-                    <Bot className="w-5 h-5 text-emerald-400" />
-                  </div>
-                  <div className="rounded-2xl rounded-tl-sm border border-emerald-400/30 bg-emerald-500/[0.06] px-4 py-3">
-                    <p className="text-[11px] font-bold text-emerald-300 uppercase tracking-wide mb-1">{t('tree.firstReadTitle')}</p>
-                    <p className="text-[13px] text-foreground/90 leading-relaxed">{firstRead}</p>
-                  </div>
-                </motion.div>
-              )}
+              {/* ONE SCREEN: the problem is the only required question; the
+                  four calibrators sit behind the "add context" toggle with
+                  smart defaults already applied. */}
               <motion.div
-                key={step}
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                 className="flex items-start gap-3"
               >
@@ -438,135 +400,123 @@ export default function TreePage() {
                   <Bot className="w-5 h-5 text-primary" />
                 </div>
                 <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3">
-                  <p className="text-base font-semibold text-foreground leading-snug">
-                    {step === 0 ? t('tree.stepLanguage') : step === 1 ? t('tree.problemPrompt') : step === 2 ? t('tree.stepPurpose') : step === 3 ? t('tree.stepBackground') : t('tree.stepDifficulty')}
-                  </p>
-                  {step === 2 && <p className="text-xs text-muted-foreground mt-1 leading-snug">{t('tree.purposeHint')}</p>}
-                  {step === 4 && <p className="text-xs text-muted-foreground mt-1 leading-snug">{t('tree.difficultyHint')}</p>}
+                  <p className="text-base font-semibold text-foreground leading-snug">{t('tree.problemPrompt')}</p>
                 </div>
               </motion.div>
 
-              <div className="sm:pl-12 space-y-5">
-                {step === 0 && (
-                  <div className="flex gap-2">
-                    {([['en', 'English'], ['zh', '中文']] as const).map(([code, label]) => (
-                      <button
-                        key={code}
-                        onClick={() => { sessLangTouched.current = true; setSessLang(code) }}
-                        className={`px-6 py-3 rounded-xl border text-base font-medium transition-colors ${
-                          sessLang === code ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="sm:pl-12 space-y-4">
+                <textarea
+                  value={problem}
+                  onChange={e => setProblem(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (problem.trim() && !creating) void createTree() } }}
+                  placeholder={t('tree.problemPlaceholder')}
+                  rows={3}
+                  autoFocus
+                  className="w-full bg-background border border-border rounded-xl px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
 
-                {step === 1 && (
-                  <textarea
-                    value={problem}
-                    onChange={e => setProblem(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (problem.trim()) advanceFrom(1) } }}
-                    placeholder={t('tree.problemPlaceholder')}
-                    rows={3}
-                    autoFocus
-                    className="w-full bg-background border border-border rounded-xl px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                )}
+                <button
+                  onClick={toggleExtras}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3 h-3 flex-shrink-0" />
+                  {showExtras ? t('tree.hideContext') : t('tree.addContext')}
+                </button>
 
-                {step === 2 && (
-                  <div className="space-y-3">
-                    {/* Smart defaults: tap a likely purpose instead of writing
-                        from scratch (AI-drafted from the problem; canned until
-                        those arrive). Always editable in the box below. */}
-                    <div className="flex flex-wrap gap-2">
-                      {(purposeIdeas ?? [t('tree.purposeIdea1'), t('tree.purposeIdea2'), t('tree.purposeIdea3')]).map((idea, i) => (
-                        <button
-                          key={`${i}-${idea.slice(0, 16)}`}
-                          onClick={() => setPurpose(idea)}
-                          className={`px-3 py-2 rounded-xl border text-[13px] text-left transition-colors max-w-full ${
-                            purpose === idea ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
-                          }`}
-                        >
-                          {idea}
-                        </button>
-                      ))}
+                {showExtras && (
+                  <div className="space-y-4 rounded-xl border border-border/70 bg-card/50 p-4">
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-foreground">{t('tree.stepLanguage')}</p>
+                      <div className="flex gap-2">
+                        {([['en', 'English'], ['zh', '中文']] as const).map(([code, label]) => (
+                          <button
+                            key={code}
+                            onClick={() => { sessLangTouched.current = true; setSessLang(code) }}
+                            className={`px-4 py-2 rounded-xl border text-sm font-medium transition-colors ${
+                              sessLang === code ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <textarea
-                      value={purpose}
-                      onChange={e => setPurpose(e.target.value)}
-                      placeholder={t('tree.purposePlaceholder')}
-                      rows={4}
-                      autoFocus
-                      className="w-full bg-background border border-border rounded-xl px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    />
-                  </div>
-                )}
 
-                {step === 3 && (
-                  <div className="space-y-2">
-                    {bgPrefilled && background.trim() !== '' && (
-                      <p className="text-[11px] text-primary/80 flex items-center gap-1.5">
-                        <Sparkles className="w-3 h-3 flex-shrink-0" /> {t('tree.prefilledHint')}
-                      </p>
-                    )}
-                  <textarea
-                    value={background}
-                    onChange={e => setBackground(e.target.value)}
-                    placeholder={t('tree.backgroundPlaceholder')}
-                    rows={4}
-                    autoFocus
-                    className="w-full bg-background border border-border rounded-xl px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                  </div>
-                )}
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-foreground">{t('tree.stepPurpose')}</p>
+                      <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.purposeHint')}</p>
+                      {/* Smart defaults: tap a likely purpose instead of writing
+                          from scratch (AI-drafted from the problem; canned until
+                          those arrive). Always editable in the box below. */}
+                      <div className="flex flex-wrap gap-2">
+                        {(purposeIdeas ?? [t('tree.purposeIdea1'), t('tree.purposeIdea2'), t('tree.purposeIdea3')]).map((idea, i) => (
+                          <button
+                            key={`${i}-${idea.slice(0, 16)}`}
+                            onClick={() => setPurpose(idea)}
+                            className={`px-3 py-1.5 rounded-xl border text-[12px] text-left transition-colors max-w-full ${
+                              purpose === idea ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'
+                            }`}
+                          >
+                            {idea}
+                          </button>
+                        ))}
+                      </div>
+                      <textarea
+                        value={purpose}
+                        onChange={e => setPurpose(e.target.value)}
+                        placeholder={t('tree.purposePlaceholder')}
+                        rows={2}
+                        className="w-full bg-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                    </div>
 
-                {step === 4 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {(['beginner', 'intermediate', 'advanced', 'professional'] as const).map(level => (
-                      <button
-                        key={level}
-                        onClick={() => setDifficulty(level)}
-                        disabled={creating}
-                        className={`text-left rounded-xl border p-3.5 transition-colors disabled:opacity-60 ${
-                          difficulty === level ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent'
-                        }`}
-                      >
-                        <p className={`text-sm font-bold ${difficulty === level ? 'text-primary' : 'text-foreground'}`}>{t(`tree.diff.${level}`)}</p>
-                        <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{t(`tree.diff.${level}Desc`)}</p>
-                      </button>
-                    ))}
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-foreground">{t('tree.stepBackground')}</p>
+                      {bgPrefilled && background.trim() !== '' && (
+                        <p className="text-[11px] text-primary/80 flex items-center gap-1.5">
+                          <Sparkles className="w-3 h-3 flex-shrink-0" /> {t('tree.prefilledHint')}
+                        </p>
+                      )}
+                      <textarea
+                        value={background}
+                        onChange={e => setBackground(e.target.value)}
+                        placeholder={t('tree.backgroundPlaceholder')}
+                        rows={2}
+                        className="w-full bg-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-foreground">{t('tree.stepDifficulty')}</p>
+                      <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.difficultyHint')}</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {(['beginner', 'intermediate', 'advanced', 'professional'] as const).map(level => (
+                          <button
+                            key={level}
+                            onClick={() => setDifficulty(level)}
+                            disabled={creating}
+                            className={`text-left rounded-xl border p-2.5 transition-colors disabled:opacity-60 ${
+                              difficulty === level ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent'
+                            }`}
+                          >
+                            <p className={`text-[13px] font-bold ${difficulty === level ? 'text-primary' : 'text-foreground'}`}>{t(`tree.diff.${level}`)}</p>
+                            <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{t(`tree.diff.${level}Desc`)}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
 
                 <div className="flex items-center gap-3">
-                  {step > 0 && !creating && (
-                    <button
-                      onClick={() => { setConfirms(c => c.slice(0, -1)); setStep(s => s - 1) }}
-                      className="px-5 py-2.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                    >
-                      {t('tree.back')}
-                    </button>
-                  )}
-                  {step < STEPS - 1 ? (
-                    <button
-                      onClick={() => advanceFrom(step)}
-                      disabled={step === 1 && !problem.trim()}
-                      className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40"
-                    >
-                      {t('tree.next')}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={createTree}
-                      disabled={!problem.trim() || creating}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40"
-                    >
-                      {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                      {creating ? t('tree.growing') : t('tree.grow')}
-                    </button>
-                  )}
+                  <button
+                    onClick={createTree}
+                    disabled={!problem.trim() || creating}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40"
+                  >
+                    {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    {creating ? t('tree.growing') : t('tree.grow')}
+                  </button>
                   {error && <span className="text-xs text-destructive">{error}</span>}
                 </div>
               </div>

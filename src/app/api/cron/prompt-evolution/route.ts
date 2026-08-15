@@ -88,12 +88,18 @@ Output valid JSON only:
     const Anthropic = (await import('@anthropic-ai/sdk')).default
     const client = new Anthropic({ apiKey })
 
+    const { getTeachingModel } = await import('@/lib/model-resolver')
+    const model = await getTeachingModel()
     const result = await client.messages.create({
-      model: 'claude-opus-4-8',
+      model,
       max_tokens: 1024,
       ...NO_THINKING,
       messages: [{ role: 'user', content: analysisPrompt }],
     })
+    try {
+      const { recordAnthropicUsage } = await import('@/lib/usage')
+      recordAnthropicUsage(result.usage, { userId: null, model, feature: 'other' })
+    } catch { /* non-critical */ }
 
     const text = (result.content[0] as { text: string }).text?.trim() || ''
     let parsed: { patterns: string[]; proposed_changes: { section: string; rationale: string; proposed_addition: string; sampleSize: number }[] }
