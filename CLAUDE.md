@@ -185,9 +185,10 @@ Release EDU first-run interview is deleted — first-run onboarding IS the setup
   older caches are treated as absent so Release EDU data can never surface).
 - `src/lib/usage.ts` + admin panel — cost telemetry. Feature taxonomy: `tree-seed`,
   `tree-expand`, `tree-explainer`, `tree-verify`, `tree-digest`, `tree-summary`,
-  `tree-copilot`, `node-chat`, `reflection`, `insight`, `onboarding`, `portfolio`,
-  `title`, `image`, `other` (legacy values render with "(legacy)" labels). Every new
-  AI call MUST record usage with a fitting feature tag.
+  `tree-copilot`, `node-chat`, `insight`, `onboarding`, `portfolio`,
+  `title`, `image`, `other` (`reflection` and other legacy values have no live
+  writer and render with "(legacy)" labels). Every new AI call MUST record usage
+  with a fitting feature tag.
 
 ## The Insight Constellation (the moat — grounded in learning-science research)
 
@@ -224,6 +225,13 @@ depth THIS problem needs — no generic field lectures, no uncalled-for depth) a
 mechanism that makes it transferable understanding). Canonical wording lives in
 FOUNDATION.md; prompts consume it via `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 Apply it to any new answer-producing feature.
+
+Companion law — **Plain Language, Intuition First** (FOUNDATION.md, user
+directive Aug 2026): all learner-facing content uses the fewest, simplest words
+that produce complete understanding — intuition first, every technical term
+unpacked in plain words in the same breath; the depth calibrator raises depth,
+never jargon. `PLAIN_LANGUAGE` in `src/lib/tree-engine.ts` rides inside
+`sessionDirectives()`, so any prompt using session directives gets it free.
 
 Companion law — **Per-Node Redundancy Avoidance** (FOUNDATION.md): every node's
 syllabus/explainer/chat sees the whole tree AND what ancestor workspaces already

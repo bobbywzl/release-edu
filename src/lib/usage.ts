@@ -10,8 +10,11 @@ export type UsageFeature =
   // ── Tree EDU features ──
   | 'tree-seed' | 'tree-expand' | 'tree-explainer' | 'tree-verify' | 'tree-digest' | 'node-chat'
   | 'tree-copilot' | 'tree-summary'
-  | 'onboarding' | 'reflection' | 'insight' | 'title' | 'portfolio' | 'image' | 'other'
-  // ── Legacy (pre-pivot data still in the telemetry table) ──
+  | 'onboarding' | 'insight' | 'title' | 'portfolio' | 'image' | 'other'
+  // ── Legacy (no live writer; rows still in the telemetry table) ──
+  // 'reflection' joined this group when the pre-pass folded into the main
+  // teaching call (Aug 2026).
+  | 'reflection'
   | 'tutoring' | 'research' | 'curriculum' | 'chapter' | 'quiz' | 'capstone' | 'compaction' | 'project'
 
 export type UsageProvider = 'anthropic' | 'google'

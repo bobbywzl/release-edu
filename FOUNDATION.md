@@ -151,6 +151,28 @@ that resolves the moment but teaches nothing). Every prompt that produces
 learner-facing answers (node chat, explainers) embeds this standard — see
 `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 
+## Plain Language, Intuition First (law — user directive, Aug 2026)
+
+Everything Bob produces for the learner — node summaries, syllabi, explainers,
+chat answers, checkpoint questions, the answer document — is written in the
+simplest words that still carry the full idea:
+
+- Short sentences, everyday wording, concrete pictures before abstractions.
+  Build the intuition first (what it IS, plainly, with one concrete example),
+  then name it precisely.
+- Every technical term that must appear gets a plain-words unpacking in the
+  same breath ("entropy — how spread out the energy is"). Never a hard word
+  where a simple one carries the same meaning; never a word that doesn't earn
+  its place.
+- The goal is the FEWEST, SIMPLEST words that produce complete understanding —
+  less and precise always beats more and complex.
+- The session's depth calibrator raises DEPTH and rigor, never jargon density
+  or wordiness: an advanced session still reads plainly, it just goes deeper.
+
+Implementation: `PLAIN_LANGUAGE` in `src/lib/tree-engine.ts`, injected through
+`sessionDirectives()` so every content-producing prompt in the session carries
+it automatically.
+
 ## Per-Node Redundancy Avoidance (law — the Answer Standard's companion)
 
 Every node teaches ONLY its own new ground. A node's workspace — the opening

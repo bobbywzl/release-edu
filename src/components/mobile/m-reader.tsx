@@ -1,18 +1,20 @@
 'use client'
 /**
- * Reader overlay — one node, three faces (the design's Reader / Ask Bob /
- * Listening screens): the explainer as reading material, the live checkpoint
- * card, the node chat with Bob, and a speechSynthesis listen bar.
- *
- * First open of a node fires [NODE_INTRO] (the syllabus-contract turn) and
- * generates the explainer — both cached server-side afterwards.
+ * Reader overlay — one node, same laws as desktop (qa-findings-4 №2):
+ * lands in the ASK-FIRST checkpoint chat (the [NODE_INTRO] syllabus + the
+ * checkpoint loop — Bottleneck-Triggered Teaching's default mode is ASKING),
+ * with the full explainer generated ON DEMAND in the Read tab. A wrong
+ * answer auto-fires the law-mandated [NODE_REMEDIATE] full explainer (no tap
+ * gate); verification auto-fires the [NODE_VERIFIED] payoff turn, whose
+ * [[NEXT_NODE]] button renders as the continue CTA. Listen reads the
+ * explainer aloud once it exists.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLanguage } from '@/lib/i18n'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { emitXpAwards } from '@/components/xp-toast'
 import {
-  fetchExplainer, fetchNodeChat, streamNodeChat, visibleProse,
+  fetchExplainer, fetchNodeChat, streamNodeChat, visibleProse, parseNextNode,
   type MChatMsg, type MQuiz, type QuizVerdict,
 } from './m-api'
 import { MQuizCard } from './m-quiz-card'
@@ -33,12 +35,22 @@ function toSpeech(md: string): string {
     .trim()
 }
 
-export function MReader({ target, onClose }: { target: ReaderTarget; onClose: () => void }) {
+export function MReader({ target, onClose, onOpenNode }: {
+  target: ReaderTarget
+  onClose: () => void
+  /** Open a sibling node in this reader (the [[NEXT_NODE]] payoff CTA). */
+  onOpenNode?: (nodeId: string, nodeTitle: string) => void
+}) {
   const { t, language } = useLanguage()
   const lang = target.language ?? language
-  const [mode, setMode] = useState<'read' | 'chat'>(target.chat ? 'chat' : 'read')
+  // ASK-FIRST LANDING: the checkpoint chat is the default surface; 'read'
+  // (the explainer) is opened on demand. Only an explicit Listen tap lands
+  // on Read, because listening reads the explainer.
+  const [mode, setMode] = useState<'read' | 'chat'>(target.autoplay ? 'read' : 'chat')
   const [explainer, setExplainer] = useState<string | null>(null)
-  const [explState, setExplState] = useState<'loading' | 'ok' | 'failed'>('loading')
+  // 'idle' until the learner asks — generating the full explainer up front
+  // was an unrequested teaching-tier call AND a lecture-first landing.
+  const [explState, setExplState] = useState<'idle' | 'loading' | 'ok' | 'failed'>('idle')
   const [msgs, setMsgs] = useState<MChatMsg[]>([])
   const [pending, setPending] = useState<MQuiz | null>(null)
   const [mastery, setMastery] = useState(target.mastery ?? null)
@@ -99,7 +111,7 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
 
   useEffect(() => () => { try { window.speechSynthesis?.cancel() } catch { /* noop */ } }, [])
 
-  // ── Load: explainer + chat thread (intro turn on a first-ever open) ──
+  // ── Chat thread (the landing surface) ──
   const loadChat = useCallback(async () => {
     const d = await fetchNodeChat(target.treeId, target.nodeId)
     if (!d) return null
@@ -108,24 +120,33 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
     return d
   }, [target.treeId, target.nodeId])
 
+  // ── On-demand explainer (Read tab / Listen) ──
+  const ensureExplainer = useCallback(async (thenPlay?: boolean) => {
+    setExplState(s => (s === 'ok' || s === 'loading' ? s : 'loading'))
+    const expl = await fetchExplainer(target.treeId, target.nodeId, lang)
+    if (expl) {
+      setExplainer(expl); setExplState('ok')
+      speechRef.current = toSpeech(expl)
+      if (thenPlay && ttsSupported) {
+        setPlaying(true)
+        speakFrom(0, SPEEDS[0])
+      }
+    } else setExplState('failed')
+  }, [target.treeId, target.nodeId, lang, ttsSupported, speakFrom])
+
   useEffect(() => {
     let dead = false
     void (async () => {
-      const [expl, chat] = await Promise.all([
-        fetchExplainer(target.treeId, target.nodeId, lang),
-        loadChat(),
-      ])
+      const chat = await loadChat()
       if (dead) return
-      if (expl) {
-        setExplainer(expl); setExplState('ok')
-        speechRef.current = toSpeech(expl)
-        if (target.autoplay && !autoplayedRef.current && ttsSupported) {
-          autoplayedRef.current = true
-          setPlaying(true)
-          speakFrom(0, SPEEDS[0])
-        }
-      } else setExplState('failed')
-      // First-ever open: fire the syllabus-contract intro turn.
+      // Listen tap from Today: the ONE path that generates the explainer
+      // unprompted — the learner explicitly asked to hear it.
+      if (target.autoplay && !autoplayedRef.current) {
+        autoplayedRef.current = true
+        void ensureExplainer(true)
+      }
+      // First-ever open: fire the syllabus-contract intro turn — it streams
+      // visibly into the chat the learner is looking at.
       if (chat && chat.messages.length === 0) {
         setStreaming(true); setStreamText('')
         const r = await streamNodeChat({
@@ -143,14 +164,13 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const retryExplainer = useCallback(async () => {
-    setExplState('loading')
-    const expl = await fetchExplainer(target.treeId, target.nodeId, lang)
-    if (expl) { setExplainer(expl); setExplState('ok'); speechRef.current = toSpeech(expl) }
-    else setExplState('failed')
-  }, [target.treeId, target.nodeId, lang])
+  // Entering the Read tab IS the demand — generate (or fetch the cached
+  // explainer) on first entry, never on mount.
+  useEffect(() => {
+    if (mode === 'read' && explState === 'idle') void ensureExplainer()
+  }, [mode, explState, ensureExplainer])
 
-  // ── Checkpoint solicitation ([NODE_CHECKPOINT]) + remediation ──
+  // ── Checkpoint solicitation ([NODE_CHECKPOINT]) ──
   const solicit = useCallback(async () => {
     if (soliciting || streaming) return
     setSoliciting(true); setLastVerdict(null)
@@ -175,7 +195,7 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
       setMsgs(prev => [...prev, { id: `tmp-${Date.now()}`, role: 'assistant', content: r.budgetNote as string }])
       return
     }
-    if (r.prose) setMsgs(prev => [...prev, { id: `tmp-${Date.now()}`, role: 'assistant', content: r.prose }])
+    if (r.prose) setMsgs(prev => [...prev, { id: `tmp-${Date.now()}`, role: 'assistant', content: `${r.prose}${r.next ? `\n\n[[NEXT_NODE]]${JSON.stringify(r.next)}` : ''}` }])
     if (r.xp.length) emitXpAwards(r.xp)
     if (r.quiz) { setPending(r.quiz); setLastVerdict(null) }
     setTimeout(() => { void loadChat() }, 600)
@@ -188,22 +208,35 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
     void sendTurn(text, true)
   }, [draft, streaming, sendTurn])
 
-  // Wrong answer → the full-remediation turn, visible in the chat pane (law:
-  // never a one-line correction; the next checkpoint waits until they re-engage).
-  const explainWrong = useCallback(() => {
-    setMode('chat')
-    void sendTurn('[NODE_REMEDIATE]', false)
-  }, [sendTurn])
-
+  // Bottleneck-Triggered Teaching, enforced on this surface too: a wrong
+  // answer AUTO-fires the full remediation turn (never a tap-gated two-line
+  // verdict), and a fresh verification AUTO-fires the [NODE_VERIFIED] payoff
+  // turn whose [[NEXT_NODE]] button routes the momentum somewhere.
   const onVerdict = useCallback((v: QuizVerdict) => {
     setLastVerdict(v)
     if (v.mastery) setMastery({ filled: v.mastery.correct, target: v.mastery.target })
-  }, [])
+    if (!v.correct) {
+      setTimeout(() => {
+        setPending(null)
+        setMode('chat')
+        void sendTurn('[NODE_REMEDIATE]', false)
+      }, 1400)
+    } else if (v.verified) {
+      setTimeout(() => {
+        setPending(null)
+        setMode('chat')
+        void sendTurn('[NODE_VERIFIED]', false)
+      }, 1600)
+    }
+  }, [sendTurn])
 
+  const verifiedNow = !!(lastVerdict?.verified || lastVerdict?.alreadyVerified)
   const afterCorrect = lastVerdict?.correct
-    ? lastVerdict.verified || lastVerdict.alreadyVerified
-      ? { label: t('m.backToToday'), onClick: onClose }
-      : { label: t('m.nextCheckpoint'), onClick: () => { setPending(null); void solicit() } }
+    ? lastVerdict.verified
+      ? null // the payoff turn takes over — its NEXT_NODE button is the CTA
+      : lastVerdict.alreadyVerified
+        ? { label: t('m.backToToday'), onClick: onClose }
+        : { label: t('m.nextCheckpoint'), onClick: () => { setPending(null); void solicit() } }
     : null
 
   const remainingSec = (() => {
@@ -218,7 +251,7 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
     boxShadow: on ? 'inset 0 0 0 1px var(--m-accent)' : 'none',
   } as const)
 
-  const masteryLabel = lastVerdict?.verified || lastVerdict?.alreadyVerified
+  const masteryLabel = verifiedNow
     ? t('m.resumeVerified')
     : mastery
       ? t('m.proven').replace('{a}', String(mastery.filled)).replace('{b}', String(mastery.target))
@@ -227,8 +260,22 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
   const quizCard = pending && (
     <MQuizCard key={pending.question} quiz={pending} treeId={target.treeId} nodeId={target.nodeId}
       lang={lang} t={t} onVerdict={onVerdict} afterCorrect={afterCorrect}
-      onExplainWrong={explainWrong}
       onStale={() => { setPending(null); void loadChat() }} />
+  )
+
+  // Quiz-me is DISABLED while a turn streams or a card is being solicited —
+  // it used to render enabled-but-dead during the intro stream.
+  const quizMeButton = !pending && !verifiedNow && !streaming && (soliciting
+    ? <p style={{ margin: 0, fontSize: 13, color: 'var(--m-neutral-500)' }}>{t('m.bobThinking')}</p>
+    : <button className="m-btn m-btn-primary m-btn-block" onClick={() => void solicit()}>{t('m.quizMe')}</button>)
+
+  const backLabel = t(target.from === 'trees' ? 'm.tabTrees' : 'm.tabToday')
+
+  const nextNodeButton = (nn: { nodeId: string; title: string }) => onOpenNode && (
+    <button className="m-btn m-btn-primary" style={{ alignSelf: 'flex-start', fontSize: 13, marginTop: 6 }}
+      onClick={() => onOpenNode(nn.nodeId, nn.title)}>
+      {t('m.nextNode').replace('{title}', nn.title)}
+    </button>
   )
 
   return (
@@ -236,12 +283,12 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
       {/* Header */}
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: 'calc(var(--m-safe-top) + 26px) 16px 10px', borderBottom: '1px solid var(--m-divider)' }}>
         <button className="m-btn m-btn-ghost" style={{ padding: '4px 6px', fontSize: 13 }} onClick={onClose}>
-          <IconChevronLeft size={15} />{t('m.tabToday')}
+          <IconChevronLeft size={15} />{backLabel}
         </button>
         <div style={{ flex: 1 }} />
         <div className="m-seg" style={{ borderRadius: 99 }}>
-          <span style={seg(mode === 'read')} onClick={() => setMode('read')}>{t('m.read')}</span>
           <span style={seg(mode === 'chat')} onClick={() => setMode('chat')}>{t('m.askBob')}</span>
+          <span style={seg(mode === 'read')} onClick={() => setMode('read')}>{t('m.read')}</span>
         </div>
         {ttsSupported && (
           <button className="m-btn m-btn-icon m-btn-secondary" style={{ width: 32, height: 32, borderRadius: 99 }}
@@ -253,7 +300,7 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
         )}
       </div>
 
-      {/* Read mode */}
+      {/* Read mode — the on-demand explainer */}
       {mode === 'read' && (
         <div className="m-scroll" style={{ flex: 1 }}>
           <div style={{ padding: '22px 24px 40px', display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -265,6 +312,12 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
               {masteryLabel && <p style={{ margin: 0, fontSize: 12, color: 'var(--m-neutral-500)' }}>{masteryLabel}</p>}
             </div>
 
+            {explState === 'idle' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--m-neutral-400)' }}>{t('m.explainerIntro')}</p>
+                <button className="m-btn m-btn-primary" style={{ alignSelf: 'flex-start', fontSize: 12.5 }} onClick={() => void ensureExplainer()}>{t('m.writeExplainer')}</button>
+              </div>
+            )}
             {explState === 'loading' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div className="m-skel" style={{ height: 15 }} />
@@ -280,7 +333,7 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
             {explState === 'failed' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <p style={{ margin: 0, fontSize: 13, color: 'var(--m-neutral-400)' }}>{t('m.explainerRetry')}</p>
-                <button className="m-btn m-btn-secondary" style={{ alignSelf: 'flex-start', fontSize: 12.5 }} onClick={() => void retryExplainer()}>{t('m.retry')}</button>
+                <button className="m-btn m-btn-secondary" style={{ alignSelf: 'flex-start', fontSize: 12.5 }} onClick={() => void ensureExplainer()}>{t('m.retry')}</button>
               </div>
             )}
             {explState === 'ok' && explainer && (
@@ -292,16 +345,12 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
             <div className="m-hr" />
 
             {quizCard}
-            {!pending && (soliciting
-              ? <p style={{ margin: 0, fontSize: 13, color: 'var(--m-neutral-500)' }}>{t('m.bobThinking')}</p>
-              : explState === 'ok' && !(lastVerdict?.verified || lastVerdict?.alreadyVerified) && (
-                <button className="m-btn m-btn-primary m-btn-block" onClick={() => void solicit()}>{t('m.quizMe')}</button>
-              ))}
+            {quizMeButton}
           </div>
         </div>
       )}
 
-      {/* Chat mode */}
+      {/* Chat mode — the ask-first landing */}
       {mode === 'chat' && (
         <>
           <div className="m-scroll" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -309,11 +358,13 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
               {msgs.filter(m => m.role === 'user' || m.role === 'assistant').map(m => {
                 const prose = visibleProse(m.content).trim()
                 if (!prose) return null
+                const nn = m.role === 'assistant' ? parseNextNode(m.content) : null
                 return m.role === 'assistant' ? (
-                  <div key={m.id} style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                  <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div className="m-chat-body" style={{ maxWidth: '88%', borderRadius: '14px 14px 14px 4px', padding: '11px 14px', background: 'var(--m-surface)' }}>
                       <MarkdownRenderer content={prose} />
                     </div>
+                    {nn && nextNodeButton(nn)}
                   </div>
                 ) : (
                   <div key={m.id} style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -337,6 +388,7 @@ export function MReader({ target, onClose }: { target: ReaderTarget; onClose: ()
                 </div>
               )}
               {!streaming && quizCard}
+              {quizMeButton}
             </div>
           </div>
           <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px calc(var(--m-safe-bottom) + 14px)', borderTop: '1px solid var(--m-divider)' }}>

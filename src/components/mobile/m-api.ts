@@ -23,6 +23,10 @@ export interface MobileData {
   stats: { active: number; mastered: number; totalNodes: number; understoodNodes: number }
   resume: MResume | null
   reviewQueue: MReviewItem[]
+  /** TOTAL nodes due for review across all trees — the queue above is the
+   *  session's working set (capped); this is the honest number the Today
+   *  plan shows so it never contradicts the per-tree badges. */
+  reviewDueTotal?: number
   notes: MNote[]
 }
 
@@ -40,12 +44,15 @@ export interface QuizVerdict {
   verified: boolean; alreadyVerified: boolean; review: boolean
   mastery: { correct: number; target: number }
   newBadges?: BadgeEvent[]
-  stale?: boolean; error?: string
+  stale?: boolean; error?: string; code?: string
 }
+
+/** The [[NEXT_NODE]] payoff button — where the learning path goes next. */
+export interface NextNodeRef { nodeId: string; title: string }
 
 export const sumXp = (xp: MXpAward[] | undefined | null) => (xp ?? []).reduce((s, a) => s + (a.awarded || 0), 0)
 
-const CONTENT_MARKS = ['[[QUIZ]]', '[[TREE_SUGGEST]]', '[[XP]]', '[[SYLLABUS]]']
+const CONTENT_MARKS = ['[[QUIZ]]', '[[TREE_SUGGEST]]', '[[XP]]', '[[SYLLABUS]]', '[[ASSESS]]']
 function cutAt(s: string, marks: string[]): number {
   let at = -1
   for (const m of marks) {
@@ -63,21 +70,34 @@ export function visibleProse(full: string): string {
   return v
     .replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, '')
     .replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}?/g, '')
+    .replace(/\n*\[\[ASSESS\]\][^\n]*/g, '')
 }
 
 function parseMarkerJson<T>(full: string, mark: string): T | null {
   const idx = full.indexOf(mark)
   if (idx === -1) return null
   const rest = full.slice(idx + mark.length)
-  const end = cutAt(rest, ['[[QUIZ]]', '[[TREE_SUGGEST]]', '[[XP]]', '[[SYLLABUS]]', '[[DONE]]', '[[INCOMPLETE]]'])
+  const end = cutAt(rest, ['[[QUIZ]]', '[[TREE_SUGGEST]]', '[[XP]]', '[[SYLLABUS]]', '[[NEXT_NODE]]', '[[ASSESS]]', '[[DONE]]', '[[INCOMPLETE]]'])
   const raw = (end === -1 ? rest : rest.slice(0, end)).trim()
   try { return JSON.parse(raw) as T } catch { return null }
+}
+
+/** Extract the [[NEXT_NODE]] button from a (streamed or persisted) message —
+ *  the verified-turn payoff routes SOMEWHERE on every surface, /m included. */
+export function parseNextNode(content: string): NextNodeRef | null {
+  const m = content.match(/\[\[NEXT_NODE\]\](\{[^}]*\})/)
+  if (!m) return null
+  try {
+    const p = JSON.parse(m[1]) as { nodeId?: string; title?: string }
+    return typeof p.nodeId === 'string' && typeof p.title === 'string' ? { nodeId: p.nodeId, title: p.title } : null
+  } catch { return null }
 }
 
 export interface StreamResult {
   prose: string
   quiz: MQuiz | null
   xp: MXpAward[]
+  next: NextNodeRef | null
   cutOff: boolean
   budgetNote: string | null
   failed: boolean
@@ -92,7 +112,7 @@ export async function streamNodeChat(opts: {
   onText?: (visible: string) => void
   signal?: AbortSignal
 }): Promise<StreamResult> {
-  const empty: StreamResult = { prose: '', quiz: null, xp: [], cutOff: false, budgetNote: null, failed: false }
+  const empty: StreamResult = { prose: '', quiz: null, xp: [], next: null, cutOff: false, budgetNote: null, failed: false }
   try {
     const res = await fetch(`/api/tree/${opts.treeId}/node/${opts.nodeId}/chat`, {
       method: 'POST',
@@ -119,6 +139,7 @@ export async function streamNodeChat(opts: {
       prose: visibleProse(full).trim(),
       quiz: parseMarkerJson<MQuiz>(full, '[[QUIZ]]'),
       xp: parseMarkerJson<MXpAward[]>(full, '[[XP]]') ?? [],
+      next: parseNextNode(full),
       cutOff: sawIncomplete || !sawDone,
       budgetNote: null,
       failed: false,
@@ -128,10 +149,13 @@ export async function streamNodeChat(opts: {
   }
 }
 
-/** Judge a checkpoint answer against the server-stored card. */
+/** Judge a checkpoint answer against the server-stored card. For artifact
+ *  checkpoints pass artifactFileId (from uploadNodeEvidence) — `answer` is
+ *  then the optional note. */
 export async function submitQuizAnswer(opts: {
   treeId: string; nodeId: string; quiz: MQuiz
   answer: string | number; confidence?: 'sure' | 'unsure' | null; lang?: string | null
+  artifactFileId?: string
 }): Promise<QuizVerdict | null> {
   try {
     const res = await fetch(`/api/tree/${opts.treeId}/node/${opts.nodeId}/quiz`, {
@@ -142,15 +166,52 @@ export async function submitQuizAnswer(opts: {
         answer: opts.answer,
         ...(opts.confidence ? { confidence: opts.confidence } : {}),
         ...(opts.lang ? { lang: opts.lang } : {}),
+        ...(opts.artifactFileId ? { artifactFileId: opts.artifactFileId } : {}),
       }),
     })
     if (res.status === 409) return { stale: true } as QuizVerdict
     const data = await res.json().catch(() => null)
-    if (!res.ok) return { error: (data?.error as string) || 'failed' } as QuizVerdict
+    if (!res.ok) return { error: (data?.error as string) || 'failed', code: (data?.code as string) || undefined } as QuizVerdict
     return data as QuizVerdict
   } catch {
     return null
   }
+}
+
+/** Upload a checkpoint-evidence file onto the node (same endpoint and shape
+ *  as the desktop card, so it lands in the node's evidence list too). */
+export async function uploadNodeEvidence(nodeId: string, file: File): Promise<{ id: string } | null> {
+  try {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(String(r.result))
+      r.onerror = () => reject(r.error)
+      r.readAsDataURL(file)
+    })
+    const res = await fetch('/api/files/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workType: 'tree-node', workId: nodeId,
+        name: file.name, type: file.type || 'application/octet-stream',
+        content: dataUrl,
+      }),
+    })
+    const d = res.ok ? await res.json().catch(() => null) : null
+    return d?.id ? { id: d.id as string } : null
+  } catch {
+    return null
+  }
+}
+
+/** THE ANSWER (read-only): the tree's cached root-answer document. */
+export async function fetchTreeAnswer(treeId: string): Promise<{ answer: string | null } | null> {
+  try {
+    const r = await fetch(`/api/tree/${treeId}/answer`, { cache: 'no-store' })
+    if (!r.ok) return null
+    const d = await r.json().catch(() => null)
+    return d ? { answer: (d.answer as string | null) ?? null } : null
+  } catch { return null }
 }
 
 export async function fetchMobileData(): Promise<MobileData | null> {

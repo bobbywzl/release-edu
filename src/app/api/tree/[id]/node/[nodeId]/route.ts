@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { collectSubtreeIds, normalizeTreeKinds } from '@/lib/tree-engine'
-import { parseQuizState, masteryMet, type QuizState } from '@/lib/mastery'
+import { parseQuizState, masteryMet, QUIZ_HISTORY_CAP, type QuizState, type SyllabusFacet } from '@/lib/mastery'
 
 export async function PATCH(
   req: NextRequest,
@@ -30,6 +30,7 @@ export async function PATCH(
   const body = (await req.json().catch(() => ({}))) as {
     action?: string; text?: string; title?: string; summary?: string; newParentId?: string
     moveTail?: number; intoNodeId?: string; facets?: string[]; childIds?: string[]; facet?: string
+    fileId?: string
   }
 
   // Ownership check through the tree.
@@ -156,15 +157,27 @@ export async function PATCH(
       const arr = (raw: string | null) => { try { const v = JSON.parse(raw ?? '[]'); return Array.isArray(v) ? v : [] } catch { return [] } }
       const srcQs = parseQuizState(node.quizState)
       const dstQs = parseQuizState(into.quizState)
-      const facetMap = new Map<string, { name: string; done: boolean; struggled?: boolean }>()
+      // Facet union keeps the EVIDENCE-CONTRACT memory too (qa-findings-4
+      // №9): provenBy / evidencePending used to die in the merge. The entry
+      // that actually PROVED the facet owns that record.
+      const facetMap = new Map<string, SyllabusFacet>()
       for (const f of [...(dstQs.facets ?? []), ...(srcQs.facets ?? [])]) {
         const prev = facetMap.get(f.name)
+        if (!prev) { facetMap.set(f.name, { ...f }); continue }
+        const winner = prev.done ? prev : f.done ? f : prev
         facetMap.set(f.name, {
           name: f.name,
-          done: (prev?.done ?? false) || f.done,
-          struggled: (prev?.struggled ?? false) || f.struggled === true,
+          done: prev.done || f.done,
+          struggled: prev.struggled === true || f.struggled === true,
+          ...(winner.provenBy ? { provenBy: winner.provenBy } : {}),
+          ...(winner.evidencePending === true ? { evidencePending: true } : {}),
         })
       }
+      // Chronological unions, same caps as live writes — the source node's
+      // judged own-words answers, attempt record, and artifact-contract
+      // memory transfer instead of dying with the row.
+      const byTime = <T,>(list: T[], key: (x: T) => string) =>
+        [...list].sort((a, b) => key(a).localeCompare(key(b)))
       const mergedQs: QuizState = {
         ...dstQs,
         correct: dstQs.correct + srcQs.correct,
@@ -176,6 +189,11 @@ export async function PATCH(
         missed: [...dstQs.missed, ...srcQs.missed].slice(-5),
         reviewedAt: dstQs.reviewedAt ?? srcQs.reviewedAt,
         facets: facetMap.size > 0 ? Array.from(facetMap.values()) : null,
+        provenAnswers: byTime([...(dstQs.provenAnswers ?? []), ...(srcQs.provenAnswers ?? [])], a => a.at).slice(-6),
+        history: byTime([...(dstQs.history ?? []), ...(srcQs.history ?? [])], h => h.t).slice(-QUIZ_HISTORY_CAP),
+        artifactAsked: Array.from(
+          new Map([...(dstQs.artifactAsked ?? []), ...(srcQs.artifactAsked ?? [])].map(x => [x.trim().toLowerCase(), x])).values(),
+        ).slice(-6),
       }
       const met = masteryMet(mergedQs)
       const ann = [...arr(into.annotations), ...arr(node.annotations)]
@@ -368,30 +386,84 @@ export async function PATCH(
       return NextResponse.json({ ok: true })
     }
     case 'facet_evidence': {
-      // "Attach the capture later" — the deferred evidence landed. Only
-      // clears the facet's evidence-pending flag when a REAL uploaded
-      // artifact exists on this node; provenBy stays untouched as the
-      // honest record of how the facet originally verified.
+      // "Attach the capture later" — the deferred evidence landed. The flag
+      // clears ONLY for the SPECIFIC file just uploaded for it, and only
+      // after a judge pass confirms the artifact actually shows the facet —
+      // any pre-existing file on the node used to satisfy this unjudged
+      // (qa-findings-4 №1). provenBy stays untouched as the honest record of
+      // how the facet originally verified.
       const facetName = String(body.facet ?? '').trim().toLowerCase()
       if (!facetName) return NextResponse.json({ error: 'facet required' }, { status: 400 })
-      const fileCount = await prisma.linkedFile.count({
-        where: { userId, workType: 'tree-node', workId: nodeId },
-      }).catch(() => 0)
-      if (fileCount === 0) return NextResponse.json({ error: 'no evidence attached yet' }, { status: 400 })
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const fresh = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
-        if (!fresh) break
-        const qs = parseQuizState(fresh.quizState)
-        const i = (qs.facets ?? []).findIndex(f => f.name.trim().toLowerCase() === facetName)
-        if (i === -1 || !qs.facets![i].evidencePending) return NextResponse.json({ ok: true })
-        delete qs.facets![i].evidencePending
-        const w = await prisma.treeNode.updateMany({
-          where: { id: nodeId, quizState: fresh.quizState },
-          data: { quizState: JSON.stringify(qs) },
-        }).catch(() => null)
-        if (w && w.count > 0) break
+      const facetLabel = String(body.facet ?? '').trim().slice(0, 120)
+      if (typeof body.fileId !== 'string' || !body.fileId.trim()) {
+        return NextResponse.json({ error: 'fileId required — attach the capture first' }, { status: 400 })
       }
-      return NextResponse.json({ ok: true })
+      const file = await prisma.linkedFile.findUnique({
+        where: { id: body.fileId },
+        select: { id: true, userId: true, workId: true, name: true, mimeType: true, content: true, analysis: true, addedAt: true },
+      }).catch(() => null)
+      if (!file || file.userId !== userId || file.workId !== nodeId) {
+        return NextResponse.json({ error: 'file not found on this node' }, { status: 400 })
+      }
+      // Post-flag contract: the clearing evidence is the capture uploaded
+      // for THIS chip tap, not something that predated the flag.
+      if (Date.now() - file.addedAt.getTime() > 10 * 60 * 1000) {
+        return NextResponse.json({ error: 'stale file — attach a fresh capture' }, { status: 400 })
+      }
+      // Resolve legible content, then JUDGE it against the facet.
+      let analysis = (file.analysis ?? '').trim()
+      const isMedia = /^(image|audio|video)\//.test(file.mimeType ?? '') || file.mimeType === 'application/pdf'
+      const content = file.content ?? ''
+      if (!analysis && isMedia && content.startsWith('data:')) {
+        try {
+          const b64 = content.split(',', 2)[1] ?? ''
+          if (b64) {
+            const { analyzeImage } = await import('@/lib/gemini')
+            analysis = (await analyzeImage(b64, `the student's deferred evidence "${file.name}" for the syllabus point "${facetLabel}" — describe exactly what it shows`, file.mimeType ?? 'image/png', userId)).slice(0, 8000)
+            await prisma.linkedFile.update({ where: { id: file.id }, data: { analysis } }).catch(() => null)
+          }
+        } catch { /* unreadable → rejected below */ }
+      }
+      if (!analysis && !isMedia) {
+        const { decodeDataUriText } = await import('@/lib/text-artifact')
+        const text = content.startsWith('data:') ? decodeDataUriText(content) : content.trim() ? content : null
+        if (text?.trim()) analysis = `(text file contents) ${text.slice(0, 2000)}`
+      }
+      if (!analysis) {
+        return NextResponse.json({ error: 'unreadable evidence — re-capture and try again', code: 'artifact-unreadable' }, { status: 422 })
+      }
+      let cleared = false
+      let feedback = ''
+      try {
+        const { judgeCheckpointAnswer } = await import('@/lib/tree-engine')
+        const j = await judgeCheckpointAnswer(
+          userId, id, nodeId,
+          `Attach a real artifact that demonstrates the syllabus point: "${facetLabel}"`,
+          `The artifact must itself visibly show real work demonstrating "${facetLabel}" on this node — not merely something related to it.`,
+          `ARTIFACT FILE: "${file.name}" (${file.mimeType})\nCONTENT ANALYSIS: ${analysis}`,
+          undefined, undefined, { artifact: true },
+        )
+        cleared = j.correct
+        feedback = j.feedback
+      } catch {
+        return NextResponse.json({ error: 'judging unavailable — try again', code: 'judge-failed' }, { status: 502 })
+      }
+      if (cleared) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const fresh = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } })
+          if (!fresh) break
+          const qs = parseQuizState(fresh.quizState)
+          const i = (qs.facets ?? []).findIndex(f => f.name.trim().toLowerCase() === facetName)
+          if (i === -1 || !qs.facets![i].evidencePending) break
+          delete qs.facets![i].evidencePending
+          const w = await prisma.treeNode.updateMany({
+            where: { id: nodeId, quizState: fresh.quizState },
+            data: { quizState: JSON.stringify(qs) },
+          }).catch(() => null)
+          if (w && w.count > 0) break
+        }
+      }
+      return NextResponse.json({ ok: true, cleared, feedback })
     }
     case 'annotate': {
       const text = (body.text ?? '').trim()

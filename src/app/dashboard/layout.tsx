@@ -33,11 +33,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Phones land on the mobile app. Dashboard HOME only — deep links
   // (workspace, canvas, settings) stay reachable — and "Desktop site"
-  // inside /m sets the opt-out.
+  // inside /m sets the opt-out. SESSION-scoped (qa-findings-4 №2): the old
+  // localStorage flag expelled the user from /m forever; the legacy key is
+  // read once more here only to clear it.
   useEffect(() => {
     if (pathname !== '/dashboard') return
     try {
-      if (localStorage.getItem('tree-mobile-optout') === '1') return
+      localStorage.removeItem('tree-mobile-optout')
+      if (sessionStorage.getItem('tree-mobile-optout') === '1') return
       if (window.innerWidth <= 768 && window.matchMedia('(pointer: coarse)').matches) {
         window.location.replace('/m')
       }

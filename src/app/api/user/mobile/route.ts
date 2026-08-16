@@ -105,10 +105,13 @@ export async function GET() {
     return row.updatedAt > best.updatedAt ? row : best
   }, null)
 
-  // Stalest first: never-reviewed ('' sorts before any ISO stamp), then oldest.
+  // Stalest first: never-reviewed ('' sorts before any ISO stamp), then
+  // oldest. The queue is the session's working set (capped); the TOTAL due
+  // ships separately so the Today plan can show the honest number instead of
+  // contradicting the per-tree badges (qa-findings-4 №2).
   const reviewQueue = reviewCandidates
     .sort((a, b) => a.staleKey.localeCompare(b.staleKey))
-    .slice(0, 3)
+    .slice(0, 10)
     .map(({ staleKey: _s, ...r }) => r)
 
   notes.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
@@ -128,6 +131,7 @@ export async function GET() {
       filled: resume.filled, target: resume.target, hasExplainer: resume.hasExplainer,
     } : null,
     reviewQueue,
+    reviewDueTotal: reviewCandidates.length,
     notes: notes.slice(0, 100),
   })
 }

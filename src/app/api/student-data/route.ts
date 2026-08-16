@@ -73,13 +73,17 @@ export async function GET() {
       try { profileMeta = (JSON.parse(profile.roadmapState as string)?._profileMeta) ?? {} } catch {}
     }
 
+    const { getLevelForXp } = await import('@/lib/xp-engine')
     const student = {
       id: profile?.userId ?? userId,
       name: resolvedName,
       email: googleUser?.email || mockStudent.email,
       image: googleUser?.image,
       xp: profile?.xp ?? 0,
-      level: Math.floor((profile?.xp ?? 0) / 300) + 1,
+      // The ONE level curve (xp-engine): the old floor(xp/300)+1 here made
+      // the sidebar contradict every XP panel — the longest-lived trust
+      // contradiction in the product (satisfaction №7 / qa-findings-4 №10).
+      level: getLevelForXp(profile?.xp ?? 0),
       streak: profile?.streak ?? 0,
       stage: (['motivation', 'review', 'self-guided', 'expert-feedback'] as const)[(profile?.learningStage ?? 1) - 1] || 'motivation',
       joinedAt: new Date().toISOString(),

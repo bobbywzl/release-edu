@@ -1,11 +1,12 @@
 'use client'
 /** The in-place checkpoint card (Bob's [[QUIZ]]): MCQ letter rows / own-words
- *  textarea, the hypercorrection confidence tap, judge verdicts. Judged
+ *  textarea / artifact capture (photo, screenshot, file — phones are where
+ *  cameras live), the hypercorrection confidence tap, judge verdicts. Judged
  *  against the server-stored pending only — a 409 means the card was
  *  consumed elsewhere and the parent refetches. */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { emitXpAwards, emitBadgeEvents } from '@/components/xp-toast'
-import { submitQuizAnswer, sumXp, type MQuiz, type QuizVerdict } from './m-api'
+import { submitQuizAnswer, uploadNodeEvidence, sumXp, type MQuiz, type QuizVerdict } from './m-api'
 import { IconCheck, IconShield, IconX } from './m-icons'
 
 type T = (key: string, fallback?: string) => string
@@ -17,16 +18,18 @@ export function MQuizCard({ quiz, treeId, nodeId, lang, t, onVerdict, onStale, a
   onStale?: () => void
   /** Post-correct CTA (e.g. Next checkpoint / Back to Today). */
   afterCorrect?: { label: string; onClick: () => void } | null
-  /** Post-wrong CTA — the law-mandated remediation entry point. */
+  /** Optional post-wrong CTA — remediation normally auto-fires (law). */
   onExplainWrong?: () => void
 }) {
   const [sel, setSel] = useState<number | null>(null)
   const [text, setText] = useState('')
+  const [file, setFile] = useState<File | null>(null)
   const [conf, setConf] = useState<'sure' | 'unsure' | null>(null)
   const [showHint, setShowHint] = useState(false)
   const [judging, setJudging] = useState(false)
   const [verdict, setVerdict] = useState<QuizVerdict | null>(null)
-  const [error, setError] = useState(false)
+  const [errorText, setErrorText] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const isMcq = quiz.kind === 'mcq'
   const isShort = quiz.kind === 'short'
@@ -37,15 +40,36 @@ export function MQuizCard({ quiz, treeId, nodeId, lang, t, onVerdict, onStale, a
     if (judging || answered) return
     if (isMcq && sel === null) return
     if (isShort && !text.trim()) return
-    setJudging(true); setError(false)
+    if (isArtifact && !file) return
+    setJudging(true); setErrorText(null)
+    let artifactFileId: string | undefined
+    if (isArtifact && file) {
+      // Same endpoint and shape as the desktop card — the capture lands in
+      // the node's evidence list and the judge grades what it shows.
+      const up = await uploadNodeEvidence(nodeId, file)
+      if (!up) {
+        setJudging(false)
+        setErrorText(t('m.quizSubmitFailed'))
+        return
+      }
+      artifactFileId = up.id
+    }
     const v = await submitQuizAnswer({
-      treeId, nodeId, quiz, answer: isMcq ? (sel as number) : text.trim(),
-      confidence: conf, lang,
+      treeId, nodeId, quiz,
+      answer: isMcq ? (sel as number) : text.trim(),
+      confidence: conf, lang, artifactFileId,
     })
     setJudging(false)
-    if (!v) { setError(true); return }
+    if (!v) { setErrorText(t('m.quizSubmitFailed')); return }
     if (v.stale) { onStale?.(); return }
-    if (v.error) { setError(true); return }
+    if (v.error) {
+      // The server's message is already in the session language (e.g. the
+      // artifact-unreadable re-capture guidance) — show it; clear an
+      // unreadable staged file so the learner picks a better capture.
+      if (v.code === 'artifact-unreadable') setFile(null)
+      setErrorText(v.error || t('m.quizSubmitFailed'))
+      return
+    }
     setVerdict(v)
     if (v.xp?.length) emitXpAwards(v.xp)
     if (v.newBadges?.length) emitBadgeEvents(v.newBadges)
@@ -89,6 +113,8 @@ export function MQuizCard({ quiz, treeId, nodeId, lang, t, onVerdict, onStale, a
       ? t('m.verdictCorrect').replace('{xp}', String(sumXp(verdict?.xp)))
       : t('m.verdictCorrectNoXp')
 
+  const canSubmit = isMcq ? sel !== null : isShort ? !!text.trim() : !!file
+
   return (
     <div className="m-card m-elev-sm" style={{ gap: 12, padding: 16 }}>
       <span className="m-kicker">{t('m.checkpoint')}</span>
@@ -105,11 +131,34 @@ export function MQuizCard({ quiz, treeId, nodeId, lang, t, onVerdict, onStale, a
       {isShort && answered && (
         <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--m-neutral-300)', borderLeft: '2px solid var(--m-divider)', paddingLeft: 12 }}>{text}</p>
       )}
-      {isArtifact && (
-        <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: 'var(--m-neutral-400)' }}>{t('m.artifactDesktop')}</p>
+      {isArtifact && !answered && (
+        <>
+          <input ref={fileRef} type="file" style={{ display: 'none' }}
+            accept="image/*,video/*,audio/*,application/pdf,.txt,.csv,.tsv,.log,.md,.json"
+            onChange={e => {
+              const f = e.target.files?.[0] ?? null
+              if (fileRef.current) fileRef.current.value = ''
+              if (!f) return
+              if (f.size > 3_500_000) { setErrorText(t('m.fileTooLarge')); return }
+              setErrorText(null)
+              setFile(f)
+            }} />
+          <button className="m-btn m-btn-secondary" style={{ alignSelf: 'flex-start', fontSize: 12.5 }}
+            onClick={() => fileRef.current?.click()} disabled={judging}>
+            📎 {file ? file.name.slice(0, 40) : t('m.artifactPick')}
+          </button>
+          <textarea className="m-input" style={{ minHeight: 64, fontSize: 13.5, lineHeight: 1.55 }}
+            placeholder={t('m.artifactNote')} value={text} maxLength={400}
+            onChange={e => setText(e.target.value)} disabled={judging} />
+        </>
+      )}
+      {isArtifact && answered && (
+        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--m-neutral-300)', borderLeft: '2px solid var(--m-divider)', paddingLeft: 12 }}>
+          📎 {file?.name}{text.trim() ? ` — ${text.trim()}` : ''}
+        </p>
       )}
 
-      {!answered && !isArtifact && (
+      {!answered && (
         <>
           {quiz.hint && (
             showHint
@@ -122,10 +171,10 @@ export function MQuizCard({ quiz, treeId, nodeId, lang, t, onVerdict, onStale, a
             <button style={confPill(conf === 'unsure')} onClick={() => setConf('unsure')}>{t('m.confUnsure')}</button>
           </div>
           <button className="m-btn m-btn-primary m-btn-block" onClick={() => void submit()}
-            disabled={judging || (isMcq && sel === null) || (isShort && !text.trim())}>
+            disabled={judging || !canSubmit}>
             <IconShield size={14} />{judging ? t('common.loading') : t('m.submitAnswer')}
           </button>
-          {error && <p style={{ margin: 0, fontSize: 12, color: 'var(--m-neutral-400)' }}>{t('m.noteSaveFailed')}</p>}
+          {errorText && <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: 'var(--m-neutral-400)' }}>{errorText}</p>}
         </>
       )}
 

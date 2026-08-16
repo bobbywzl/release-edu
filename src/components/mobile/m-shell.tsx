@@ -2,9 +2,10 @@
 /**
  * MobileShell — the /m app. One component owns the design's state machine:
  * tabs (Today / Trees / Notes) + full-screen overlays (Reader / Review /
- * Note editor), mirroring the design file's view presets. Data loads in two
- * calls (/api/user/mobile + /api/xp/summary) and refreshes when an overlay
- * closes, so verdicts/XP earned inside always land back on the tabs.
+ * Note editor / The Answer), mirroring the design file's view presets. Data
+ * loads in two calls (/api/user/mobile + /api/xp/summary) and refreshes when
+ * an overlay closes, so verdicts/XP earned inside always land back on the
+ * tabs.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useLanguage } from '@/lib/i18n'
@@ -15,16 +16,20 @@ import { TodayTab, TreesTab, NotesTab, TabBar } from './m-tabs'
 import { MReader } from './m-reader'
 import { MReview } from './m-review'
 import { MNoteEdit } from './m-note-edit'
+import { MAnswer } from './m-answer'
 
 export type ReaderTarget = {
   treeId: string; nodeId: string; nodeTitle: string; treeTitle: string
   language: string | null; autoplay?: boolean; chat?: boolean
   mastery?: { filled: number; target: number } | null
+  /** Which tab opened the reader — the back button names it honestly. */
+  from?: 'today' | 'trees'
 }
 type Overlay =
   | { kind: 'reader'; target: ReaderTarget }
   | { kind: 'review' }
   | { kind: 'note'; note: MNote }
+  | { kind: 'answer'; treeId: string; treeTitle: string; language: string | null }
   | null
 
 export function MobileShell() {
@@ -56,13 +61,20 @@ export function MobileShell() {
   const closeOverlay = useCallback(() => { setOverlay(null); void refresh() }, [refresh])
 
   if (overlay?.kind === 'reader') {
-    return <MReader target={overlay.target} onClose={closeOverlay} />
+    return <MReader key={overlay.target.nodeId} target={overlay.target} onClose={closeOverlay}
+      onOpenNode={(nodeId, nodeTitle) => setOverlay({
+        kind: 'reader',
+        target: { ...overlay.target, nodeId, nodeTitle, autoplay: false, mastery: null },
+      })} />
   }
   if (overlay?.kind === 'review') {
     return <MReview queue={data?.reviewQueue ?? []} onClose={closeOverlay} />
   }
   if (overlay?.kind === 'note') {
     return <MNoteEdit note={overlay.note} onClose={closeOverlay} />
+  }
+  if (overlay?.kind === 'answer') {
+    return <MAnswer treeId={overlay.treeId} treeTitle={overlay.treeTitle} onClose={closeOverlay} />
   }
 
   const loading = !data && !failed
@@ -86,10 +98,13 @@ export function MobileShell() {
         )}
         {data && tab === 'today' && (
           <TodayTab data={data} xp={xp} name={name} t={t} uiLang={language}
-            onOpenReader={openReader} onStartReview={() => setOverlay({ kind: 'review' })} />
+            onOpenReader={target => openReader({ ...target, from: 'today' })}
+            onStartReview={() => setOverlay({ kind: 'review' })} />
         )}
         {data && tab === 'trees' && (
-          <TreesTab data={data} t={t} onOpenReader={openReader} />
+          <TreesTab data={data} t={t}
+            onOpenReader={target => openReader({ ...target, from: 'trees' })}
+            onOpenAnswer={(treeId, treeTitle, lang) => setOverlay({ kind: 'answer', treeId, treeTitle, language: lang })} />
         )}
         {data && tab === 'notes' && (
           <NotesTab data={data} t={t} uiLang={language} onOpenNote={n => setOverlay({ kind: 'note', note: n })} />

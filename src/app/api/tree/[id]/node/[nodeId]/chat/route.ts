@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
 import { dbStore } from '@/lib/db-store'
-import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, refreshNodeContextSummary, refreshNodeBoardDigest, studentGrounding, type XpAwardLite } from '@/lib/tree-engine'
+import { getTreeWithNodes, sketchTree, nodePath, sessionDirectives, ANSWER_STANDARD, evidenceLocker, branchCoverage, refreshNodeDigests, studentGrounding, type XpAwardLite } from '@/lib/tree-engine'
 import { parseQuizState, MASTERY_TARGET, MASTERY_MIN_SHORT, masteryTarget, masteryFilled, type PendingQuiz } from '@/lib/mastery'
 import { getTeachingModel } from '@/lib/model-resolver'
 import { NO_THINKING } from '@/lib/chat-model-router'
@@ -99,7 +99,13 @@ function extractAssess(full: string): [string, Assess | null] {
   }
   // No trimming before the marker: bytes up to idx may already be streamed,
   // and shortening them would desync every index the caller holds.
-  const cleaned = `${full.slice(0, idx)}${end !== -1 ? rest.slice(end + 1) : ''}`
+  // On a parse failure (no brace, brace too far, unbalanced) strip ONLY the
+  // marker's own line and keep the remainder — the old rebuild dropped the
+  // ENTIRE tail, silently eating any [[QUIZ]] block that followed a
+  // malformed marker (qa-findings-4 №3).
+  const cleaned = end !== -1
+    ? `${full.slice(0, idx)}${rest.slice(end + 1)}`
+    : (() => { const nl = rest.indexOf('\n'); return `${full.slice(0, idx)}${nl !== -1 ? rest.slice(nl) : ''}` })()
   return [cleaned, parsed]
 }
 
@@ -149,7 +155,9 @@ async function deriveSyllabusContract(apiKey: string, userId: string, nodeId: st
       const { recordAnthropicUsage } = await import('@/lib/usage')
       recordAnthropicUsage(res.usage, { userId, model: bgModel, feature: 'tree-verify' })
     } catch { /* non-critical */ }
-    const text = (res.content[0] as { text?: string })?.text ?? ''
+    // Join ALL text blocks — content[0] can be a thinking block on a
+    // thinking-first model, and a bare .text read silently returns nothing.
+    const text = res.content.filter(b => (b as { type?: string }).type === 'text').map(b => (b as { text?: string }).text ?? '').join('\n')
     const payload = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '{}') as { facets?: unknown[] }
     const names = (Array.isArray(payload.facets) ? payload.facets : [])
       .map(f => String(f ?? '').trim().slice(0, 120)).filter(Boolean).slice(0, 6)
@@ -248,6 +256,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // THE ROOT HAS NO WORKSPACE (law): it is the problem statement itself,
   // edited only through the Tree Copilot — never chatted on.
   if (node.parentId === null) return new Response('The root node has no workspace.', { status: 400 })
+  // '[NODE_VERIFIED]' is a SYSTEM payoff turn, not a client right: without
+  // this gate a crafted POST authored a fake celebration transcript (and
+  // cancelled remediation debt) on a node that never verified — the status
+  // column is the only authority (qa-findings-4 №8).
+  if (msgText === '[NODE_VERIFIED]' && node.status !== 'understood') {
+    return new Response('Node is not verified.', { status: 400 })
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return new Response('Not configured', { status: 503 })
@@ -330,7 +345,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
 
   // ONE definition of "what the student said this turn" for every silent
-  // consumer (reflection pre-pass, insight extraction): the typed text plus
+  // consumer (folded assessment, insight extraction): the typed text plus
   // a clearly-framed digest of the attachment analyses — a voice note's
   // transcript IS the student speaking, and dropping it would starve the
   // insight moat on exactly the richest turns.
@@ -551,22 +566,26 @@ THEN — after your reply's last prose line, BEFORE any [[QUIZ]] block, emit thi
   // identity, node position, explainer, every teaching law, the static
   // checkpoint/visual rules, session directives. Block 2 (its own breakpoint,
   // AFTER block 1, so a status flip anywhere on the tree busts only the
-  // sketch, never the big block): the full tree sketch. Per-turn material —
-  // files, coverage, mastery state, trigger scripts, assessment — rides
-  // INSIDE the final user message, AFTER the cached history, so history
-  // prefixes keep hitting too (a chunk-anchored window keeps them stable).
+  // sketch, never the big block): the full tree sketch. Block 3 (own
+  // breakpoint): the SESSION CONTEXT — files, evidence locker, branch
+  // coverage, student grounding — stable across a node session absent
+  // uploads/summary refreshes; it used to ride the per-turn message at full
+  // input rate every turn (qa-findings-4 №4). Genuinely per-turn material —
+  // attachments, mastery state, trigger scripts, assessment — rides INSIDE
+  // the final user message, AFTER the cached history, so history prefixes
+  // keep hitting too (a chunk-anchored window keeps them stable).
   const systemCore = `You are Bob, the student's expert mentor inside the Tree EDU problem-mastery tree.
 
 ## WHERE YOU ARE
 PROBLEM (root): "${tree.title}"
 ${tree.framing ? `FRAMING: ${tree.framing}\n` : ''}The student is working on the node: "${node.title}" — ${node.summary}
 Path from root: ${path.map(n => `"${n.title}"`).join(' → ')}
-(The FULL TREE sketch is the next system block; the live per-turn material — the student's files, what the branch below already covered, the LIVE MASTERY STATE, and this turn's script — arrives inside the latest user message as TURN CONTEXT.)
+(The FULL TREE sketch and the SESSION CONTEXT — the student's files, tree evidence, what the branch below already covered, what is known about the student — are the next system blocks; the live per-turn material — this turn's attachments, the LIVE MASTERY STATE, and this turn's script — arrives inside the latest user message as TURN CONTEXT.)
 ${node.explainer ? `\nThe node's explainer (already shown to the student):\n${node.explainer.slice(0, 2500)}` : ''}
 
 ## HOW TO TEACH HERE
 - Everything you say serves ONE goal: this student genuinely understanding THIS node in service of the root problem.
-- NO REDUNDANCY: when the ALREADY COVERED section (in the TURN CONTEXT) shows the branch below taught something this node touches, build FROM it by reference ("as you saw at '<node>'…") — never re-explain it. Teach only what is NEW at this node.
+- NO REDUNDANCY: when the ALREADY COVERED section (in the SESSION CONTEXT) shows the branch below taught something this node touches, build FROM it by reference ("as you saw at '<node>'…") — never re-explain it. Teach only what is NEW at this node.
 - Dense, precise, zero praise-padding. Concrete examples over abstractions.
 - **Be Socratic where it earns its place**: when the student is tracking well, probe ("why would that break if…?") instead of explaining more. When they're lost, teach directly — Socratic questioning of a confused student is theatre, not teaching.
 - Connect answers back to the root problem and this node's branch whenever natural.
@@ -624,6 +643,12 @@ ${sessionDirectives(tree, lang)}`
   const systemTree = `## THE FULL TREE (the student's whole learning world right now)
 ${sketchTree(tree.nodes)}`
 
+  // SESSION CONTEXT (block 3, own breakpoint): stable across the node
+  // session — re-billed only when an upload or a background summary refresh
+  // actually changes it, instead of at full rate every turn.
+  const systemSession = [filesBlock, lockerBlock, coverageBlock, groundingBlock]
+    .map(b => b.trim()).filter(Boolean).join('\n\n')
+
   // The LIVE MASTERY STATE — the per-turn tally the static checkpoint rules
   // (system block 1) refer to. Rides in the TURN CONTEXT, never the cache.
   const masteryStateBlock = `
@@ -648,7 +673,7 @@ ONE sentence: ${coverageBlock ? 'a one-clause callback to what the branch below 
 The 3-5 specific sub-points this node owns — each a **bolded term** plus at most one short clause. SPECIFIC to "${node.title}" (the real mechanisms, choices, quantities, terms — never generic placeholders); if this node already has child nodes in the tree, use those as the sub-points. Every sub-point is NEW ground owned by THIS node — anything an ancestor's workspace already taught may appear only as a one-clause callback inside a bullet, never as its own sub-point.
 
 OPTIONAL — only if the node's structure is inherently visual/spatial (a flow, a layout, interacting parts): ONE \`\`\`image concept-map block placing the sub-points in relation to each other. Skip it otherwise.
-Close with ONE line noting the full explainer is a click away (the "Generate the explainer" button) and that mastery is proven by answering the checkpoints right here in chat — then ONE engaging question that pulls them straight into the first sub-point (conversational prose; do NOT emit a [[QUIZ]] block in this opener).
+Close with ONE line noting the full explainer is available on demand — one tap/click in this workspace (name no specific button: the control differs per device) — and that mastery is proven by answering the checkpoints right here in chat; then ONE engaging question that pulls them straight into the first sub-point (conversational prose; do NOT emit a [[QUIZ]] block in this opener).
 HARD LIMIT: no "big idea" paragraph, no objectives list, no trap section, no welcome filler — at most ~120 words of prose beyond the bullets. Barebones and specific beats comprehensive here.
 FINALLY — as the very LAST line of the message, emit this machine block (never mention or explain it):
 [[SYLLABUS]]{"facets":["<sub-point 1>","<sub-point 2>","..."]}
@@ -709,11 +734,7 @@ ${nextOnPath ? `4. Name the next stop on their learning path — "${nextOnPath.t
 
   // Per-turn material rides in the FINAL user message — after the cached
   // history — the only part of the prompt that changes every turn.
-  const turnContext = `${filesBlock}
-${lockerBlock}
-${coverageBlock}
-${groundingBlock}
-${attachBlock}${masteryStateBlock}${turnScript}`
+  const turnContext = `${attachBlock}${masteryStateBlock}${turnScript}`
 
   const encoder = new TextEncoder()
   const convId = conv!.id
@@ -755,14 +776,16 @@ ${attachBlock}${masteryStateBlock}${turnScript}`
           // the truncation marker below still catches the tail cases.
           max_tokens: 3200,
           ...NO_THINKING,
-          // Cached prefix: core laws (block 1) + tree sketch (block 2), each
-          // with its own breakpoint so a sketch change never re-bills the
-          // core. A third breakpoint rides the last HISTORY message so the
-          // conversation prefix re-reads from cache and grows incrementally;
-          // the per-turn context sits after it, inside the final user turn.
+          // Cached prefix: core laws (block 1) + tree sketch (block 2) +
+          // session context (block 3), each with its own breakpoint so a
+          // change in one never re-bills the ones before it. The 4th
+          // breakpoint rides the last HISTORY message so the conversation
+          // prefix re-reads from cache and grows incrementally; the per-turn
+          // context sits after it, inside the final user turn.
           system: [
             { type: 'text' as const, text: systemCore, cache_control: { type: 'ephemeral' as const } },
             { type: 'text' as const, text: systemTree, cache_control: { type: 'ephemeral' as const } },
+            ...(systemSession ? [{ type: 'text' as const, text: `## SESSION CONTEXT (this node's stored ground — files, tree evidence, branch coverage, the student)\n${systemSession}`, cache_control: { type: 'ephemeral' as const } }] : []),
           ],
           messages: [
             ...history.map((m, i) => i === history.length - 1
@@ -798,13 +821,18 @@ ${attachBlock}${masteryStateBlock}${turnScript}`
         }
       }
 
-      // ── Folded assessment capture ([[ASSESS]] on free-chat turns) ──
+      // ── Folded assessment capture ([[ASSESS]]) ──
       // The structured half of the contextual read Bob just ran: stripped
       // from the output, then processed exactly as the old pre-pass was.
-      if (!isTrigger) {
+      // Extraction runs on EVERY turn — trigger turns included: Bob
+      // sometimes carries the marker onto a [NODE_CONTINUE]/trigger turn
+      // (the cut-off turn's instructions demanded it), and an unstripped
+      // marker persisted raw JSON into the student's chat (qa-findings-4
+      // №3). The payload is PROCESSED only on free-chat turns.
+      {
         const [cleaned, assess] = extractAssess(full)
         full = cleaned
-        if (assess) {
+        if (!isTrigger && assess) {
           const streak = Math.max(Number(assess.streakWrong) || 0, quizStateNow.wrongStreak ?? 0)
           void prisma.conversation.update({
             where: { id: convId },
@@ -911,6 +939,15 @@ ${attachBlock}${masteryStateBlock}${turnScript}`
               if (target) suggestion = { type: 'move', nodeId: target.id, title: target.title }
             }
           }
+        } else if (!isTrigger) {
+          // Marker missing or malformed on a free-chat turn: carry the prior
+          // streak and misconception forward instead of skipping the write —
+          // a skipped write recorded NOTHING for the turn, so the streak state
+          // silently went stale (qa-findings-4 №3).
+          void prisma.conversation.update({
+            where: { id: convId },
+            data: { summary: JSON.stringify({ lastReflection: { state: '', gapDepth: 'none', streakWrong: priorStreak, directive: '', suggestNode: null, moveToTitle: null, misconception: priorReflection?.misconception ?? null } }) },
+          }).catch(() => null)
         }
       }
 
@@ -1253,10 +1290,12 @@ Return ONLY JSON: {"recitable": true|false}`,
         persistContent = `${persistContent}${marker}`
       }
 
-      // The remediation/verified turn settles the persisted remediation debt
+      // The remediation turn settles the persisted remediation debt
       // (deep-audit §5: the law-mandated teaching used to evaporate with the
-      // tab; now the debt survives until a remediation actually runs).
-      if (isRemediate || isVerifiedTurn) {
+      // tab; now the debt survives until a remediation actually RUNS — and
+      // only a remediation clears it; the verified turn no longer does,
+      // qa-findings-4 №8).
+      if (isRemediate) {
         try {
           for (let attempt = 0; attempt < 3; attempt++) {
             const freshRow = await prisma.treeNode.findUnique({ where: { id: nodeId }, select: { quizState: true } }).catch(() => null)
@@ -1329,11 +1368,11 @@ Return ONLY JSON: {"recitable": true|false}`,
           // odd count, so a run of pure Q&A keeps `count` odd — an even modulus
           // would never fire there, leaving the summary stuck at the intro seed.
           if (isIntro || (!isTrigger && count % 3 === 0)) {
-            inBackground(refreshNodeContextSummary(userId, id, nodeId, tree.language ?? undefined))
-            // The MASTERY BOARD digest rides the same cadence: it narrates the
-            // same conversation the context summary distills, for the opposite
-            // audience (the learner's progress board, in the session language).
-            inBackground(refreshNodeBoardDigest(userId, id, nodeId, tree.language ?? undefined))
+            // ONE merged Haiku call refreshes BOTH digests (context summary
+            // for upper-node prompts + the learner's Mastery Board) from one
+            // shared fetch — the old pair narrated the same conversation
+            // twice on the same cadence (qa-findings-4 №6).
+            inBackground(refreshNodeDigests(userId, id, nodeId, tree.language ?? undefined))
           }
         } catch { /* non-critical */ }
       }

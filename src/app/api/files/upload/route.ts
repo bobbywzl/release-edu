@@ -50,7 +50,23 @@ export async function POST(req: NextRequest) {
     }
 
     const mimeType = type || 'text/markdown'
-    const sizeBytes = Buffer.byteLength(content, 'utf-8')
+
+    // TEXT DECODE AT THE DOOR (qa-findings-4 №1): the checkpoint card (and
+    // any client that readAsDataURL's everything) sends text files as
+    // base64-wrapped data: URIs. Stored that way they are unreadable to
+    // every downstream reader — the files block, the evidence locker, the
+    // artifact judge. Decode text-ish payloads to plain text HERE so the
+    // stored row is legible; genuinely binary payloads pass through intact.
+    let storedContent = content
+    const isMedia = /^(image|audio|video)\//.test(mimeType) || mimeType === 'application/pdf'
+    if (content.startsWith('data:') && !isMedia) {
+      const { decodeDataUriText, isTextishMime } = await import('@/lib/text-artifact')
+      if (isTextishMime(mimeType) || /\.(md|txt|py|js|ts|jsx|tsx|html|css|json|csv|tsv|yaml|yml|xml|sh|log|rb|go|rs|java|cpp|c|h)$/i.test(name)) {
+        const decoded = decodeDataUriText(content)
+        if (decoded) storedContent = decoded.slice(0, 1_400_000)
+      }
+    }
+    const sizeBytes = Buffer.byteLength(storedContent, 'utf-8')
 
     // Store content directly in DB as text
     const record = await prisma.linkedFile.create({
@@ -61,7 +77,7 @@ export async function POST(req: NextRequest) {
         workId: workId || null,
         name: name,
         mimeType,
-        content,
+        content: storedContent,
         size: sizeBytes,
         url: null,
       },
@@ -71,8 +87,7 @@ export async function POST(req: NextRequest) {
     // its CONTENT later, not just its filename. A data-URI image/audio/video/
     // PDF is analyzed AFTER the response (waitUntil), and the analysis lands on
     // the row a few seconds later — before the student asks Bob about it. Text
-    // files need no analysis (their content is already readable).
-    const isMedia = /^(image|audio|video)\//.test(mimeType) || mimeType === 'application/pdf'
+    // files need no analysis — decoded above, their content is readable.
     if (content.startsWith('data:') && isMedia) {
       const b64 = content.split(',', 2)[1] ?? ''
       if (b64) {
