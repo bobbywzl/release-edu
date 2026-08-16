@@ -1082,7 +1082,17 @@ const EN: Dict = {
   'm.noteSaved': 'Saved ✓',
   'm.noteSaveFailed': 'Could not save — try again.',
   'm.tapRetry': 'Could not load. Tap to retry.',
-  'm.artifactDesktop': 'This checkpoint needs a real artifact attached — capture it in the desktop workspace.',
+  'm.quizSubmitFailed': 'Could not submit — try again.',
+  'm.artifactPick': 'Capture / attach evidence',
+  'm.artifactNote': 'Optional: what does it show?',
+  'm.fileTooLarge': 'File too large — keep it under 3.5 MB.',
+  'm.theAnswer': 'The Answer',
+  'm.answerLoading': 'Loading the answer…',
+  'm.answerNone': "The answer document isn't assembled yet — open this tree on the desktop site to generate it.",
+  'm.reviewedCount': 'reviewed',
+  'm.nextNode': 'Continue to “{title}”',
+  'm.writeExplainer': 'Write the full explainer',
+  'm.explainerIntro': 'The checkpoint chat is the main path. The full explainer is a deep-dive Bob writes when you ask.',
 }
 
 const ZH: Dict = {
@@ -2151,7 +2161,17 @@ const ZH: Dict = {
   'm.noteSaved': '已保存 ✓',
   'm.noteSaveFailed': '保存失败——请重试。',
   'm.tapRetry': '加载失败，点按重试。',
-  'm.artifactDesktop': '这个检查点需要附上实物证据——请在电脑端工作区完成。',
+  'm.quizSubmitFailed': '提交失败——请重试。',
+  'm.artifactPick': '拍摄或附上证据',
+  'm.artifactNote': '（可选）说明它展示了什么',
+  'm.fileTooLarge': '文件太大——请控制在 3.5 MB 以内。',
+  'm.theAnswer': '最终答案',
+  'm.answerLoading': '正在加载答案……',
+  'm.answerNone': '答案文档还未生成——请在电脑端打开这棵树生成。',
+  'm.reviewedCount': '已复习',
+  'm.nextNode': '继续「{title}」',
+  'm.writeExplainer': '生成完整讲解',
+  'm.explainerIntro': '检查点对话是主线。完整讲解由 Bob 在你需要时撰写，供深入阅读。',
 }
 
 const DICTS: Record<Language, Dict> = { en: EN, zh: ZH }

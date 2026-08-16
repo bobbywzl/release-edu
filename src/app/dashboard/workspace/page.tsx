@@ -68,6 +68,9 @@ function splitQuiz(raw: string): { text: string; quiz: QuizPayload | null } {
   const content = raw
     .replace(/\n*\[\[(INCOMPLETE|QUIZ_OFFER)\]\]/g, '')
     .replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}/g, '')
+    // [[ASSESS]] is stripped server-side — this is defense in depth so a
+    // leaked marker can never render raw JSON into the thread.
+    .replace(/\n*\[\[ASSESS\]\][^\n]*/g, '')
   const idx = content.indexOf('[[QUIZ]]')
   if (idx === -1) return { text: content, quiz: null }
   let quiz: QuizPayload | null = null
@@ -194,7 +197,7 @@ function WorkspaceInner() {
   // correctIndex arrives from the server on submit — the answer key never
   // ships with the card itself.
   const [quizResult, setQuizResult] = useState<{ correct: boolean; verified: boolean; correctIndex?: number } | null>(null)
-  // Discovery card from Bob's contextual pre-pass ([[TREE_SUGGEST]] marker).
+  // Discovery card from Bob's folded assessment ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
   // Tree-level outcome of the answer that just verified this node:
   // 'completed' = the whole tree (crown + trophy) · 'seedComplete' = every
@@ -512,7 +515,7 @@ function WorkspaceInner() {
         if (done) break
         full += decoder.decode(value, { stream: true })
         // Never show the machine markers mid-stream.
-        setStreamText(full.replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, '').replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}?/g, ''))
+        setStreamText(full.replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, '').replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}?/g, '').replace(/\n*\[\[ASSESS\]\][^\n]*/g, ''))
       }
       // ── STREAM COMPLETION CONTRACT (see the chat route) ──
       // [[DONE]] present  → Bob finished the thought.
@@ -795,22 +798,29 @@ function WorkspaceInner() {
       if (isTextLike) reader.readAsText(file)
       else reader.readAsDataURL(file)
     })
-    await fetch('/api/files/upload', {
+    const upRes = await fetch('/api/files/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workType: 'tree-node', workId: nodeId, name: file.name, type: file.type || 'text/plain', content: content.slice(0, 1_500_000) }),
-    }).catch(() => {})
+    }).catch(() => null)
+    const uploaded = upRes?.ok ? await upRes.json().catch(() => null) : null
     // Deferred-evidence flow: this upload was started from a facet's
-    // "attach the capture" chip — the artifact is in, clear the facet's
-    // evidence-pending flag on the permanent record.
+    // "attach the capture" chip — submit THIS file for the judge pass that
+    // clears the facet's evidence-pending flag (the server requires the
+    // specific fresh fileId and judges what it shows; a pre-existing file
+    // can no longer clear the flag unjudged).
     const facetForEvidence = evidenceFacetRef.current
     evidenceFacetRef.current = null
-    if (facetForEvidence && treeId) {
-      await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
+    if (facetForEvidence && treeId && uploaded?.id) {
+      const r = await fetch(`/api/tree/${treeId}/node/${nodeId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'facet_evidence', facet: facetForEvidence }),
-      }).catch(() => {})
+        body: JSON.stringify({ action: 'facet_evidence', facet: facetForEvidence, fileId: uploaded.id }),
+      }).catch(() => null)
+      const d = r?.ok ? await r.json().catch(() => null) : null
+      // The judge read it and said it doesn't show the facet — say so
+      // (its feedback is already in the session language).
+      if (d && d.cleared === false && d.feedback) alert(d.feedback)
       loadTree()
     }
     fetch(`/api/files/upload?workType=tree-node&workId=${nodeId}`, { cache: 'no-store' })
@@ -914,6 +924,14 @@ function WorkspaceInner() {
             setQuizSel(null); setQuizText(''); setQuizFile(null); setQuizConf(null); setQuizResult(null); setQuizError(false); setQuizErrorDetail(null)
           }
         } catch { /* transient */ }
+      }
+      if (res.status === 422 && body?.code === 'artifact-unreadable') {
+        // The attached file could not be read as evidence — the card stays
+        // armed server-side (nothing was consumed). Clear the staged file and
+        // show the server's re-capture guidance (session language).
+        setQuizFile(null)
+        if (body?.error) alert(String(body.error))
+        return
       }
       if (res.status === 400 || res.status === 404 || res.status === 409) {
         // Permanently unanswerable card (stale after a newer checkpoint, or
@@ -1299,7 +1317,7 @@ function WorkspaceInner() {
               <div className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
                   {(() => {
-                    const visible = streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0]
+                    const visible = streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0].split('[[ASSESS]]')[0]
                     return (
                       /* Keyed by length-bucket so a transient mid-stream parse
                          failure retries as more text arrives instead of

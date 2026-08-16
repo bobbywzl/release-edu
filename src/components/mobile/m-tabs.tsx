@@ -11,7 +11,13 @@ import {
 type T = (key: string, fallback?: string) => string
 
 const goDesktop = () => {
-  try { localStorage.setItem('tree-mobile-optout', '1') } catch { /* still navigate */ }
+  // SESSION-scoped opt-out (qa-findings-4 №2): the old localStorage flag was
+  // forever — one tap on "Desktop site" (the empty state's ONLY CTA) expelled
+  // the user from /m permanently, with nothing ever clearing it.
+  try {
+    sessionStorage.setItem('tree-mobile-optout', '1')
+    localStorage.removeItem('tree-mobile-optout') // heal the legacy forever-flag
+  } catch { /* still navigate */ }
   window.location.href = '/dashboard'
 }
 
@@ -33,7 +39,10 @@ export function TodayTab({ data, xp, name, t, uiLang, onOpenReader, onStartRevie
   const ringOffset = 125.7 * (1 - Math.min(1, goal > 0 ? today / goal : 0))
   const { resume, reviewQueue } = data
   const reviewCount = reviewQueue.length
-  const showReviewRow = reviewCount > 0 || data.stats.understoodNodes > 0
+  // The honest due number: the plan row shows the TOTAL due (matching the
+  // per-tree badges), while the overlay works through the capped queue.
+  const reviewDueTotal = data.reviewDueTotal ?? reviewCount
+  const showReviewRow = reviewDueTotal > 0 || data.stats.understoodNodes > 0
   const openResume = (autoplay?: boolean) => {
     if (!resume) return
     onOpenReader({
@@ -125,11 +134,11 @@ export function TodayTab({ data, xp, name, t, uiLang, onOpenReader, onStartRevie
           {showReviewRow && (
             <div style={{ ...planRow, cursor: reviewCount > 0 ? 'pointer' : 'default' }}
               onClick={() => { if (reviewCount > 0) onStartReview() }}>
-              {planCircle(reviewCount === 0)}
+              {planCircle(reviewDueTotal === 0)}
               <p style={planTitle}>
-                {reviewCount === 0 ? t('m.planReviewDone')
-                  : reviewCount === 1 ? t('m.planReviewOne')
-                  : t('m.planReview').replace('{n}', String(reviewCount))}
+                {reviewDueTotal === 0 ? t('m.planReviewDone')
+                  : reviewDueTotal === 1 ? t('m.planReviewOne')
+                  : t('m.planReview').replace('{n}', String(reviewDueTotal))}
               </p>
               {reviewCount > 0 && <span style={{ color: 'var(--m-neutral-600)', display: 'inline-flex' }}><IconChevronRight size={14} /></span>}
             </div>
@@ -159,9 +168,9 @@ export function TodayTab({ data, xp, name, t, uiLang, onOpenReader, onStartRevie
         </div>
       )}
 
-      {reviewCount > 0 && (
+      {reviewDueTotal > 0 && (
         <p style={{ margin: 0, padding: '12px 14px', borderRadius: 'var(--m-radius-md)', border: '1px solid var(--m-divider)', fontSize: 12.5, lineHeight: 1.5, color: 'var(--m-neutral-400)' }}>
-          {t('m.awayNote').replace('{n}', String(reviewCount))}
+          {t('m.awayNote').replace('{n}', String(reviewDueTotal))}
         </p>
       )}
     </div>
@@ -170,9 +179,11 @@ export function TodayTab({ data, xp, name, t, uiLang, onOpenReader, onStartRevie
 
 /* ── Trees ── */
 
-export function TreesTab({ data, t, onOpenReader }: {
+export function TreesTab({ data, t, onOpenReader, onOpenAnswer }: {
   data: MobileData; t: T
   onOpenReader: (target: ReaderTarget) => void
+  /** Completed tree card → the read-only ANSWER document (the payoff). */
+  onOpenAnswer: (treeId: string, treeTitle: string, language: string | null) => void
 }) {
   const active = data.trees.filter(tr => tr.status === 'active')
   const completed = data.trees.filter(tr => tr.status === 'completed')
@@ -210,12 +221,17 @@ export function TreesTab({ data, t, onOpenReader }: {
       })}
 
       {completed.map(tr => (
-        <div key={tr.id} className="m-card" style={{ gap: 6, padding: 15, border: '1px solid var(--m-accent-800)', background: 'transparent' }}>
+        <div key={tr.id} className="m-card" style={{ gap: 6, padding: 15, border: '1px solid var(--m-accent-800)', background: 'transparent', cursor: 'pointer' }}
+          onClick={() => onOpenAnswer(tr.id, tr.title, tr.language)}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ color: 'var(--m-accent)', display: 'inline-flex' }}><IconShield size={16} /></span>
             <p className="m-card-title" style={{ margin: 0, fontSize: 15, lineHeight: 1.3, flex: 1 }}>{tr.title}</p>
+            <span style={{ color: 'var(--m-neutral-600)', display: 'inline-flex' }}><IconChevronRight size={14} /></span>
           </div>
-          <div className="m-card-meta"><span className="m-tag m-tag-outline" style={{ fontSize: 10, padding: '2px 8px' }}>{t('m.masteredTag')}</span></div>
+          <div className="m-card-meta" style={{ justifyContent: 'space-between' }}>
+            <span className="m-tag m-tag-outline" style={{ fontSize: 10, padding: '2px 8px' }}>{t('m.masteredTag')}</span>
+            <span style={{ color: 'var(--m-accent)' }}>{t('m.theAnswer')} →</span>
+          </div>
         </div>
       ))}
 

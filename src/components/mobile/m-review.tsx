@@ -236,8 +236,8 @@ export function MReview({ queue, onClose }: { queue: MReviewItem[]; onClose: () 
                 <p style={{ margin: 0, fontSize: 10.5, color: 'var(--m-neutral-500)' }}>{t('m.xpEarned')}</p>
               </div>
               <div className="m-card" style={{ flex: 1, gap: 2, padding: 12, alignItems: 'center' }}>
-                <p style={{ margin: 0, fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{correctCount}</p>
-                <p style={{ margin: 0, fontSize: 10.5, color: 'var(--m-neutral-500)' }}>{t('m.holesClosed')}</p>
+                <p style={{ margin: 0, fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{answered.length}</p>
+                <p style={{ margin: 0, fontSize: 10.5, color: 'var(--m-neutral-500)' }}>{t('m.reviewedCount')}</p>
               </div>
             </div>
             <button className="m-btn m-btn-primary" style={{ minWidth: 180 }} onClick={onClose}>{t('m.backToToday')}</button>

@@ -21,7 +21,7 @@ export const maxDuration = 60
  *     no farming the daily goal on material already mastered.
  *
  * Both sides of the exchange are persisted into the node conversation so
- * Bob's next turn (and the reflection pre-pass) see the outcome.
+ * Bob's next turn (and the folded assessment) see the outcome.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
@@ -76,6 +76,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const mcqIdx = quiz.kind === 'mcq'
     ? (typeof body.answer === 'number' ? body.answer : parseInt(String(body.answer), 10))
     : -1
+  // Resolved pre-claim for artifact checkpoints (legible content + identity).
+  let artifactAnalysis = ''
+  let artifactName = ''
+  let artifactMime = ''
   if (quiz.kind === 'mcq') {
     const optLen = Array.isArray(quiz.options) ? quiz.options.length : 0
     if (optLen < 2 || !Number.isInteger(mcqIdx) || mcqIdx < 0 || mcqIdx >= optLen
@@ -91,11 +95,60 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     const row = await prisma.linkedFile.findUnique({
       where: { id: body.artifactFileId },
-      select: { userId: true, workId: true },
+      select: { id: true, userId: true, workId: true, name: true, mimeType: true, content: true, analysis: true },
     }).catch(() => null)
     if (!row || row.userId !== userId || row.workId !== nodeId) {
       return NextResponse.json({ error: 'artifact not found' }, { status: 400 })
     }
+    // ── RESOLVE THE ARTIFACT'S LEGIBLE CONTENT — BEFORE the claim ──
+    // (qa-findings-4 №1: text artifacts arrived base64-wrapped and nothing
+    // anywhere decoded them, so the judge graded the flagship evidence
+    // checkpoint blind.) Media → Gemini analysis (run now if the background
+    // pass hasn't landed); text → the actual text, base64-decoded when the
+    // card path data-URI'd it. An artifact that stays unreadable HARD-FAILS
+    // here with re-capture guidance — the card stays armed, and a typed note
+    // can never substitute for evidence the system could not read.
+    let analysis = (row.analysis ?? '').trim()
+    const isMedia = /^(image|audio|video)\//.test(row.mimeType ?? '') || row.mimeType === 'application/pdf'
+    const content = row.content ?? ''
+    if (!analysis && isMedia && content.startsWith('data:')) {
+      try {
+        const b64 = content.split(',', 2)[1] ?? ''
+        if (b64) {
+          const { analyzeImage } = await import('@/lib/gemini')
+          analysis = (await analyzeImage(b64, `the student's checkpoint evidence "${row.name}" — describe exactly what it shows, including any readings, numbers, connections, or outputs visible`, row.mimeType ?? 'image/png', userId)).slice(0, 8000)
+          await prisma.linkedFile.update({ where: { id: row.id }, data: { analysis } }).catch(() => null)
+        }
+      } catch { /* falls through to the unreadable gate below */ }
+    }
+    if (!analysis && !isMedia) {
+      let text = ''
+      if (content.startsWith('data:')) {
+        const { decodeDataUriText } = await import('@/lib/text-artifact')
+        const decoded = decodeDataUriText(content)
+        if (decoded) {
+          text = decoded
+          // Heal the row: store the decoded text so every later reader
+          // (files block, evidence locker) sees legible content too.
+          await prisma.linkedFile.update({ where: { id: row.id }, data: { content: decoded.slice(0, 1_400_000) } }).catch(() => null)
+        }
+      } else if (content.trim()) {
+        text = content
+      }
+      if (text.trim()) analysis = `(text file contents) ${text.slice(0, 2000)}`
+    }
+    if (!analysis) {
+      const zhA = (tree.language ?? body.lang) === 'zh'
+      return NextResponse.json({
+        error: zhA
+          ? '无法读取这个文件作为证据。请重新截取——一张清晰的照片、截图，或纯文本/CSV 导出——然后重新附上。'
+          : 'This file could not be read as evidence. Re-capture it — a clear photo, a screenshot, or a plain text/CSV export — and attach it again.',
+        code: 'artifact-unreadable',
+      }, { status: 422 })
+    }
+    artifactAnalysis = analysis
+    artifactName = row.name
+    artifactMime = row.mimeType ?? ''
   } else if (!String(body.answer ?? '').trim()) {
     return NextResponse.json({ error: 'answer required' }, { status: 400 })
   } else if (String(body.answer ?? '').trim().length > ANSWER_MAX) {
@@ -156,10 +209,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           if (apiKey) {
             const { getBackgroundModel } = await import('@/lib/model-resolver')
             const bgModel = await getBackgroundModel()
+            const { NO_THINKING } = await import('@/lib/chat-model-router')
             const client = new Anthropic({ apiKey })
             const res = await client.messages.create({
               model: bgModel,
               max_tokens: 300,
+              ...NO_THINKING,
               messages: [{
                 role: 'user',
                 content: `A student answered a checkpoint question wrong${body.confidence === 'sure' ? ' and marked themselves SURE (hypercorrection: open by directly naming and refuting the wrong belief — confident errors are the most fixable when confronted head-on)' : ''}.
@@ -173,7 +228,9 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
               const { recordAnthropicUsage } = await import('@/lib/usage')
               recordAnthropicUsage(res.usage, { userId, model: bgModel, feature: 'tree-verify' })
             } catch { /* non-critical */ }
-            refutation = clampText(((res.content[0] as { text?: string })?.text ?? ''), 400)
+            // Join ALL text blocks — a thinking-first model puts a thinking
+            // block at [0] and a bare read degrades silently to the canned line.
+            refutation = clampText(res.content.filter(b => (b as { type?: string }).type === 'text').map(b => (b as { text?: string }).text ?? '').join('\n'), 400)
           }
         } catch { /* non-critical — canned explanation still lands */ }
         feedback = refutation ? `${refutation}${explanation ? `\n\n${explanation}` : ''}` : (
@@ -183,35 +240,16 @@ Write 1-2 sentences refuting the SPECIFIC belief inside their chosen option — 
         )
       }
     } else if (quiz.kind === 'artifact') {
-      // EVIDENCE CHECKPOINT: grade the real thing. The artifact reaches the
-      // judge as its Gemini content-analysis; if the background analysis
-      // pass hasn't landed yet, run it synchronously now (grading is the
-      // moment that needs eyes). Text files are readable directly.
-      const row = await prisma.linkedFile.findUnique({
-        where: { id: String(body.artifactFileId) },
-        select: { id: true, name: true, mimeType: true, content: true, analysis: true },
-      })
-      if (!row) throw new Error('artifact-row-missing')
-      let analysis = (row.analysis ?? '').trim()
-      const isMedia = /^(image|audio|video)\//.test(row.mimeType ?? '') || row.mimeType === 'application/pdf'
-      if (!analysis && isMedia && (row.content ?? '').startsWith('data:')) {
-        try {
-          const b64 = (row.content as string).split(',', 2)[1] ?? ''
-          if (b64) {
-            const { analyzeImage } = await import('@/lib/gemini')
-            analysis = (await analyzeImage(b64, `the student's checkpoint evidence "${row.name}" — describe exactly what it shows, including any readings, numbers, connections, or outputs visible`, row.mimeType ?? 'image/png', userId)).slice(0, 8000)
-            await prisma.linkedFile.update({ where: { id: row.id }, data: { analysis } }).catch(() => null)
-          }
-        } catch { /* analysis unavailable — judged conservatively below */ }
-      }
-      if (!analysis && !isMedia && (row.content ?? '').trim() && !(row.content ?? '').startsWith('data:')) {
-        analysis = `(text file contents) ${String(row.content).slice(0, 1500)}`
-      }
+      // EVIDENCE CHECKPOINT: grade the real thing. The artifact's legible
+      // content (Gemini analysis for media, decoded text for text files) was
+      // resolved BEFORE the claim — an unreadable artifact already 422'd
+      // with re-capture guidance, so the judge never grades blind and a
+      // typed note is context on real evidence, never the whole submission.
       const note = String(body.answer ?? '').trim()
-      const evidence = `ARTIFACT FILE: "${row.name}" (${row.mimeType})
-CONTENT ANALYSIS: ${analysis || '(no machine analysis could be produced for this attachment — the artifact is unreadable; unless the note alone is conclusive, score below 7 and say what a clearer capture would show)'}${note ? `
-STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
-      answerText = `📎 ${row.name}${note ? ` — ${note.slice(0, 300)}` : ''}`
+      const evidence = `ARTIFACT FILE: "${artifactName}" (${artifactMime})
+CONTENT ANALYSIS: ${artifactAnalysis}${note ? `
+STUDENT'S NOTE (their commentary — the artifact itself is what must show the evidence): ${note.slice(0, 400)}` : ''}`
+      answerText = `📎 ${artifactName}${note ? ` — ${note.slice(0, 300)}` : ''}`
       const j = await judgeCheckpointAnswer(userId, id, nodeId, quiz.question, quiz.rubric, evidence, body.confidence, body.lang, { artifact: true })
       correct = j.correct
       feedback = j.feedback
@@ -542,15 +580,19 @@ STUDENT'S NOTE: ${note.slice(0, 400)}` : ''}`
     await store.addMessage(conv.id, 'assistant', `${banner}${feedback ? ` — ${feedback}` : ''}${coverageNote}${verifiedNote}${reviewNote}`)
   } catch { /* non-critical */ }
 
-  // Keep the node's MASTERY BOARD digest fresh: a judged checkpoint is
-  // exactly the kind of event the board narrates (a proven facet, a fixed
-  // hole, a wrong answer worth reading back). Backgrounded — never blocks
-  // the verdict the student is waiting on.
-  try {
-    const { inBackground } = await import('@/lib/background')
-    const { refreshNodeBoardDigest } = await import('@/lib/tree-engine')
-    inBackground(refreshNodeBoardDigest(userId, id, nodeId, zh ? 'zh' : undefined))
-  } catch { /* non-critical */ }
+  // Keep the node's MASTERY BOARD digest fresh — but only on the answers
+  // that change what the board would say: a wrong answer (a new hole), a
+  // verification (the big moment), or a completed review. A 6-correct run
+  // was writing 6 digests of which only the last was ever read
+  // (qa-findings-4 №6); mid-streak correct answers now ride the chat-route
+  // digest cadence instead. Backgrounded — never blocks the verdict.
+  if (!correct || verified || isReview) {
+    try {
+      const { inBackground } = await import('@/lib/background')
+      const { refreshNodeBoardDigest } = await import('@/lib/tree-engine')
+      inBackground(refreshNodeBoardDigest(userId, id, nodeId, zh ? 'zh' : undefined))
+    } catch { /* non-critical */ }
+  }
 
   return NextResponse.json({
     correct,

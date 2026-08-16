@@ -59,6 +59,12 @@ export const ANSWER_STANDARD = `## THE ANSWER STANDARD (every answer must pass B
 // never a rerun. Injected wherever ancestor coverage is shown to the model.
 export const NO_REDUNDANCY = `RULE — PER-NODE REDUNDANCY AVOIDANCE (law): this node teaches ONLY its own NEW ground. Material the branch below already covered is BUILT ON, never re-taught — acknowledge it in one clause ("you already verified how X works at '<node>' — building on that…") and go straight to what is new here. Re-explaining an ancestor's material is a failed syllabus and a failed answer. The boundary holds upward too: material owned by a child or sibling node is pointed to, not absorbed.`
 
+// Plain Language, Intuition First (law — user directive, Aug 2026): node
+// content kept coming out too technical. Rides inside sessionDirectives()
+// so EVERY content-producing prompt (seed, syllabus, explainer, chat,
+// checkpoints, copilot, grow box, answer, digests) gets it for free.
+export const PLAIN_LANGUAGE = `RULE — PLAIN LANGUAGE, INTUITION FIRST (law): teach in the simplest words that still carry the full idea — short sentences, everyday wording, concrete pictures before abstractions. Build the intuition first (what it IS, plainly, with one concrete example), then name it precisely. Every technical term that must appear gets a plain-words unpacking in the same breath ("entropy — how spread out the energy is"). Never use a hard word where a simple one carries the same meaning, and never add words that don't earn their place: the goal is the FEWEST, SIMPLEST words that produce complete understanding. The session's target level raises DEPTH and rigor — never jargon density or wordiness: an advanced session still reads plainly, it just goes deeper.`
+
 // Goal-Necessity & Plan-First Growth (law — canonical wording in
 // FOUNDATION.md): the discipline for EVERY prompt that lays out nodes
 // (seed, grow-box expansion, copilot, discovery). Analyze the goal first,
@@ -73,7 +79,7 @@ export const GOAL_NECESSITY = `RULE — GOAL-NECESSITY & PLAN-FIRST GROWTH (law)
  */
 export function sessionDirectives(tree: SessionFields, fallbackLang?: string): string {
   const lang = tree.language ?? fallbackLang
-  const parts = [langDirective(lang ?? undefined)]
+  const parts = [langDirective(lang ?? undefined), PLAIN_LANGUAGE]
   if (tree.difficulty && DIFFICULTY_GUIDE[tree.difficulty]) {
     parts.push(`TARGET LEVEL for this session: ${tree.difficulty} — ${DIFFICULTY_GUIDE[tree.difficulty]}. Calibrate every explanation and every test question to exactly this depth.`)
   }
@@ -183,6 +189,7 @@ export async function generateTreeDisplayTitle(
     const result = await client.messages.create({
       model,
       max_tokens: 60,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `A learner typed this problem they want to master (verbatim, may be rambling):
@@ -197,7 +204,7 @@ Return ONLY the title text.`,
       const { recordAnthropicUsage } = await import('@/lib/usage')
       recordAnthropicUsage(result.usage, { userId, model, feature: 'title' })
     } catch { /* non-critical */ }
-    const text = ((result.content[0] as { text?: string })?.text ?? '')
+    const text = responseText(result)
       .trim().replace(/^["'“”]+|["'“”.。]+$/g, '').trim()
     // Sanity bounds: a degenerate echo (empty or the whole ramble) is worse
     // than the fallback.
@@ -224,12 +231,13 @@ export async function firstProblemRead(
     const result = await client.messages.create({
       model,
       max_tokens: 260,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `You are Bob, an expert mentor. A learner just told you the problem they want to master:
 "${problem.slice(0, 600)}"
 
-Give them an IMMEDIATELY useful first read — 2-3 sentences: what mastering this actually involves (the real crux or the 2-3 load-bearing pieces), concrete and specific to THIS problem, no generic study advice, no questions back. This is a gift of insight before setup even finishes.
+Give them an IMMEDIATELY useful first read — 2-3 sentences: what mastering this actually involves (the real crux or the 2-3 load-bearing pieces), concrete and specific to THIS problem, no generic study advice, no questions back. This is a gift of insight before setup even finishes. Plain, simple words — any technical term gets a plain-words unpacking in the same breath.
 ${lang === 'zh' ? 'Respond in Simplified Chinese (简体中文).' : 'Respond in English.'}
 Return ONLY the 2-3 sentences.`,
       }],
@@ -238,7 +246,7 @@ Return ONLY the 2-3 sentences.`,
       const { recordAnthropicUsage } = await import('@/lib/usage')
       recordAnthropicUsage(result.usage, { userId, model, feature: 'onboarding' })
     } catch { /* non-critical */ }
-    const text = ((result.content[0] as { text?: string })?.text ?? '').trim()
+    const text = responseText(result).trim()
     return text.length >= 20 ? text.slice(0, 700) : null
   } catch {
     return null
@@ -262,6 +270,7 @@ export async function suggestPurposeIdeas(
     const result = await client.messages.create({
       model,
       max_tokens: 220,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `A learner wants to master this problem:
@@ -276,7 +285,7 @@ Return ONLY JSON: ["…","…","…"]`,
       const { recordAnthropicUsage } = await import('@/lib/usage')
       recordAnthropicUsage(result.usage, { userId, model, feature: 'onboarding' })
     } catch { /* non-critical */ }
-    const text = (result.content[0] as { text?: string })?.text ?? ''
+    const text = responseText(result)
     const ideas = extractJSON<string[]>(text)
     const clean = (Array.isArray(ideas) ? ideas : [])
       .filter(x => typeof x === 'string' && x.trim().length >= 4)
@@ -743,6 +752,7 @@ export async function refreshNodeContextSummary(userId: string, treeId: string, 
     const result = await client.messages.create({
       model,
       max_tokens: 500,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `You are writing the CONTEXT SUMMARY for one node of a learner's problem-mastery tree. This summary is read by the workspaces of the nodes ABOVE this one so they build on what was established here WITHOUT re-teaching it, and so the learner always knows how this node fits into solving the root problem. Be dense, factual, and specific — no praise, no filler, no invented content.
@@ -769,7 +779,7 @@ Keep the WHOLE summary under 180 words. Write every word in ${zh ? 'Simplified C
       }],
     })
     void recordUsage(result, userId, model, 'tree-summary')
-    const summary = (result.content[0] as { text?: string })?.text?.trim() ?? ''
+    const summary = responseText(result).trim()
     if (!summary) return
     // Monotonic compare-and-set: write only if no fresher summary already
     // landed (contextSummaryAt is the basis-message time, so "fresher" = built
@@ -868,6 +878,7 @@ export async function refreshNodeBoardDigest(userId: string, treeId: string, nod
     const result = await client.messages.create({
       model,
       max_tokens: 900,
+      ...NO_THINKING,
       messages: [{
         role: 'user',
         content: `You are Bob, the learner's AI mentor. Write the learner-facing PROGRESS DIGEST for one node of their problem-mastery tree — the narrative panels of their Mastery Board. Address the learner directly as "you"${zh ? ' (你)' : ''}. Ground EVERY item strictly in the material below — never invent events, quotes, scores, or beliefs that are not visibly there. Fewer true items beat padded lists; omit what the record doesn't support.
@@ -912,6 +923,162 @@ Rules:
       where: { id: nodeId, OR: [{ boardDigestAt: null }, { boardDigestAt: { lt: writeAt } }] },
       data: { boardDigest: JSON.stringify(digest), boardDigestAt: writeAt },
     }).catch(() => null)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * ONE-CALL DIGEST PAIR (qa-findings-4 №6): the chat-route cadence used to
+ * fire refreshNodeContextSummary AND refreshNodeBoardDigest back-to-back —
+ * two Haiku calls re-fetching the same tree/conversation/quizState to narrate
+ * the same events for two audiences. This merges them: one shared fetch, one
+ * Haiku call returning both documents, each CAS-written under its own
+ * monotonic guard. The standalone functions remain for the event-driven
+ * callers (verification → context summary; judged answers → board digest).
+ * Best-effort — never blocks a user response and never throws into its caller.
+ */
+export async function refreshNodeDigests(userId: string, treeId: string, nodeId: string, lang?: string): Promise<void> {
+  try {
+    const tree = await getTreeWithNodes(userId, treeId)
+    if (!tree) return
+    const node = tree.nodes.find(n => n.id === nodeId)
+    if (!node || node.pending || node.parentId === null) return
+    const zh = (lang ?? tree.language ?? undefined) === 'zh'
+
+    const { parseQuizState } = await import('@/lib/mastery')
+    const qs = parseQuizState(node.quizState)
+
+    const cleanSummary = (s: string) =>
+      s.replace(/\[\[QUIZ\]\][\s\S]*$/, '').replace(/```image[\s\S]*?```/g, '(diagram)').trim()
+    const cleanBoard = (s: string) => s
+      .replace(/\[\[QUIZ\]\][\s\S]*$/, '(asked a checkpoint)')
+      .replace(/\n*\[\[(DONE|INCOMPLETE|QUIZ_OFFER)\]\]/g, '')
+      .replace(/\n*\[\[NEXT_NODE\]\]\{[^}]*\}/g, '')
+      .replace(/```image[\s\S]*?```/g, '(sketched a diagram)')
+      .trim()
+    const isVerdict = (s: string) => /^\s*(✅|❌|🎉|🌱)/.test(s)
+
+    // ONE conversation fetch feeds both documents.
+    let syllabus = ''
+    let teachingExcerpts: string[] = []
+    let convLines: string[] = []
+    let basisAt: Date | null = null
+    const conv = await prisma.conversation.findFirst({
+      where: { userId, context: `tree-node:${nodeId}` },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    }).catch(() => null)
+    if (conv) {
+      const [firstBob, recent] = await Promise.all([
+        prisma.message.findFirst({ where: { conversationId: conv.id, role: 'assistant' }, orderBy: { createdAt: 'asc' }, select: { id: true, content: true } }).catch(() => null),
+        prisma.message.findMany({ where: { conversationId: conv.id }, orderBy: { createdAt: 'desc' }, take: 18, select: { id: true, role: true, content: true, createdAt: true } }).catch(() => []),
+      ])
+      syllabus = firstBob ? cleanSummary(firstBob.content).slice(0, 1200) : ''
+      basisAt = recent[0]?.createdAt ?? null
+      teachingExcerpts = recent
+        .filter(m => m.role === 'assistant' && m.id !== firstBob?.id && cleanSummary(m.content).length > 0 && !isVerdict(cleanSummary(m.content)))
+        .slice(0, 3)
+        .map(m => cleanSummary(m.content).slice(0, 700))
+      convLines = recent
+        .slice()
+        .reverse()
+        .map(m => ({ role: m.role, text: cleanBoard(m.content) }))
+        .filter(m => m.text.length > 0)
+        .map(m => `${m.role === 'user' ? 'STUDENT' : 'BOB'}: ${m.text.slice(0, 450)}`)
+    }
+
+    let buildLines: string[] = []
+    try {
+      const parsed = JSON.parse(node.progressLog ?? '[]') as Array<{ text?: string; createdAt?: string }>
+      if (Array.isArray(parsed)) {
+        buildLines = parsed
+          .filter(e => e && typeof e.text === 'string')
+          .slice(-8)
+          .map(e => `- ${(e.text as string).slice(0, 200)}${e.createdAt ? ` (${String(e.createdAt).slice(0, 10)})` : ''}`)
+      }
+    } catch { /* malformed log — go without it */ }
+
+    // Nothing has happened here yet — don't burn a call on empty documents.
+    if (!syllabus && teachingExcerpts.length === 0 && convLines.length === 0 && qs.attempts === 0 && buildLines.length === 0 && !node.notes?.trim() && !node.explainer?.trim()) return
+
+    const path = nodePath(tree.nodes, nodeId)
+    const facetLines = (qs.facets ?? []).map(f =>
+      `${f.done ? '✅ proven' : '⬜ unproven'}${f.struggled ? (f.done ? ' (failed first, then fixed)' : ' (missed — still open)') : ''} — "${f.name}"`)
+    const history = (qs.history ?? []).slice(-30)
+    const historyLines = history.map(h =>
+      `${h.ok ? '✔' : '✘'} ${h.kind}${h.facet ? ` on "${h.facet}"` : ''}${h.conf ? ` (felt ${h.conf})` : ''}${h.fix ? ' — FIXED a previously-missed point' : ''}${h.review ? ' [retention review]' : ''} at ${h.t.slice(0, 16)}`)
+    const state = node.status === 'understood'
+      ? `VERIFIED${qs.reviewedAt ? ` (last retention review ${qs.reviewedAt.slice(0, 10)})` : ''}`
+      : qs.attempts > 0 ? `in progress (${qs.correct} correct / ${qs.attempts} checkpoint answers)` : 'opened, not yet tested'
+
+    const client = await anthropic()
+    const { getBackgroundModel } = await import('@/lib/model-resolver')
+    const model = await getBackgroundModel()
+    const result = await client.messages.create({
+      model,
+      max_tokens: 1300,
+      ...NO_THINKING,
+      messages: [{
+        role: 'user',
+        content: `Write TWO documents about ONE node of a learner's problem-mastery tree, from the same record. Ground EVERY item strictly in the material below — never invent events, quotes, scores, or beliefs. Fewer true items beat padded lists.
+
+ROOT PROBLEM: "${tree.title}"${tree.purpose ? `\nWHY the learner wants this mastered: ${clampText(tree.purpose, 240)}` : ''}
+THIS NODE: "${node.title}" — ${node.summary}
+Branch (root → here): ${path.map(n => `"${n.title}"`).join(' → ')}
+Verification state: ${state}
+${facetLines.length ? `SYLLABUS COVERAGE MAP:\n${facetLines.join('\n')}` : 'No syllabus contract yet.'}
+${historyLines.length ? `CHECKPOINT RECORD (oldest → newest):\n${historyLines.join('\n')}` : 'No checkpoints answered yet.'}
+${(qs.missed ?? []).length ? `Missed checkpoints still open: ${qs.missed.map(m => m.question.slice(0, 120)).join(' | ')}` : ''}
+${qs.sureWrong > 0 || qs.sureRight > 0 ? `Confidence calibration: ${qs.sureRight} sure-and-right, ${qs.sureWrong} sure-but-wrong.` : ''}
+${buildLines.length ? `REAL-WORLD BUILD LOG:\n${buildLines.join('\n')}` : ''}
+${node.notes?.trim() ? `Learner's own notes: ${node.notes.trim().slice(0, 400)}` : ''}
+${syllabus ? `Workspace opening / syllabus: ${syllabus}` : ''}
+${teachingExcerpts.length ? `Teaching that happened here:\n${teachingExcerpts.map((t, i) => `(${i + 1}) ${t}`).join('\n')}` : ''}
+${convLines.length ? `RECENT WORKSPACE CONVERSATION (oldest → newest):\n${convLines.join('\n')}` : ''}
+${node.explainer?.trim() && !syllabus ? `Node explainer: ${node.explainer.slice(0, 800)}` : ''}
+
+DOCUMENT 1 — "contextSummary": read by the workspaces of nodes ABOVE this one so they build on what was established here without re-teaching it. Dense, factual, third-person. Compact markdown with EXACTLY these four short sections (one to three tight bullets each; never pad):
+**Established here** — the specific concepts/mechanisms this node actually TAUGHT.
+**Proven** — what the learner verifiably demonstrated (or "nothing verified yet").
+**Still open** — unproven facets, missed checkpoints, sticking points (or "none").
+**Role toward the root** — one sentence: how mastering this node moves the root problem.
+Under 180 words total.
+
+DOCUMENT 2 — "board": the learner-facing progress digest (their Mastery Board). Address the learner as "you"${zh ? ' (你)' : ''}. Rules:
+- headline: ONE sentence whose form follows the verification state — nothing proven yet → future-framed goal ("The goal here: be able to ..."); some proven → "You're proving you can ..."; VERIFIED → "You can now ..." naming the strongest demonstrated capability. Never claim an unproven capability.
+- moments (up to 5, chronological, past tense): real progress moments — kind "learning" (a concept clicked), "fixed" (a previously-missed point later proven), "breakthrough" (an insight in the learner's own words), "build" (real-world execution). Add "facet" only when one syllabus point clearly owns the moment (exact name).
+- misconceptions (up to 4): wrong beliefs that actually SURFACED here; "cleared": true only when the record shows the repair. "label" is the belief itself, stated plainly.
+- quizRead: 1-2 sentences reading the checkpoint record like a coach ("" if no checkpoints).
+- nextFocus: the single most useful thing to prove or do next ("" if verified and nothing open).
+
+Return ONLY JSON, no prose around it:
+{"contextSummary": "markdown...", "board": {"headline": string, "moments": [{"kind": "learning"|"fixed"|"breakthrough"|"build", "text": string, "facet"?: string}], "misconceptions": [{"label": string, "cleared": boolean, "note"?: string}], "quizRead": string, "nextFocus": string}}
+Write every string in ${zh ? 'Simplified Chinese (简体中文)' : 'English'}.`,
+      }],
+    })
+    // One merged call serves both audiences — tagged tree-summary (the board
+    // half's spend rides the same call instead of a second one).
+    void recordUsage(result, userId, model, 'tree-summary')
+    const raw = extractJSON<{ contextSummary?: unknown; board?: unknown }>(responseText(result))
+    if (!raw) return
+    const writeAt = basisAt ?? new Date()
+
+    const summary = typeof raw.contextSummary === 'string' ? raw.contextSummary.trim() : ''
+    if (summary) {
+      await prisma.treeNode.updateMany({
+        where: { id: nodeId, OR: [{ contextSummaryAt: null }, { contextSummaryAt: { lt: writeAt } }] },
+        data: { contextSummary: clampText(summary, 1600), contextSummaryAt: writeAt },
+      }).catch(() => null)
+    }
+    if (raw.board && typeof raw.board === 'object') {
+      const { parseBoardDigest } = await import('@/lib/board-digest')
+      const digest = parseBoardDigest(JSON.stringify(raw.board))
+      if (digest) {
+        await prisma.treeNode.updateMany({
+          where: { id: nodeId, OR: [{ boardDigestAt: null }, { boardDigestAt: { lt: writeAt } }] },
+          data: { boardDigest: JSON.stringify(digest), boardDigestAt: writeAt },
+        }).catch(() => null)
+      }
+    }
   } catch { /* non-critical */ }
 }
 
@@ -1013,8 +1180,7 @@ RULES:
 - WHEN SPECIFIC ENOUGH, STOP ASKING: once you can pin the branch (or further answers would no longer change the set), return the final set and let the reply say confidently why it now matches what they need — no trailing question.
 - CONTINGENT UNKNOWNS: if the right branch depends on a fact the STUDENT doesn't know yet (which tool/platform/variety/library), propose the diagnostic/conceptual node that resolves the unknown — never a fan of per-option how-tos. (This is different from a fact YOU need — those you ask for.)
 - "reply" is your conversational voice in the thread (1-3 sentences): what you proposed / how the set just changed and why, then the fork question if one is still open. Empty proposals are allowed ONLY for pure small-talk (a thanks, a meta question about the app) — and even then the reply must move the conversation forward, never a dead end, never "no new branches".
-- The reply NEVER lists the proposal titles verbatim as a menu — the UI shows the proposal cards; speak about them naturally (e.g. "I've re-cut the branches toward the watering side —").${mustPropose ? `
-- THIS TURN MUST PROPOSE: the dialog has already gone a turn without leaving proposals on the board. Return your best 1-4 proposals NOW under the most likely reading of everything said so far.` : ''}
+- The reply NEVER lists the proposal titles verbatim as a menu — the UI shows the proposal cards; speak about them naturally (e.g. "I've re-cut the branches toward the watering side —").
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON:
@@ -1023,9 +1189,17 @@ Return ONLY JSON:
   const turnMessages = [...history, { role: 'user' as const, content: question.slice(0, 800) }]
 
   // The shared prefix carries a cache breakpoint: a retry pass re-reads it
-  // at ~0.1× instead of re-billing the whole system (the addition rides as
-  // a SEPARATE block after the breakpoint — string-concat would miss).
-  const cachedSystem = [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }]
+  // at ~0.1× instead of re-billing the whole system (additions ride as
+  // SEPARATE blocks after the breakpoint — string-concat would miss).
+  // mustPropose toggles per turn, so it lives AFTER the breakpoint: inside
+  // the prefix it would bust the cache exactly on the turns that retry.
+  const cachedSystem = [
+    { type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } },
+    ...(mustPropose ? [{
+      type: 'text' as const,
+      text: 'THIS TURN MUST PROPOSE: the dialog has already gone a turn without leaving proposals on the board. Return your best 1-4 proposals NOW under the most likely reading of everything said so far.',
+    }] : []),
+  ]
 
   // Pass 1: the conversational turn.
   let parsed: GrowParsed | null = null
@@ -1235,18 +1409,19 @@ export async function copilotTurn(
 
   const client = await anthropic()
   const model = await getTeachingModel()
-  const system = `You are Bob, the TREE COPILOT for one problem-mastery learning tree — a single conversation that can operate EVERY tree-level function. The student talks to you about the tree as a whole; you converse, teach, grow, and re-aim it.
+  // CACHE LAYOUT (qa-findings-4 №5): everything session-stable — the role,
+  // laws, functions, JSON contract — is the breakpointed prefix; the live
+  // tree index / work catalog / grounding (any workspace message anywhere
+  // changes them) ride a SEPARATE block after it, and this turn's
+  // attachments ride inside the student's latest message. The old layout put
+  // the volatile material FIRST inside the one cached block, so the prefix
+  // could never hit across turns.
+  const systemStatic = `You are Bob, the TREE COPILOT for one problem-mastery learning tree — a single conversation that can operate EVERY tree-level function. The student talks to you about the tree as a whole; you converse, teach, grow, and re-aim it.
 
 PROBLEM (root): "${tree.title}"
 ${tree.framing ? `FRAMING: ${tree.framing}` : ''}
 SESSION PURPOSE: ${tree.purpose ? `"${tree.purpose}"` : '(not yet stated — surfacing it is one of your jobs)'}
-CURRENT TREE (#k here is the EXACT number the student's canvas shows on the learning path — #0 is the root):
-${indexList}
-
-STORED WORK CATALOG (the student's history you can RECALL on demand — counts only, you do NOT see any of this content until you request it; nodes not listed have no stored work yet):
-${catalog || '(no stored work yet beyond the tree itself)'}
-${grounding}
-${attachBlock}
+(The live CURRENT TREE index and STORED WORK CATALOG arrive in the next system block; anything the student attached THIS turn arrives analyzed inside their latest message.)
 
 YOUR FUNCTIONS (all in one box):
 1. CONVERSE & TEACH about the whole problem under the Answer Standard — every answer Relevant (scoped to this tree's problem and purpose) and Informative (carries the mechanism/why). Never re-teach what an existing node already owns — point to that node instead ("open '<node>' for that — here's how it connects…").
@@ -1254,7 +1429,7 @@ YOUR FUNCTIONS (all in one box):
    INSERT A LAYER: a proposal may carry "adoptChildren": [<handles of EXISTING nodes>] — when the student approves that ghost, those nodes (each with its whole subtree) automatically re-parent UNDER it. This is how you restructure top-down: e.g. "intro nodes between the root and the current branches" = propose under root with adoptChildren = the current branch handles. Never put the same handle in two proposals; never adopt the root or the proposal's own parent.
    PREREQUISITE EXTRACTION: when the stored work shows several branches stumbling over the SAME missing concept (repeated wrong-streaks/questions across branches — confirm via recall), propose ONE prerequisite node under their closest common ancestor and pair it with a "reorder" action that puts it FIRST among its siblings — one shared foundation beats re-teaching it in every branch.
 3. REFINE THE PURPOSE: when the conversation (or an attachment — e.g. the product they're building) reveals what this tree is REALLY for, return "purposeUpdate": a sharp 1-2 sentence purpose. The student approves it with a tap. When the purpose reorients the tree (e.g. "improve MY product" → build-partner mode: solution-proposing, evidence-grounded, deployable depth), ALSO propose the new solution branches that fit — prefer growing over pruning: a reorientation alone is never a reason to delete nodes (that needs function 6's bar).
-4. BE A BUILD PARTNER when the purpose is a real product/project: ground every proposal and answer in the student's actual artifacts (attachments above), propose concrete improvement branches, and teach the mechanism behind each suggestion.
+4. BE A BUILD PARTNER when the purpose is a real product/project: ground every proposal and answer in the student's actual artifacts (the analyzed attachments in their message), propose concrete improvement branches, and teach the mechanism behind each suggestion.
 5. GENERATED VISUALS: when the student asks for a diagram/graph/sketch, OR the concept is inherently visual (structure, flow, comparison, a product sketch), place EXACTLY one fenced block inside your reply markdown where the visual belongs:
 \`\`\`image
 one-sentence description of the diagram/sketch to draw — name every part and label explicitly
@@ -1294,6 +1469,13 @@ Return ONLY JSON — either a normal turn:
 OR a recall request first (function 7):
 {"contextRequest": {"nodes": [{"node": 0, "kinds": ["chat","files"]}], "why": "…"}}`
 
+  const systemLive = `CURRENT TREE (#k here is the EXACT number the student's canvas shows on the learning path — #0 is the root):
+${indexList}
+
+STORED WORK CATALOG (the student's history you can RECALL on demand — counts only, you do NOT see any of this content until you request it; nodes not listed have no stored work yet):
+${catalog || '(no stored work yet beyond the tree itself)'}
+${grounding}`
+
   type CopilotParsed = {
     reply?: string
     proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string; adoptChildren?: number[] }>
@@ -1309,13 +1491,22 @@ OR a recall request first (function 7):
     if (Array.isArray(obj.contextRequest?.nodes) && obj.contextRequest!.nodes!.length > 0) return obj
     return typeof obj.reply === 'string' || Array.isArray(obj.proposals) ? obj : null
   }
-  const turnMessages = [...history, { role: 'user' as const, content: message.slice(0, 2000) }]
+  // This turn's attachments ride the user message (volatile by definition) —
+  // never the cached system prefix.
+  const turnMessages = [...history, {
+    role: 'user' as const,
+    content: `${attachBlock ? `${attachBlock.trim()}\n\n` : ''}${message.slice(0, 2000)}`,
+  }]
 
-  // The ~3k-token prefix carries a cache breakpoint. Retry and recall passes
-  // append their additions as SEPARATE blocks after it (string-concat would
-  // change the prefix bytes and miss), so a recall turn's second full call
-  // re-reads the prefix at ~0.1× instead of re-billing it.
-  const cachedSystem = [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }]
+  // The static ~11k-char prefix carries the cache breakpoint; the live
+  // index/catalog/grounding block sits after it. Retry and recall passes
+  // append their additions as further SEPARATE blocks (string-concat would
+  // change the prefix bytes and miss), so both same-turn passes AND future
+  // turns re-read the law text at ~0.1× instead of re-billing it.
+  const cachedSystem = [
+    { type: 'text' as const, text: systemStatic, cache_control: { type: 'ephemeral' as const } },
+    { type: 'text' as const, text: systemLive },
+  ]
 
   let parsed: CopilotParsed | null = null
   let firstText = ''
@@ -1744,9 +1935,12 @@ export interface XpAwardLite { awarded: number; label: string; levelUp: boolean;
  * the tree-completion check. Returns the XP awards for client celebration.
  */
 // True when a deployable-depth tree (advanced/professional) has NO build
-// evidence yet — no non-empty build log on any node, and no uploaded artifact
-// (per-node 'tree-node' uploads or tree-level copilot 'tree' shares). Fails
-// open: a query hiccup must never dam a completion that was otherwise earned.
+// evidence yet. Evidence = a citation-verified build-log entry OR a facet
+// PROVEN by a judged artifact checkpoint (provenBy:'artifact'). A merely
+// uploaded file no longer counts (qa-findings-4 №1: a screenshot attached in
+// chat to ask a question was opening the Deployed gate — evidence must be
+// JUDGED, not present). Fails open: a query hiccup must never dam a
+// completion that was otherwise earned.
 async function deployableGateBlocks(treeId: string): Promise<boolean> {
   try {
     const tree = await prisma.problemTree.findUnique({
@@ -1754,7 +1948,7 @@ async function deployableGateBlocks(treeId: string): Promise<boolean> {
     })
     if (tree?.difficulty !== 'advanced' && tree?.difficulty !== 'professional') return false
     const nodes = await prisma.treeNode.findMany({
-      where: { treeId }, select: { id: true, progressLog: true },
+      where: { treeId }, select: { id: true, progressLog: true, quizState: true },
     })
     const hasLog = nodes.some(n => {
       try {
@@ -1763,11 +1957,10 @@ async function deployableGateBlocks(treeId: string): Promise<boolean> {
       } catch { return false }
     })
     if (hasLog) return false
-    const file = await prisma.linkedFile.findFirst({
-      where: { workType: { in: ['tree-node', 'tree'] }, workId: { in: [treeId, ...nodes.map(n => n.id)] } },
-      select: { id: true },
-    })
-    return !file
+    const { parseQuizState } = await import('@/lib/mastery')
+    const hasJudgedArtifact = nodes.some(n =>
+      (parseQuizState(n.quizState).facets ?? []).some(f => f.done && f.provenBy === 'artifact'))
+    return !hasJudgedArtifact
   } catch { return false }
 }
 
