@@ -237,10 +237,13 @@ on it.
 
 ## The Answer Standard (Relevant & Informative — law)
 
-Every workspace answer must be BOTH: **Relevant** (answers the asked question at the
-depth THIS problem needs — no generic field lectures, no uncalled-for depth) and
+Every workspace answer must pass ALL THREE: **Relevant** (answers the asked question
+at the depth THIS problem needs — no generic field lectures, no uncalled-for depth),
 **Informative** (never a bare answer — always carries the scientific background /
-mechanism that makes it transferable understanding). Canonical wording lives in
+mechanism that makes it transferable understanding), and **Core-first & Simple**
+(user directive, Aug 2026: quality = the core of the question in the fewest,
+simplest words — complexity, length, and volume are cost, never value; PADDED is
+a failure mode beside TOO GENERAL and TOO THIN). Canonical wording lives in
 FOUNDATION.md; prompts consume it via `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 Apply it to any new answer-producing feature.
 
@@ -288,7 +291,11 @@ question. Implementation: the CHECKPOINT QUESTIONS section of the node chat prom
 `src/lib/tree-engine.ts`. The law governs question AUTHORING only — short-answer
 GRADING is gist-based (user directive, Aug 2026): the core idea in the student's
 own loose words = correct; wrong is reserved for contradicting the core, a real
-misconception, or no grasp shown. Never keyword-match against the rubric.
+misconception, or no grasp shown. Never keyword-match against the rubric. Grading
+is also LENGTH-BLIND: a one-sentence core hit is full credit; volume, polish, and
+generic boilerplate (pasted AI/textbook essays) that never engages the specific
+probe earn nothing. One asymmetric bonus: correctly USING the node's just-taught
+vocabulary scores up — its absence never scores down.
 
 ## Database Rules
 

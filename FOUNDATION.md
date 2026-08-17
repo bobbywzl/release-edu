@@ -101,8 +101,12 @@ If not, it's waste — leave it out.
   (user directive, Aug 2026): the core idea in the learner's own loose words is
   correct — wrong is reserved for answers that contradict the core idea, assert
   a real misconception, or show no grasp at all. Wording and keywords are never
-  the bar; the Differentiator law disciplines how questions are AUTHORED, not
-  how leniently answers are graded. There is no separate test screen. A fully
+  the bar, and grading is **length-blind**: a one-sentence core hit is full
+  credit, while volume, polish, and pasted boilerplate that never engages the
+  question's specific probe earn nothing. One asymmetric bonus rewards uptake:
+  correctly USING the vocabulary the node just taught scores up; not using it
+  never scores down. The Differentiator law disciplines how questions are
+  AUTHORED, not how leniently answers are graded. There is no separate test screen. A fully
   verified tree = a mastered problem.
 
 ## Goal-Necessity & Plan-First Growth (law — how the tree takes shape)
@@ -149,12 +153,18 @@ Every answer Bob gives in the workspace must pass BOTH tests before it ships:
   or fact ("use variety X", "yes, that works") is a failed answer even when correct:
   every answer carries enough of the mechanism or principle behind it (the WHY) that
   the learner gains transferable understanding, not a disconnected fact.
+- **Core-first & simple** (user directive, Aug 2026) — the measure of quality is
+  hitting the core of the question in the fewest, simplest words. Complexity,
+  length, and volume are cost, never value: an answer never improves by covering
+  more, only by landing the core more exactly. One mechanism that answers the
+  question beats five facts around it.
 
-The two failure modes to design against: **too general** (a textbook chapter dumped
-on a specific question) and **too specific** (an answer with no scientific background
-that resolves the moment but teaches nothing). Every prompt that produces
-learner-facing answers (node chat, explainers) embeds this standard — see
-`ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
+The failure modes to design against: **too general** (a textbook chapter dumped
+on a specific question), **too specific** (an answer with no scientific background
+that resolves the moment but teaches nothing), and **padded** (volume or
+complexity standing in for the core — the answer that says more and lands less).
+Every prompt that produces learner-facing answers (node chat, explainers) embeds
+this standard — see `ANSWER_STANDARD` in `src/lib/tree-engine.ts`.
 
 ## Plain Language, Intuition First (law — user directive, Aug 2026)
 

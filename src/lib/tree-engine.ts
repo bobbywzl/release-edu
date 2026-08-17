@@ -51,10 +51,11 @@ interface SessionFields {
  * be BOTH Relevant and Informative. Inject into every prompt that produces
  * workspace answers (node chat, explainers).
  */
-export const ANSWER_STANDARD = `## THE ANSWER STANDARD (every answer must pass BOTH — non-negotiable)
+export const ANSWER_STANDARD = `## THE ANSWER STANDARD (every answer must pass ALL THREE — non-negotiable)
 - RELEVANT: answer the question actually asked, scoped to THIS node in service of the root problem. No generic field surveys, no depth the question didn't call for — calibrate how deep you go to what this specific problem needs, and stop there.
 - INFORMATIVE: never a bare answer, verdict, or recipe. Every answer teaches the scientific background behind it — the mechanism or principle that explains WHY — so the student walks away with transferable understanding, not an isolated fact.
-- The two failure modes, equally fatal: TOO GENERAL (a textbook lecture dumped on a specific question) and TOO THIN (a correct answer with no science underneath).`
+- CORE-FIRST & SIMPLE: the measure of quality is hitting the core of the question in the fewest, simplest words. Complexity, length, and volume are COST, never value — an answer never improves by covering more, only by landing the core more exactly. ONE mechanism that answers the question beats five facts around it.
+- The failure modes, equally fatal: TOO GENERAL (a textbook lecture dumped on a specific question), TOO THIN (a correct answer with no science underneath), and PADDED (volume or complexity standing in for the core).`
 
 // The Answer Standard's companion law (canonical wording in FOUNDATION.md):
 // a node teaches ONLY its own new ground — the branch below it is a launchpad,
@@ -1928,8 +1929,12 @@ export interface CheckpointJudgement { correct: boolean; score: number; feedback
  * Judge one short-answer checkpoint. GIST GRADING (user directive, Aug 2026):
  * the core idea in the student's own loose words = correct — wrong is reserved
  * for answers that contradict the core, assert a real misconception, or show
- * no grasp at all. The rubric is a gist reference, never a keyword checklist.
- * (The Differentiator law governs question AUTHORING — grading stays lenient.)
+ * no grasp at all. LENGTH-BLIND: volume, polish, and pasted boilerplate that
+ * never engages the specific probe earn nothing — a one-sentence core hit is
+ * full credit. One asymmetric bonus: correctly using the node's own taught
+ * vocabulary scores UP; its absence never scores down. The rubric is a gist
+ * reference, never a keyword checklist. (The Differentiator law governs
+ * question AUTHORING — grading stays lenient.)
  */
 export async function judgeCheckpointAnswer(
   userId: string, treeId: string, nodeId: string,
@@ -1966,13 +1971,17 @@ NODE UNDER STUDY: "${node.title}" — ${node.summary}
 ROOT PROBLEM: "${tree.title}"
 CHECKPOINT QUESTION: ${question.slice(0, 600)}
 ${rubric ? `THE CORE IDEA a correct answer shows (a gist reference for YOU, never a keyword checklist — the student has never seen this wording): ${rubric.slice(0, 400)}` : ''}
-STUDENT'S ANSWER${confidence ? ` [stated confidence: ${confidence}]` : ''}: ${answer.slice(0, 4000)}
+${node.explainer ? `WHAT THIS NODE TEACHES (the lesson's own vocabulary and mechanisms — context for the UPTAKE BONUS below): ${node.explainer.slice(0, 1200)}
+` : ''}STUDENT'S ANSWER${confidence ? ` [stated confidence: ${confidence}]` : ''}: ${answer.slice(0, 4000)}
 
 GIST GRADING (law):
-- 9-10: the core idea, precise and complete.
+- 9-10: the core idea, precise — including a SINGLE sentence that lands it. Brevity is precision, never a deficiency.
 - 7-8 (still CORRECT): the core idea is there in their own words — even loosely phrased, informal, imprecise on secondary detail, or missing every keyword of the reference. Generally the right direction and not at odds with the core = correct.
 - 4-6: no real grasp shown — restates the question, or so vague it could be written without understanding anything.
 - 0-3: contradicts the core idea, or asserts a real misconception.
+LENGTH-BLIND (law): judge WHAT the answer says, never how much of it there is. Length, essay structure, technical vocabulary, and coverage of adjacent points are NOT evidence of understanding — locate the core idea and grade as if only it were written. Short-and-right outscores long-and-padded, always.
+GENERIC ≠ CORRECT: the checkpoint asks a SPECIFIC probe (a scenario, a why, an edge case). Polished general material about the topic that never engages that specific probe — pasted textbook/AI boilerplate included — has NOT hit the core, however expert it sounds. Simple words engaging the exact question beat elaborate words around it.
+UPTAKE BONUS (asymmetric, law): correctly USING the vocabulary or mechanisms this node teaches is strong evidence the lesson landed — score it up. The asymmetry is absolute: taught terms used correctly RAISE the score; their absence NEVER lowers it (plain own words remain fully correct); taught terms parroted around a wrong or missing core still fail.
 Vague-but-right-direction is CORRECT; polished-but-wrong is not. Loose phrasing, missing terminology, or an unmentioned secondary detail NEVER pull a right idea below 7 — only a wrong or absent idea does. Torn between two scores → give the higher one: a false "wrong" derails the student into remediation they don't need, and later checkpoints re-probe anyway.
 
 HYPERCORRECTION RULE: a CONFIDENT-WRONG answer is the most teachable state. If the answer is marked "sure" and scores below 5, your feedback must open by directly, memorably refuting the specific wrong belief (name it, then correct it).
