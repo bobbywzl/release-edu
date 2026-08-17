@@ -244,8 +244,13 @@ Companion law — **Plain Language, Intuition First** (FOUNDATION.md, user
 directive Aug 2026): all learner-facing content uses the fewest, simplest words
 that produce complete understanding — intuition first, every technical term
 unpacked in plain words in the same breath; the depth calibrator raises depth,
-never jargon. `PLAIN_LANGUAGE` in `src/lib/tree-engine.ts` rides inside
-`sessionDirectives()`, so any prompt using session directives gets it free.
+never jargon. Its **Structured & Short** clause: bullets with bold lead-ins as
+the default body, `##`/`###` hierarchy on substantial replies, one example per
+concept told once, hard word budgets (~150 teaching turn / ~250 remediation /
+300-450 explainer). `PLAIN_LANGUAGE` + `STRUCTURED_BREVITY` in
+`src/lib/tree-engine.ts` ride inside `sessionDirectives()`, so any prompt using
+session directives gets both free; `markdown-renderer.tsx` + `mobile.css` keep
+headers / subheader kickers / body visually distinct.
 
 Companion law — **Per-Node Redundancy Avoidance** (FOUNDATION.md): every node's
 syllabus/explainer/chat sees the whole tree AND what ancestor workspaces already
