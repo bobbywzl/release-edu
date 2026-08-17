@@ -3,37 +3,138 @@
  * TREE COPILOT — the tree page's single conversation combining every
  * tree-level function: teach about the whole problem, grow branches under
  * ANY node (pending ghosts — permission-based), re-aim the session purpose
- * (approval chip), and RESHAPE the tree map and node contents (edit / move /
- * delete chips — nothing applies until tapped), with SOTA-chatbot multimodal
- * input (file / camera photo / video / voice note via the shared capture
- * row) and generated visuals (Bob's ```image blocks).
+ * (approval chip), and REWIRE the tree — the server returns ONE validated
+ * plan (add/edit/move/delete/merge/reorder/split/rebalance/spinoff, up to a
+ * full-tree restructure) rendered as a single card: every op listed with a
+ * checkbox, ONE Apply tap posts the selection to /api/tree/[id]/rewire,
+ * which executes atomically with an undo snapshot. Nothing applies until
+ * tapped. Plus SOTA-chatbot multimodal input (file / camera photo / video /
+ * voice note via the shared capture row) and generated visuals (Bob's
+ * ```image blocks).
  *
  * Shell (two modes):
  * - AMBIENT (default): a Spotlight-style pill floating bottom-center with the
  *   dim invitation "Ask me here to customise this tree for you"; the last few
  *   exchanges float above it as translucent cloud bubbles, so the student
- *   converses WHILE watching ghost nodes form and chips land on the canvas.
- *   Reshape/purpose chips render in the cloud too (ghost approve/reject lives
- *   on the canvas nodes themselves).
+ *   converses WHILE watching ghost nodes form and cards land on the canvas.
+ *   The plan/purpose cards render in the cloud too (ghost approve/reject
+ *   lives on the canvas nodes themselves).
  * - FULL: the expand button opens the complete fullscreen conversation
  *   (multimodal input, full history); Esc or ✕ returns to ambient.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   Bot, X, Check, Send, Loader2, Sprout, Pencil, MoveRight, Trash2, Maximize2, Scissors,
-  GitMerge, ExternalLink, Scale, ListOrdered,
+  GitMerge, ExternalLink, Scale, ListOrdered, Plus, Wand2,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useAttachments, CaptureControls, AttachmentTray, attachmentLabel } from '@/components/multimodal-input'
 import { emitBadgeEvents } from '@/components/xp-toast'
 import { useLanguage } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import type { CopilotAction } from '@/lib/tree-engine'
+import { simulateRewire, type RewireOp, type RewirePlan } from '@/lib/rewire'
 
-interface CopilotTree { id: string; title: string; framing: string | null }
+interface CopilotTree {
+  id: string
+  title: string
+  framing: string | null
+  /** Live nodes (ghosts included) — powers the client-side selection sim so
+   *  unticking an op another op depends on disables Apply instead of 409ing. */
+  nodes?: Array<{ id: string; parentId: string | null; pending?: boolean }>
+}
 interface GhostChip { id: string; title: string; summary: string }
+
+const DESTRUCTIVE_OPS = new Set<RewireOp['op']>(['delete', 'merge', 'spinoff'])
+
+function OpIcon({ type }: { type: RewireOp['op'] }) {
+  return type === 'add' ? <Plus className="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
+    : type === 'edit' ? <Pencil className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
+      : type === 'move' ? <MoveRight className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
+        : type === 'split' ? <Scissors className="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
+          : type === 'merge' ? <GitMerge className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+            : type === 'spinoff' ? <ExternalLink className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
+              : type === 'rebalance' ? <Scale className="w-3.5 h-3.5 text-teal-300 flex-shrink-0" />
+                : type === 'reorder' ? <ListOrdered className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
+                  : <Trash2 className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
+}
+
+/** The ONE rewire-plan card — same body in the ambient cloud and the full
+ *  view. Module-level so re-renders never remount it (checkbox focus and
+ *  the op-list scroll position survive typing in the chat input). */
+function RewirePlanCard({ plan, sel, busy, invalid, compact, onToggle, onApply, onDismiss }: {
+  plan: RewirePlan
+  sel: Set<number>
+  busy: boolean
+  /** The current selection breaks the plan's op order (client-side sim). */
+  invalid: boolean
+  compact: boolean
+  onToggle: (i: number) => void
+  onApply: () => void
+  onDismiss: () => void
+}) {
+  const { t } = useLanguage()
+  const opDesc = (o: RewireOp): string => {
+    if (o.op === 'add') return t('tree.actAddDesc').replace('{a}', o.label ?? o.title ?? '').replace('{b}', o.toLabel ?? '')
+    if (o.op === 'edit') return `${t('tree.actEditDesc').replace('{a}', o.label ?? '')}${o.title ? ` → ${o.title}` : ''}`
+    if (o.op === 'move') return t('tree.actMoveDesc').replace('{a}', o.label ?? '').replace('{b}', o.toLabel ?? '')
+    if (o.op === 'split') return t('tree.actSplitDesc').replace('{a}', o.label ?? '').replace('{b}', o.title ?? '').replace('{n}', String(o.moveTail ?? 8))
+    if (o.op === 'merge') return t('tree.actMergeDesc').replace('{a}', o.label ?? '').replace('{b}', o.toLabel ?? '')
+    if (o.op === 'spinoff') return t('tree.actSpinoffDesc').replace('{a}', o.label ?? '')
+    if (o.op === 'rebalance') return t('tree.actRebalanceDesc').replace('{a}', o.label ?? '').replace('{b}', o.title ?? '').replace('{n}', String(o.facets?.length ?? 0))
+    if (o.op === 'reorder') return t('tree.actReorderDesc').replace('{a}', o.label ?? '').replace('{list}', (o.childLabels ?? []).map((x, i) => `${i + 1}. ${x}`).join(' → '))
+    return t('tree.actDeleteDesc').replace('{a}', o.label ?? '')
+  }
+  return (
+    <div className={cn(
+      'rounded-xl border border-primary/50 bg-card/95 backdrop-blur-md shadow-lg',
+      compact ? 'px-3 py-2' : 'px-4 py-3',
+    )}>
+      <p className={cn('font-bold text-primary uppercase tracking-wider flex items-center gap-1.5', compact ? 'text-[10px]' : 'text-[11px]')}>
+        <Wand2 className={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} /> {t('tree.planTitle')}
+      </p>
+      {plan.summary && <p className={cn('text-foreground leading-snug mt-0.5', compact ? 'text-[11px]' : 'text-[13px]')}>{plan.summary}</p>}
+      <div className={cn('space-y-1', compact ? 'mt-1.5 max-h-40 overflow-y-auto pr-0.5' : 'mt-2')}>
+        {plan.ops.map((o, i) => (
+          <label key={i} className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={sel.has(i)}
+              onChange={() => onToggle(i)}
+              disabled={busy}
+              className="mt-0.5 accent-[hsl(var(--primary))]"
+            />
+            <span className="mt-0.5"><OpIcon type={o.op} /></span>
+            <span className={cn('flex-1 leading-snug', compact ? 'text-[11px]' : 'text-xs', sel.has(i) ? 'text-foreground' : 'text-muted-foreground/60 line-through')}>
+              {opDesc(o)}
+            </span>
+          </label>
+        ))}
+      </div>
+      {invalid && (
+        <p className={cn('text-amber-400 leading-snug mt-1.5', compact ? 'text-[10px]' : 'text-[11px]')}>{t('tree.planSelInvalid')}</p>
+      )}
+      <div className="flex gap-1.5 mt-2">
+        <button
+          onClick={onApply}
+          disabled={busy || invalid || sel.size === 0}
+          className="inline-flex items-center gap-1 rounded-full bg-primary/15 border border-primary/40 text-primary text-[11px] font-bold px-3 py-1 hover:bg-primary/25 transition-colors disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+          {sel.size === 1 ? t('tree.planApplyOne') : t('tree.planApply').replace('{n}', String(sel.size))}
+        </button>
+        <button
+          onClick={onDismiss}
+          disabled={busy}
+          className="inline-flex items-center justify-center rounded-full border border-border text-muted-foreground text-[11px] px-2.5 py-1 hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pendingIds }: {
   tree: CopilotTree
@@ -69,10 +170,13 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
   // canvas; the next turn's proposals replace exactly this set.
   const [ghosts, setGhosts] = useState<GhostChip[]>([])
   const [ghostBusy, setGhostBusy] = useState<string | null>(null)
-  // Reshape chips from the latest turn (edit / move / delete) — each applies
-  // via the node PATCH route only when tapped.
-  const [actions, setActions] = useState<CopilotAction[]>([])
-  const [actionBusy, setActionBusy] = useState<number | null>(null)
+  // The REWIRE PLAN from the latest turn — ONE card, every op with a
+  // checkbox; the single Apply tap posts the selection to the rewire route
+  // (atomic, undo-snapshotted). Per-turn like proposals: the next turn's
+  // plan replaces it.
+  const [plan, setPlan] = useState<RewirePlan | null>(null)
+  const [planSel, setPlanSel] = useState<Set<number>>(new Set())
+  const [planBusy, setPlanBusy] = useState(false)
   const [purposeProposal, setPurposeProposal] = useState<string | null>(null)
   const [purposeBusy, setPurposeBusy] = useState(false)
   // tone matters: a failure note must never wear success colors.
@@ -96,7 +200,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
   //     2. focus is inside it (typing, IME composition, keyboard users);
   //     3. a turn is in flight (the student is waiting on Bob);
   //     4. a short grace window after new content lands (reply, ghost chips,
-  //        reshape chips) — it gets noticed before it rests.
+  //        the plan card) — it gets noticed before it rests.
   //   DIMMED (still readable, ~45%, smooth 400ms fade both ways) once the
   //   cursor leaves and no hold applies. While dimmed the cloud is
   //   click-through so the canvas/list beneath stays fully workable, and an
@@ -242,7 +346,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread, busy, displayGhosts.length, actions.length, purposeProposal, note, open])
+  }, [thread, busy, displayGhosts.length, plan, purposeProposal, note, open])
 
   async function send(preset?: string) {
     const msg = (preset ?? input).trim()
@@ -291,8 +395,12 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
         const names = recalledRefs.map(r => r.node).filter(Boolean).slice(0, 4).join(', ')
         if (names) setNote({ text: t('tree.recalledNote').replace('{list}', names), tone: 'ok' })
       }
-      // Reshape chips are per-turn: the latest turn's set is the live one.
-      setActions(Array.isArray(body.actions) ? (body.actions as CopilotAction[]) : [])
+      // The rewire plan is per-turn: the latest turn's plan is the live one.
+      const nextPlan = body.plan && Array.isArray(body.plan.ops) && body.plan.ops.length > 0
+        ? (body.plan as RewirePlan)
+        : null
+      setPlan(nextPlan)
+      setPlanSel(new Set(nextPlan ? nextPlan.ops.map((_, i) => i) : []))
       if (typeof body.purposeUpdate === 'string' && body.purposeUpdate.trim()) {
         setPurposeProposal(body.purposeUpdate.trim())
       }
@@ -308,7 +416,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
     } finally {
       busyRef.current = false
       setBusy(false)
-      // Fresh content just landed (reply, chips, or the failure note) —
+      // Fresh content just landed (reply, cards, or the failure note) —
       // keep it lit long enough to be noticed, then the hover rule resumes.
       holdLit(2500)
     }
@@ -345,54 +453,71 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
     }
   }
 
-  // Apply ONE approved reshape chip (edit / move / delete) — the tap IS the
-  // permission. Deletes take a native confirm too: a whole subtree goes.
-  async function applyAction(a: CopilotAction, idx: number) {
-    if (actionBusy !== null) return
-    if (a.type === 'delete' && !confirm(t('tree.deleteNodeConfirm'))) return
-    if (a.type === 'merge' && !confirm(t('tree.mergeConfirm').replace('{a}', a.title).replace('{b}', a.mergeIntoTitle ?? ''))) return
-    if (a.type === 'spinoff' && !confirm(t('tree.spinoffConfirm').replace('{a}', a.title))) return
-    setActionBusy(idx)
+  // Apply the REWIRE PLAN (the checked ops) in ONE tap — the tap IS the
+  // permission for the whole set. The route executes atomically: any failure
+  // restores the pre-plan snapshot, so a partial rewire can never land.
+  // Destructive steps (delete / merge / spinoff) get one native confirm.
+  function togglePlanOp(i: number) {
+    setPlanSel(prev => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
+  }
+  // Client-side replay of the CURRENT selection (same validator the server
+  // runs): unticking an op that later ops depend on (e.g. the add a move
+  // targets) disables Apply with a note instead of guaranteeing a 409.
+  const planSelInvalid = useMemo(() => {
+    if (!plan) return false
+    const ops = plan.ops.filter((_, i) => planSel.has(i))
+    if (ops.length === 0) return false
+    const nodes = (tree.nodes ?? []).map(n => ({ id: n.id, parentId: n.parentId }))
+    if (nodes.length === 0) return false
+    return !simulateRewire(nodes, ops).ok
+  }, [plan, planSel, tree.nodes])
+  async function applyPlan() {
+    if (!plan || planBusy || planSelInvalid) return
+    const ops = plan.ops.filter((_, i) => planSel.has(i))
+    if (ops.length === 0) return
+    if (ops.some(o => DESTRUCTIVE_OPS.has(o.op)) && !confirm(t('tree.planConfirm'))) return
+    setPlanBusy(true)
     try {
-      const payload = a.type === 'edit'
-        ? { action: 'edit', title: a.newTitle, summary: a.newSummary }
-        : a.type === 'move'
-          ? { action: 'move', newParentId: a.newParentId }
-          : a.type === 'split'
-            ? { action: 'split', title: a.newTitle, summary: a.newSummary, moveTail: a.moveTail }
-            : a.type === 'merge'
-              ? { action: 'merge', intoNodeId: a.mergeIntoId }
-              : a.type === 'spinoff'
-                ? { action: 'spinoff' }
-                : a.type === 'rebalance'
-                  ? { action: 'rebalance', title: a.newTitle, summary: a.newSummary, facets: a.facets }
-                  : a.type === 'reorder'
-                    ? { action: 'reorder', childIds: a.childOrder }
-                    : { action: 'delete' }
-      const res = await fetch(`/api/tree/${tree.id}/node/${a.nodeId}`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/tree/${tree.id}/rewire`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ops }),
       })
       if (res.ok) {
-        setActions(list => list.filter((_, i) => i !== idx))
-        setNote({ text: a.type === 'spinoff' ? t('tree.spunOff') : t('tree.copilotApplied'), tone: 'ok' })
+        setPlan(null)
+        setPlanSel(new Set())
+        setNote({ text: t('tree.planApplied'), tone: 'ok' })
         await onChanged()
         setTimeout(open ? () => fit(0) : fitAvoidingCloud, 150)
       } else if (res.status >= 400 && res.status < 500) {
-        // Terminal: the chip's snapshot no longer matches the live tree
-        // (target deleted by an earlier chip, cycle, root guard) — retire it
-        // instead of leaving an immortal Apply button, and resync the map.
-        setActions(list => list.filter((_, i) => i !== idx))
-        setNote({ text: t('tree.actionFailed'), tone: 'warn' })
+        // 409 = the tree drifted since the plan was proposed (or a step
+        // failed) — the server restored it unchanged. Retire the stale plan
+        // and resync; the honest note tells the student to re-ask.
+        setPlan(null)
+        setPlanSel(new Set())
         await onChanged()
+        setNote({ text: t('tree.planFailed'), tone: 'warn' })
       } else {
-        setNote({ text: t('tree.actionFailed'), tone: 'warn' })
+        // 5xx: the rewire may or may not have landed — never claim it was
+        // rolled back. Resync and retire the card so a retry can't double-apply.
+        setPlan(null)
+        setPlanSel(new Set())
+        await onChanged()
+        setNote({ text: t('tree.planUnknown'), tone: 'warn' })
       }
     } catch {
-      setNote({ text: t('tree.actionFailed'), tone: 'warn' })
+      // Network dropped mid-request — same unknown-state handling as 5xx.
+      setPlan(null)
+      setPlanSel(new Set())
+      await onChanged()
+      setNote({ text: t('tree.planUnknown'), tone: 'warn' })
     } finally {
-      setActionBusy(null)
+      setPlanBusy(false)
     }
   }
 
@@ -419,26 +544,6 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
       setPurposeBusy(false)
     }
   }
-
-  const actionDesc = (a: CopilotAction): string => {
-    if (a.type === 'edit') return t('tree.actEditDesc').replace('{a}', a.title)
-    if (a.type === 'move') return t('tree.actMoveDesc').replace('{a}', a.title).replace('{b}', a.newParentTitle ?? '')
-    if (a.type === 'split') return t('tree.actSplitDesc').replace('{a}', a.title).replace('{b}', a.newTitle ?? '').replace('{n}', String(a.moveTail ?? 8))
-    if (a.type === 'merge') return t('tree.actMergeDesc').replace('{a}', a.title).replace('{b}', a.mergeIntoTitle ?? '')
-    if (a.type === 'spinoff') return t('tree.actSpinoffDesc').replace('{a}', a.title)
-    if (a.type === 'rebalance') return t('tree.actRebalanceDesc').replace('{a}', a.title).replace('{b}', a.newTitle ?? '').replace('{n}', String(a.facets?.length ?? 0))
-    if (a.type === 'reorder') return t('tree.actReorderDesc').replace('{a}', a.title).replace('{list}', (a.childTitles ?? []).map((x, i) => `${i + 1}. ${x}`).join(' → '))
-    return t('tree.actDeleteDesc').replace('{a}', a.title)
-  }
-  const ActionIcon = ({ type }: { type: CopilotAction['type'] }) =>
-    type === 'edit' ? <Pencil className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
-      : type === 'move' ? <MoveRight className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
-        : type === 'split' ? <Scissors className="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
-          : type === 'merge' ? <GitMerge className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
-            : type === 'spinoff' ? <ExternalLink className="w-3.5 h-3.5 text-sky-300 flex-shrink-0" />
-              : type === 'rebalance' ? <Scale className="w-3.5 h-3.5 text-teal-300 flex-shrink-0" />
-                : type === 'reorder' ? <ListOrdered className="w-3.5 h-3.5 text-violet-300 flex-shrink-0" />
-                  : <Trash2 className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
 
   return (
     <>
@@ -539,7 +644,7 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
                  tree/list beneath fades the transcript and lets clicks pass
                  straight through it. In list mode the bubbles are ALWAYS
                  pass-through (they'd otherwise wall off the search box) —
-                 only the chips inside stay tappable. Shows only THIS visit's
+                 only the cards inside stay tappable. Shows only THIS visit's
                  exchanges (rehydrated history lives in the full view), and
                  the ✕ hides the cloud until the next exchange. */
               <div ref={cloudRef} className={cn(
@@ -591,40 +696,20 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
                     <Sprout className="w-3 h-3" /> {t('tree.proposedN').replace('{n}', String(displayGhosts.length))} — {t('tree.awaitingApproval')}
                   </p>
                 )}
-                {/* Reshape chips — these exist ONLY here, so they must be
-                    actionable from the ambient cloud. */}
-                {actions.length > 0 && !busy && actions.map((a, i) => (
-                  /* Approval chips stay tappable even in list mode (the
-                     surrounding cloud is pass-through there) — but never
-                     while faded, so an invisible chip can't catch a stray tap. */
-                  <div key={`amb-${a.nodeId}-${i}`} className={cn('rounded-xl border border-primary/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg', !faded && 'pointer-events-auto')}>
-                    <div className="flex items-start gap-2">
-                      <span className="mt-0.5"><ActionIcon type={a.type} /></span>
-                      <p className="flex-1 text-[11px] font-bold text-foreground leading-snug">{actionDesc(a)}{a.type === 'edit' && a.newTitle ? ` → ${a.newTitle}` : ''}</p>
-                    </div>
-                    <div className="flex gap-1.5 mt-1.5">
-                      <button
-                        onClick={() => applyAction(a, i)}
-                        disabled={actionBusy !== null}
-                        className={cn(
-                          'inline-flex items-center gap-1 rounded-full border text-[11px] font-medium px-2.5 py-1 transition-colors disabled:opacity-50',
-                          a.type === 'delete'
-                            ? 'bg-red-500/15 border-red-400/40 text-red-300 hover:bg-red-500/25'
-                            : 'bg-primary/15 border-primary/40 text-primary hover:bg-primary/25',
-                        )}
-                      >
-                        {actionBusy === i ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t('tree.copilotApply')}
-                      </button>
-                      <button
-                        onClick={() => setActions(list => list.filter((_, j) => j !== i))}
-                        disabled={actionBusy !== null}
-                        className="inline-flex items-center justify-center rounded-full border border-border text-muted-foreground text-[11px] px-2.5 py-1 hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
+                {/* The rewire plan card — it exists ONLY here, so it must be
+                    actionable from the ambient cloud. Tappable even in list
+                    mode (the surrounding cloud is pass-through there) — but
+                    never while faded, so an invisible card can't catch a
+                    stray tap. */}
+                {plan && !busy && (
+                  <div className={cn(!faded && 'pointer-events-auto')}>
+                    <RewirePlanCard
+                      plan={plan} sel={planSel} busy={planBusy} invalid={planSelInvalid} compact
+                      onToggle={togglePlanOp} onApply={applyPlan}
+                      onDismiss={() => { setPlan(null); setPlanSel(new Set()) }}
+                    />
                   </div>
-                ))}
+                )}
                 {/* Purpose refinement chip — ambient too. */}
                 {purposeProposal && !busy && (
                   <div className={cn('rounded-xl border border-emerald-400/40 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg', !faded && 'pointer-events-auto')}>
@@ -764,47 +849,14 @@ export function TreeCopilot({ tree, onChanged, fit, stats, listMode = false, pen
                   </div>
                 )}
 
-                {/* Reshape chips — edit / move / delete, applied one tap at a time */}
-                {actions.length > 0 && !busy && (
-                  <div className="max-w-[92%] border border-primary/40 bg-primary/[0.06] rounded-2xl rounded-bl-sm px-4 py-3 space-y-2">
-                    <p className="text-[11px] font-bold text-primary uppercase tracking-wider">{t('tree.copilotChanges')}</p>
-                    {actions.map((a, i) => (
-                      <div key={`${a.nodeId}-${i}`} className="rounded-lg border border-border bg-background/60 px-3 py-2">
-                        <div className="flex items-start gap-2">
-                          <span className="mt-0.5"><ActionIcon type={a.type} /></span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-foreground leading-snug">{actionDesc(a)}</p>
-                            {a.type === 'edit' && a.newTitle && (
-                              <p className="text-[11px] text-foreground/90 leading-snug mt-0.5">→ {a.newTitle}</p>
-                            )}
-                            {a.type === 'edit' && a.newSummary && (
-                              <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{a.newSummary}</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex gap-1.5 mt-1.5">
-                          <button
-                            onClick={() => applyAction(a, i)}
-                            disabled={actionBusy !== null}
-                            className={cn(
-                              'inline-flex items-center gap-1 rounded-full border text-[11px] font-medium px-2.5 py-1 transition-colors disabled:opacity-50',
-                              a.type === 'delete'
-                                ? 'bg-red-500/15 border-red-400/40 text-red-300 hover:bg-red-500/25'
-                                : 'bg-primary/15 border-primary/40 text-primary hover:bg-primary/25',
-                            )}
-                          >
-                            {actionBusy === i ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t('tree.copilotApply')}
-                          </button>
-                          <button
-                            onClick={() => setActions(list => list.filter((_, j) => j !== i))}
-                            disabled={actionBusy !== null}
-                            className="inline-flex items-center justify-center rounded-full border border-border text-muted-foreground text-[11px] px-2.5 py-1 hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                {/* The rewire plan — the whole restructure, ONE Apply tap */}
+                {plan && !busy && (
+                  <div className="max-w-[92%]">
+                    <RewirePlanCard
+                      plan={plan} sel={planSel} busy={planBusy} invalid={planSelInvalid} compact={false}
+                      onToggle={togglePlanOp} onApply={applyPlan}
+                      onDismiss={() => { setPlan(null); setPlanSel(new Set()) }}
+                    />
                   </div>
                 )}
 

@@ -24,6 +24,7 @@ import 'reactflow/dist/style.css'
 import {
   ArrowLeft, Check, X, Sprout, MessageSquare, ShieldCheck, Loader2, Bot,
   Search, ChevronDown, ChevronRight, Trash2, Plus, FileText, Flag, List, Network,
+  Pencil, RotateCcw,
 } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { TreeCopilot } from '@/components/tree-copilot'
@@ -218,6 +219,13 @@ interface FlowNodeData {
   collapsed?: boolean
   collapsedCount?: number
   onToggleCollapse?: (id: string) => void
+  /** EDIT MODE: per-node handles (edit / add / delete) + drag-to-reparent. */
+  editMode?: boolean
+  /** Drag-to-reparent: this node is the current legal drop candidate. */
+  isDropTarget?: boolean
+  onEditNode?: (id: string) => void
+  onAddUnder?: (id: string) => void
+  onDeleteNode?: (id: string) => void
 }
 
 function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
@@ -267,6 +275,7 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
                   ? 'node-breathe bg-amber-400 shadow-[0_0_14px_rgba(251,191,36,0.55)]'
                   : cn('node-breathe', DOT_FILL[n.kind] ?? DOT_FILL.component),
             selected && 'scale-125 ring-2 ring-foreground/70 ring-offset-2 ring-offset-background',
+            data.isDropTarget && 'scale-125 ring-2 ring-emerald-400/90 ring-offset-2 ring-offset-background',
           )}
           style={n.status === 'understood' && !n.pending ? undefined : { animationDelay: breatheDelay, animationDuration: breatheDur }}
         />
@@ -285,6 +294,13 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
         )
       )}
 
+      {/* Drag-to-reparent: the live candidate announces what release does. */}
+      {data.isDropTarget && (
+        <span className="mt-0.5 px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/60 text-emerald-200 text-[9px] font-bold whitespace-nowrap">
+          ⤵ {t('tree.dropToMove')}
+        </span>
+      )}
+
       {/* Title only — the summary lives in the side panel on click, so the
           canvas stays a clean map of concepts, not a wall of captions. */}
       <div className="mt-1 text-center select-none">
@@ -292,6 +308,36 @@ function PainPointNode({ data, selected }: NodeProps<FlowNodeData>) {
           {n.title}
         </p>
       </div>
+
+      {/* EDIT MODE handles — edit / add child / delete (root keeps edit+add;
+          `nodrag` so a tap never starts a node drag). */}
+      {data.editMode && !n.pending && (
+        <div className="flex items-center gap-1 mt-1">
+          <button
+            onClick={e => { e.stopPropagation(); data.onEditNode?.(n.id) }}
+            title={t('tree.renameNode')}
+            className="nodrag p-1 rounded-full bg-card/90 border border-border text-sky-300 hover:bg-sky-500/15 transition-colors"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); data.onAddUnder?.(n.id) }}
+            title={t('tree.addChild')}
+            className="nodrag p-1 rounded-full bg-card/90 border border-border text-emerald-300 hover:bg-emerald-500/15 transition-colors"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+          {n.parentId !== null && (
+            <button
+              onClick={e => { e.stopPropagation(); data.onDeleteNode?.(n.id) }}
+              title={t('tree.deleteNode')}
+              className="nodrag p-1 rounded-full bg-card/90 border border-border text-red-300 hover:bg-red-500/15 transition-colors"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
 
       {n.pending && (
         /* Effort anchor (contrast effect): a ghost is a ~15-minute add, not
@@ -846,6 +892,29 @@ function TreeCanvasInner() {
   const [addingChild, setAddingChild] = useState(false)
   const [childTitle, setChildTitle] = useState('')
   const [childSummary, setChildSummary] = useState('')
+  // ── EDIT MODE (manual tree editing) ──
+  const [editMode, setEditMode] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editSummary, setEditSummary] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  // Which panel form a node-handle tap wants focused (edit vs add-child).
+  const [panelFocus, setPanelFocus] = useState<'edit' | 'add' | null>(null)
+  const editTitleRef = useRef<HTMLInputElement>(null)
+  const addTitleRef = useRef<HTMLInputElement>(null)
+  // Drag-to-reparent: the current legal drop candidate while dragging.
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const dropTargetRef = useRef<string | null>(null)
+  // Undo pill (structure snapshots) — availability rides the tree GET.
+  const [undo, setUndo] = useState<{ count: number; label: string; at: string } | null>(null)
+  const [undoBusy, setUndoBusy] = useState(false)
+  // Transient status pill (moved / saved / undone) floating over the canvas.
+  const [topNote, setTopNote] = useState<string | null>(null)
+  const topNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showTopNote = useCallback((text: string) => {
+    setTopNote(text)
+    if (topNoteTimer.current) clearTimeout(topNoteTimer.current)
+    topNoteTimer.current = setTimeout(() => setTopNote(null), 3500)
+  }, [])
   const [settling, setSettling] = useState(true)
   const settledRef = useRef(false)
   const draggedPos = useRef<Map<string, { x: number; y: number }>>(new Map())
@@ -898,12 +967,34 @@ function TreeCanvasInner() {
     try {
       const res = await fetch(`/api/tree/${params.id}`, { cache: 'no-store' })
       if (res.status === 404) { router.push('/dashboard/tree'); return }
-      if (res.ok) setTree((await res.json()).tree)
+      if (res.ok) {
+        const body = await res.json()
+        setTree(body.tree)
+        setUndo(body.undo ?? null)
+      }
     } catch { /* transient */ }
   }, [params.id, router])
   useEffect(() => { load() }, [load])
   // Clear the panel note when the selection changes.
   useEffect(() => { setPanelNote(null) }, [selectedId])
+  // Prefill the edit form when the SELECTION changes — never on background
+  // tree refreshes (a copilot turn mid-typing must not wipe the draft).
+  const prefilledFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (selectedId === prefilledFor.current) return
+    prefilledFor.current = selectedId
+    const sel = tree?.nodes.find(n => n.id === selectedId)
+    setEditTitle(sel?.title ?? '')
+    setEditSummary(sel?.summary ?? '')
+  }, [selectedId, tree])
+  // A node-handle tap opens the panel with the matching form focused.
+  useEffect(() => {
+    if (!panelFocus || !selectedId) return
+    const tmr = setTimeout(() => {
+      (panelFocus === 'edit' ? editTitleRef : addTitleRef).current?.focus()
+    }, 120)
+    return () => clearTimeout(tmr)
+  }, [panelFocus, selectedId])
 
   const act = useCallback(async (nodeId: string, action: 'approve' | 'reject') => {
     const res = await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
@@ -922,6 +1013,49 @@ function TreeCanvasInner() {
     } catch { /* non-critical */ }
     load()
   }, [params.id, load, t])
+
+  // Delete from anywhere (panel button or the edit-mode node handle) — the
+  // server snapshots first, so the toolbar Undo can bring the branch back.
+  const deleteNodeById = useCallback(async (nodeId: string) => {
+    const target = tree?.nodes.find(n => n.id === nodeId)
+    if (!target || target.parentId === null) return
+    if (!confirm(t('tree.deleteNodeConfirm'))) return
+    const res = await fetch(`/api/tree/${params.id}/node/${nodeId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete' }),
+    }).catch(() => null)
+    showTopNote(res?.ok ? t('tree.deleted') : t('tree.actionFailed'))
+    setSelectedId(prev => (prev === nodeId ? null : prev))
+    await load()
+  }, [tree, params.id, t, load, showTopNote])
+
+  // Snapshot labels are stored as raw keys ('delete', 'rewire', …) — show
+  // the localized name, falling back to the raw label for unknown ones.
+  const undoLabelText = useCallback((label: string) => {
+    const key = `tree.undoLabel.${label}`
+    const val = t(key)
+    return val === key ? label : val
+  }, [t])
+
+  const doUndo = useCallback(async () => {
+    if (undoBusy || !undo) return
+    if (!confirm(t('tree.undoConfirm').replace('{label}', undoLabelText(undo.label)))) return
+    setUndoBusy(true)
+    try {
+      const res = await fetch(`/api/tree/${params.id}/undo`, { method: 'POST' }).catch(() => null)
+      if (res?.ok) {
+        // The restored structure replaces any hand-dragged layout memory.
+        draggedPos.current.clear()
+        showTopNote(t('tree.undoDone'))
+      } else {
+        showTopNote(t('tree.actionFailed'))
+      }
+      await load()
+    } finally {
+      setUndoBusy(false)
+    }
+  }, [undo, undoBusy, params.id, t, load, showTopNote, undoLabelText])
 
   useEffect(() => {
     if (!tree) return
@@ -975,23 +1109,87 @@ function TreeCanvasInner() {
     dragCtx.current = { id: node.id, offsets }
   }, [flow, collectDescendants])
 
+  // O(1) node lookup for the per-pointer-move drop-candidate scan.
+  const nodeById = useMemo(() => new Map((tree?.nodes ?? []).map(n => [n.id, n])), [tree])
+  // The dragged node's banned set (itself + its subtree), frozen at drag
+  // start — recomputing it per pointer-move event was O(n²) on big trees.
+  const dragBannedRef = useRef<Set<string> | null>(null)
+
+  // EDIT MODE — drag-to-reparent: while dragging, the nearest legal node
+  // under the dragged bud lights up as the drop candidate (never itself, its
+  // own subtree, its current parent, or a pending ghost). Release moves it.
+  const onNodeDrag = useCallback((_: unknown, node: FlowNode) => {
+    if (!editMode) return
+    if (relRef.current.parent.get(node.id) === null) return // the root never re-parents
+    const all = flow.getNodes()
+    const me = all.find(n => n.id === node.id)
+    if (!me) return
+    const cx = me.position.x + NODE_W / 2
+    const cy = me.position.y + 20
+    if (!dragBannedRef.current) {
+      dragBannedRef.current = new Set([node.id, ...collectDescendants(node.id)])
+    }
+    const banned = dragBannedRef.current
+    const parentId = relRef.current.parent.get(node.id) ?? null
+    let best: { id: string; d: number } | null = null
+    for (const other of all) {
+      if (banned.has(other.id) || other.id === parentId) continue
+      const tn = nodeById.get(other.id)
+      if (!tn || tn.pending) continue
+      const d = Math.hypot(cx - (other.position.x + NODE_W / 2), cy - (other.position.y + 20))
+      if (d < 110 && (!best || d < best.d)) best = { id: other.id, d }
+    }
+    const next = best?.id ?? null
+    if (dropTargetRef.current !== next) {
+      dropTargetRef.current = next
+      setDropTargetId(next)
+    }
+  }, [editMode, flow, collectDescendants, nodeById])
+
   const onNodeDragStop = useCallback(() => {
-    // Snap the trailing subtree onto its exact rigid targets so the shape
-    // lands perfectly translated.
     const ctx = dragCtx.current
     dragCtx.current = null
+    dragBannedRef.current = null
+    const target = dropTargetRef.current
+    dropTargetRef.current = null
+    setDropTargetId(null)
     if (!ctx) return
+    // EDIT MODE: released over a legal candidate → re-parent (the server
+    // re-validates root/cycle and snapshots first, so Undo can revert it).
+    if (editMode && target) {
+      const moving = ctx.id
+      void (async () => {
+        const res = await fetch(`/api/tree/${params.id}/node/${moving}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'move', newParentId: target }),
+        }).catch(() => null)
+        if (res?.ok) {
+          // Let the fresh layout place the moved subtree under its new
+          // parent instead of freezing it at the drop position.
+          draggedPos.current.delete(moving)
+          for (const d of collectDescendants(moving)) draggedPos.current.delete(d)
+          showTopNote(t('tree.moved'))
+        } else {
+          showTopNote(t('tree.actionFailed'))
+        }
+        await load()
+      })()
+      return
+    }
+    // Snap the trailing subtree onto its exact rigid targets so the shape
+    // lands perfectly translated.
     const positions = new Map(flow.getNodes().map(n => [n.id, n.position]))
     const base = positions.get(ctx.id)
     if (!base) return
     setNodes(nds => nds.map(n => {
       const off = ctx.offsets.get(n.id)
       if (!off) return n
-      const target = { x: base.x + off.dx, y: base.y + off.dy }
-      draggedPos.current.set(n.id, target)
-      return { ...n, position: target }
+      const target2 = { x: base.x + off.dx, y: base.y + off.dy }
+      draggedPos.current.set(n.id, target2)
+      return { ...n, position: target2 }
     }))
-  }, [flow, setNodes])
+  }, [flow, setNodes, editMode, params.id, collectDescendants, load, showTopNote, t])
 
   const handleNodesChange: typeof onNodesChange = useCallback(changes => {
     const current = new Map(flow.getNodes().map(n => [n.id, { ...n.position }]))
@@ -999,10 +1197,11 @@ function TreeCanvasInner() {
 
     for (const c of changes) {
       if (c.type === 'position' && c.position) {
-        // The dragged node strains against its parent's string.
+        // The dragged node strains against its parent's string — except in
+        // EDIT MODE, where a reparent drag must be able to reach ANY node.
         const pid = relRef.current.parent.get(c.id)
         const pp = pid ? current.get(pid) : undefined
-        if (pp) {
+        if (pp && !editMode) {
           c.position.y = Math.min(c.position.y, pp.y - MIN_LEVEL_GAP)
           const dx = c.position.x - pp.x
           const dy = c.position.y - pp.y
@@ -1038,7 +1237,7 @@ function TreeCanvasInner() {
     if (extraMoves.size > 0) {
       setNodes(nds => nds.map(n => (extraMoves.has(n.id) ? { ...n, position: extraMoves.get(n.id)! } : n)))
     }
-  }, [flow, onNodesChange, setNodes])
+  }, [flow, onNodesChange, setNodes, editMode])
 
   // Build flow nodes from the tree. First load: float in scattered, then
   // settle into place (CSS transition while `settling`).
@@ -1079,6 +1278,11 @@ function TreeCanvasInner() {
         collapsed: collapsed.has(n.id),
         collapsedCount: hiddenCounts.get(n.id) ?? 0,
         onToggleCollapse: toggleCollapse,
+        editMode,
+        isDropTarget: n.id === dropTargetId,
+        onEditNode: (id: string) => { setSelectedId(id); setPanelFocus('edit') },
+        onAddUnder: (id: string) => { setSelectedId(id); setPanelFocus('add') },
+        onDeleteNode: deleteNodeById,
       },
     })
 
@@ -1105,7 +1309,7 @@ function TreeCanvasInner() {
       setNodes(visible.map(n => mk(n, target(n))))
     }
     void depth
-  }, [tree, act, t, setNodes, hiddenByCollapse, collapsed, pathIndex, nextOnPath, toggleCollapse])
+  }, [tree, act, t, setNodes, hiddenByCollapse, collapsed, pathIndex, nextOnPath, toggleCollapse, editMode, dropTargetId, deleteNodeById])
 
   const flowEdges = useMemo(() => {
     if (!tree) return [] as FlowEdge[]
@@ -1154,15 +1358,28 @@ function TreeCanvasInner() {
   }
 
   async function deleteNode() {
-    if (!selected || selected.parentId === null) return
-    if (!confirm(t('tree.deleteNodeConfirm'))) return
-    await fetch(`/api/tree/${params.id}/node/${selected.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'delete' }),
-    }).catch(() => {})
-    setSelectedId(null)
-    await load()
+    if (!selected) return
+    await deleteNodeById(selected.id)
+  }
+
+  async function saveEdit() {
+    if (!selected || savingEdit) return
+    const title = editTitle.trim()
+    const summary = editSummary.trim()
+    if (!title && !summary) return
+    setSavingEdit(true)
+    try {
+      const res = await fetch(`/api/tree/${params.id}/node/${selected.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'edit', title, summary }),
+      }).catch(() => null)
+      if (res?.ok) showTopNote(t('tree.editSaved'))
+      else setPanelNote(t('tree.actionFailed'))
+      await load()
+    } finally {
+      setSavingEdit(false)
+    }
   }
 
   if (!tree) {
@@ -1209,6 +1426,33 @@ function TreeCanvasInner() {
             <List className="w-3.5 h-3.5" /> {t('tree.viewList')}
           </button>
         </div>
+        {/* EDIT MODE — free manual editing: every node grows edit / add /
+            delete handles, and dragging a node onto another moves it there. */}
+        <button
+          onClick={() => { setEditMode(m => !m); setSelectedId(null); setPanelFocus(null) }}
+          title={t('tree.editModeTitle')}
+          className={cn(
+            'flex-shrink-0 px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors',
+            editMode
+              ? 'border-sky-400/60 bg-sky-500/15 text-sky-300'
+              : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent',
+          )}
+        >
+          <Pencil className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{editMode ? t('tree.editDone') : t('tree.editMode')}</span>
+        </button>
+        {/* UNDO — one tap restores the tree to before the last destructive
+            change (snapshots survive reloads; tapping again toggles back). */}
+        {undo && undo.count > 0 && (
+          <button
+            onClick={doUndo}
+            disabled={undoBusy}
+            title={t('tree.undoHint').replace('{label}', undoLabelText(undo.label))}
+            className="flex-shrink-0 px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent flex items-center gap-1.5 transition-colors disabled:opacity-50"
+          >
+            {undoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{t('tree.undo')}</span>
+          </button>
+        )}
         {/* Memory-decay nudge (honest loss aversion): a verified node
             untouched for 7+ days is genuinely fading — retrieval decays.
             One tap opens its workspace in review mode. */}
@@ -1257,8 +1501,12 @@ function TreeCanvasInner() {
               edgeTypes={edgeTypes}
               onNodesChange={handleNodesChange}
               onNodeDragStart={onNodeDragStart}
+              onNodeDrag={onNodeDrag}
               onNodeDragStop={onNodeDragStop}
               onNodeClick={(_, node) => {
+                // EDIT MODE: clicks select (the side panel holds the edit and
+                // add-child forms) — no workspace navigation mid-restructure.
+                if (editMode) { setSelectedId(node.id); return }
                 // ONE CLICK INTO THE WORKSPACE (efficiency law): a real node
                 // opens its workspace directly — no select-then-confirm, no
                 // camera choreography. The side panel stays for the root
@@ -1307,9 +1555,20 @@ function TreeCanvasInner() {
                 <FileText className="w-4 h-4" /> {t('tree.answerReadyLong')}
               </Link>
             )}
+            {/* EDIT MODE hint + transient status notes (moved/saved/undone) */}
+            {(topNote || editMode) && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center px-4">
+                <div className={cn(
+                  'px-4 py-2 rounded-full border bg-card/95 backdrop-blur text-xs shadow-lg text-center',
+                  topNote ? 'border-emerald-400/50 text-emerald-300' : 'border-sky-400/50 text-sky-200',
+                )}>
+                  {topNote ?? t('tree.editHint')}
+                </div>
+              </div>
+            )}
             {/* First-run guidance — nothing else on this screen says what a
                 node IS or what to do; disappears once any node is verified. */}
-            {tree && tree.nodes.some(n => !n.pending) && tree.nodes.filter(n => !n.pending).every(n => n.status !== 'understood') && (
+            {!editMode && !topNote && tree && tree.nodes.some(n => !n.pending) && tree.nodes.filter(n => !n.pending).every(n => n.status !== 'understood') && (
               <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-4">
                 <div className="px-4 py-2 rounded-full border border-primary/40 bg-card/95 backdrop-blur text-xs text-foreground shadow-lg text-center">
                   {t('tree.firstRunHint')}
@@ -1350,6 +1609,39 @@ function TreeCanvasInner() {
 
               {!selected.pending && (
                 <>
+                  {/* EDIT MODE — rewrite this node's wording (root included:
+                      that reframes the problem; the tree title follows
+                      server-side). Same-concept edits only — a different
+                      concept is delete + add. */}
+                  {editMode && (
+                    <div className="border border-sky-400/40 rounded-xl p-3 space-y-2 bg-sky-500/[0.05]">
+                      <p className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
+                        <Pencil className="w-3.5 h-3.5" /> {t('tree.renameNode')}
+                      </p>
+                      <input
+                        ref={editTitleRef}
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        placeholder={t('tree.addChildTitle')}
+                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+                      />
+                      <textarea
+                        value={editSummary}
+                        onChange={e => setEditSummary(e.target.value)}
+                        rows={2}
+                        placeholder={t('tree.addChildSummary')}
+                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+                      />
+                      <button
+                        onClick={saveEdit}
+                        disabled={savingEdit || !editTitle.trim() || (editTitle.trim() === selected.title && editSummary.trim() === selected.summary)}
+                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-sky-500/15 border border-sky-400/40 text-sky-300 text-xs font-medium py-2 hover:bg-sky-500/25 transition-colors disabled:opacity-40"
+                      >
+                        {savingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        {t('tree.editSave')}
+                      </button>
+                    </div>
+                  )}
                   {selected.parentId === null ? (
                     /* THE ROOT ANSWER — the root has no workspace by law, but
                        it now carries the tree's payoff artifact: the assembled
@@ -1409,6 +1701,7 @@ function TreeCanvasInner() {
                       <Plus className="w-3.5 h-3.5 text-primary" /> {t('tree.addChild')}
                     </p>
                     <input
+                      ref={addTitleRef}
                       value={childTitle}
                       onChange={e => setChildTitle(e.target.value)}
                       placeholder={t('tree.addChildTitle')}

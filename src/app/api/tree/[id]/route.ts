@@ -44,7 +44,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     ...tree,
     nodes: tree.nodes.map(n => ({ ...n, quizState: sanitizeQuizStateForClient(n.quizState) })),
   }
-  return NextResponse.json({ tree: safeTree })
+  // The undo pill's data: structure snapshots exist → the toolbar offers a
+  // one-tap restore of the last destructive change.
+  const { undoState } = await import('@/lib/tree-ops')
+  return NextResponse.json({ tree: safeTree, undo: await undoState(id) })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

@@ -143,14 +143,28 @@ Release EDU first-run interview is deleted — first-run onboarding IS the setup
   `PATCH /api/tree/[id]` `set_purpose`, multimodal input — file/camera/video
   capture inputs + MediaRecorder voice → Gemini `analyzeImage` analysis, stored
   as `LinkedFile` workType `tree` — and generated visuals via ```image blocks;
-  FULL STRUCTURAL CONTROL via approval-gated ops: insert-a-layer proposals
-  (`adoptChildren` → `TreeNode.pendingPlan`, applied on approve), split (drift
-  → new child + message move), merge (work transfers, combined syllabus
-  re-proven), spinoff (subtree → new tree), rebalance (unproven facets → new
-  child), reorder (sibling `order` = the canvas LEARNING PATH: numbered stops
-  + "start here" pill, pre-order parent-before-child) + client-side branch
-  collapse (localStorage, view-only);
-  thread persisted as Conversation context `tree-copilot:<treeId>`). COPILOT
+  FULL STRUCTURAL CONTROL via the ONE-TAP REWIRE PLAN (`src/lib/rewire.ts`
+  types + `simulateRewire` pure validator): the model returns
+  `plan.ops` — add (with `ref` handles later ops reference as `new:<ref>`),
+  edit, move, delete, merge, reorder, split (drift → new child + message
+  move), rebalance (unproven facets → new child), spinoff (subtree → new
+  tree) — server-validated in `copilotTurn` (invalid ops get ONE corrective
+  re-pass with the errors; still-invalid → honest failure note appended to
+  the reply, never a silent drop — the "claimed it in words, tree unchanged"
+  fix), rendered as ONE card (per-op checkboxes), applied atomically by
+  `POST /api/tree/[id]/rewire` → `executeRewirePlan` (`src/lib/tree-ops.ts`,
+  the shared op executors: snapshot first, any failure restores it). Plus
+  insert-a-layer proposals (`adoptChildren` → `TreeNode.pendingPlan`, applied
+  on approve), reorder = the canvas LEARNING PATH (numbered stops + "start
+  here" pill, pre-order parent-before-child), client-side branch collapse
+  (localStorage, view-only);
+  thread persisted as Conversation context `tree-copilot:<treeId>`).
+  MANUAL EDIT MODE (canvas toolbar toggle): every node grows edit/add/delete
+  handles, drag-a-node-onto-another re-parents it (server re-validates), the
+  side panel gains a rename form; destructive ops (manual delete/merge/move/
+  edit + rewire plans) snapshot to `TreeSnapshot` first and the toolbar UNDO
+  pill (`POST /api/tree/[id]/undo`) restores the last one — node ids are
+  preserved so workspace records survive a delete → undo round trip. COPILOT
   CONTEXT RECALL (`src/lib/tree-context.ts`): every turn carries a token-light
   STORED WORK CATALOG (counts/names per node: workspace chats, notes, files +
   analyses, highlights, explainer annotations, progress logs, syllabus state,
@@ -277,6 +291,8 @@ question. Implementation: the CHECKPOINT QUESTIONS section of the node chat prom
   shared production database — dropping them is a deliberate, separate migration
   decision. Never build new features on them.
 - Active models: ProblemTree, TreeNode (status/pending/notes/annotations/progressLog/quizState/origin — origin = seed|copilot|question|manual, the IKEA-effect attribution),
+  TreeSnapshot (the undo layer: full node-set JSON per destructive structural
+  change, restored with ORIGINAL node ids so workspace records re-attach),
   Conversation (workspace chats use `context = "tree-node:<nodeId>"`), Message,
   MessageHighlight (annotations), LinkedFile (`workType = "tree-node"`), Insight,
   UserBadge, UsageEvent, StudentProfile, PortfolioCache.

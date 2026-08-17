@@ -73,6 +73,7 @@ model ProblemTree {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   nodes       TreeNode[]
+  snapshots   TreeSnapshot[]
 
   @@index([userId])
 }
@@ -134,6 +135,24 @@ model TreeNode {
 
   @@index([treeId])
   @@index([parentId])
+}
+
+// ── Tree structure snapshots (the undo layer) ────────────────────────────
+// One row per destructive structural change (manual delete/merge/move/edit
+// in edit mode, a copilot rewire plan): the full node set + tree title,
+// restorable in one tap. Restore recreates rows with the SAME ids, so
+// workspace conversations, files and highlights (all keyed on node ids)
+// survive a delete → undo round trip.
+model TreeSnapshot {
+  id        String   @id @default(cuid())
+  treeId    String
+  tree      ProblemTree @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  userId    String
+  label     String   // what created it: rewire | delete | merge | move | edit | split | rebalance | undo
+  data      String   // JSON {v, tree: {title, displayTitle}, nodes: [full rows]}
+  createdAt DateTime @default(now())
+
+  @@index([treeId, createdAt])
 }
 
 // ── Student Profile ──────────────────────────────────────────
