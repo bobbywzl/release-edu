@@ -65,6 +65,16 @@ export const NO_REDUNDANCY = `RULE — PER-NODE REDUNDANCY AVOIDANCE (law): this
 // checkpoints, copilot, grow box, answer, digests) gets it for free.
 export const PLAIN_LANGUAGE = `RULE — PLAIN LANGUAGE, INTUITION FIRST (law): teach in the simplest words that still carry the full idea — short sentences, everyday wording, concrete pictures before abstractions. Build the intuition first (what it IS, plainly, with one concrete example), then name it precisely. Every technical term that must appear gets a plain-words unpacking in the same breath ("entropy — how spread out the energy is"). Never use a hard word where a simple one carries the same meaning, and never add words that don't earn their place: the goal is the FEWEST, SIMPLEST words that produce complete understanding. The session's target level raises DEPTH and rigor — never jargon density or wordiness: an advanced session still reads plainly, it just goes deeper.`
 
+// Structured & Short (law — user directive, Aug 2026): plain-worded turns
+// were still shipping as multi-page essays — same analogy retold, stacked
+// paragraphs, no scannable shape. Rides sessionDirectives() beside
+// PLAIN_LANGUAGE so every content surface gets it.
+export const STRUCTURED_BREVITY = `RULE — STRUCTURED & SHORT (law): write to be scanned, not read end-to-end.
+- Bullets with **bold lead-ins** are the DEFAULT body. A prose paragraph only where one flowing thought truly needs it — max 3 short sentences, never two paragraphs in a row.
+- Every substantial reply has visible structure: one ## title naming the turn's topic, ### subheads for its parts, bullets under them. A wall of stacked paragraphs is a failed reply.
+- SAY IT ONCE: one explanation and ONE example or analogy per concept — never the same story retold from a second angle, no preamble, no recap of what was already said, no closing summary.
+- LENGTH BUDGET: a typical teaching turn fits in ~150 words; a full remediation/deep-dive in ~250. Only the student explicitly asking for more justifies more. If half the lines could be cut without losing meaning, cut them BEFORE sending.`
+
 // Goal-Necessity & Plan-First Growth (law — canonical wording in
 // FOUNDATION.md): the discipline for EVERY prompt that lays out nodes
 // (seed, grow-box expansion, copilot, discovery). Analyze the goal first,
@@ -79,7 +89,7 @@ export const GOAL_NECESSITY = `RULE — GOAL-NECESSITY & PLAN-FIRST GROWTH (law)
  */
 export function sessionDirectives(tree: SessionFields, fallbackLang?: string): string {
   const lang = tree.language ?? fallbackLang
-  const parts = [langDirective(lang ?? undefined), PLAIN_LANGUAGE]
+  const parts = [langDirective(lang ?? undefined), PLAIN_LANGUAGE, STRUCTURED_BREVITY]
   if (tree.difficulty && DIFFICULTY_GUIDE[tree.difficulty]) {
     parts.push(`TARGET LEVEL for this session: ${tree.difficulty} — ${DIFFICULTY_GUIDE[tree.difficulty]}. Calibrate every explanation and every test question to exactly this depth.`)
   }
@@ -1779,7 +1789,7 @@ ${sketchTree(tree.nodes)}
 ${grounding}
 ${locker}
 ${coverage}${ownWork}
-Write in markdown (400-700 words):
+Write in markdown, 300-450 words TOTAL — structured for scanning: each section below is a ### subhead with tight bullets as the default body (a prose paragraph only where one flowing thought needs it, max 3 short sentences). One example per concept, told once.
 1. **What this is** — precise but plain-language definition
 2. **Why the problem needs it** — connect it explicitly BACK to the root problem and its parent branch; where the ALREADY COVERED section shows the branch below established something this builds on, reference it in one clause instead of re-explaining it. Same law for THIS NODE'S WORKSPACE above: what the chat already taught or proved gets a one-clause callback, and the words go to what the chat has NOT yet covered — the explainer completes the picture, it never re-lectures the conversation
 3. **How it works** — the core mechanism with ONE concrete worked example
@@ -2133,11 +2143,12 @@ WHAT THE LEARNER HAS PROVEN, node by node (their verified understanding — the 
 ${provenBlock.slice(0, 14000)}
 ${open.length > 0 ? `\nSTILL UNPROVEN (never present these as established): ${open.map(n => `"${n.title}"`).join(', ')}` : ''}
 
-Write THE ANSWER to the root problem as one coherent markdown document (\`##\`/\`###\` structure), entirely in ${zh ? 'Simplified Chinese (简体中文)' : 'English'}:
+Write THE ANSWER to the root problem as one coherent markdown document (\`##\` title, \`###\` sections, bullets as the default body — prose paragraphs max 3 sentences; each claim stated once, as short as complete resolution allows), entirely in ${zh ? 'Simplified Chinese (简体中文)' : 'English'}:
 1. Open with the resolution itself — the direct, complete answer to the root problem, synthesized across the proven nodes (not a node-by-node tour).
 2. Then the mechanism: WHY that answer holds, woven from the proven material; tag each major claim to the node that proved it with a short parenthetical (e.g. ${zh ? '（已在「节点名」验证）' : '(proven at "node title")'}).
 3. ${open.length > 0 ? 'Close with an HONEST BOUNDARY section naming exactly what remains unproven and what it would change.' : 'Close with the single most important takeaway.'}
-Ground every claim in the proven material above — NOTHING invented, no generic field lecture. This document is what the learner shows someone who asks "so, what's the answer?".`,
+Ground every claim in the proven material above — NOTHING invented, no generic field lecture. This document is what the learner shows someone who asks "so, what's the answer?".
+${sessionDirectives(tree, lang)}`,
       }],
     })
     void recordUsage(result, userId, model, 'tree-digest')

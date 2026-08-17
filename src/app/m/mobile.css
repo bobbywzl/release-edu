@@ -140,9 +140,17 @@ textarea.m-input { resize: vertical; }
 .m-reader-body { font-size: 16.5px; line-height: 1.72; color: var(--m-neutral-200); }
 .m-reader-body p { margin: 0 0 14px; }
 .m-reader-body strong { font-weight: 600; color: var(--m-text); }
-.m-reader-body h1, .m-reader-body h2, .m-reader-body h3, .m-reader-body h4 {
-  color: var(--m-text); margin: 18px 0 8px; font-size: 1.12em; font-weight: 600; letter-spacing: -0.01em;
+/* Heading HIERARCHY (user directive, Aug 2026): the flat one-size heading
+   made titles, subheads and body read as one wall. Titles are clearly
+   bigger; h3/h4 become small uppercase accent kickers (the app's existing
+   kicker voice) so the three levels are unmistakably different things. */
+.m-reader-body h1 { color: var(--m-text); margin: 20px 0 10px; font-size: 1.28em; font-weight: 700; letter-spacing: -0.01em; }
+.m-reader-body h2 { color: var(--m-text); margin: 18px 0 8px; font-size: 1.15em; font-weight: 700; letter-spacing: -0.01em; }
+.m-reader-body h3, .m-reader-body h4 {
+  color: var(--m-accent); margin: 16px 0 6px; font-size: 0.76em; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
 }
+.m-reader-body h1:first-child, .m-reader-body h2:first-child, .m-reader-body h3:first-child { margin-top: 0; }
 .m-reader-body ul, .m-reader-body ol { margin: 0 0 14px; padding-left: 20px; }
 .m-reader-body li { margin: 4px 0; }
 .m-reader-body code {
@@ -160,10 +168,19 @@ textarea.m-input { resize: vertical; }
 .m-reader-body table { display: block; overflow-x: auto; border-collapse: collapse; margin: 0 0 14px; }
 .m-reader-body td, .m-reader-body th { border: 1px solid var(--m-divider); padding: 6px 10px; font-size: 0.9em; }
 
-/* Chat bubbles reuse the same renderer at chat size. */
+/* Chat bubbles reuse the same renderer at chat size — same 3-level
+   hierarchy, scaled down. */
 .m-chat-body { font-size: 14.5px; line-height: 1.6; }
 .m-chat-body p { margin: 0 0 8px; }
 .m-chat-body p:last-child { margin-bottom: 0; }
+.m-chat-body h1, .m-chat-body h2 { color: var(--m-text); margin: 12px 0 6px; font-size: 1.12em; font-weight: 700; letter-spacing: -0.01em; }
+.m-chat-body h3, .m-chat-body h4 {
+  color: var(--m-accent); margin: 10px 0 5px; font-size: 0.78em; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.m-chat-body h1:first-child, .m-chat-body h2:first-child, .m-chat-body h3:first-child { margin-top: 0; }
+.m-chat-body ul, .m-chat-body ol { margin: 0 0 8px; padding-left: 18px; }
+.m-chat-body li { margin: 3px 0; }
 
 /* Skeleton shimmer for the explainer-generating state. */
 @keyframes m-shimmer { 0% { opacity: .45; } 50% { opacity: .9; } 100% { opacity: .45; } }

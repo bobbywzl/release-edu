@@ -197,17 +197,22 @@ const mdComponents = {
   strong({ children }: { children?: React.ReactNode }) {
     return <strong className="font-bold text-foreground">{children}</strong>
   },
+  // TYPOGRAPHIC HIERARCHY (user directive, Aug 2026): the three levels must
+  // read as three DIFFERENT things at a glance — big titles (h1/h2), small
+  // uppercase accent kickers (h3, matching the app's existing kicker voice),
+  // and slightly dimmed body — h3 used to sit at body size and the page read
+  // as one undifferentiated wall.
   p({ children }: { children?: React.ReactNode }) {
-    return <p className="mb-3 last:mb-0 leading-relaxed text-[15px] text-foreground/90">{children}</p>
+    return <p className="mb-3 last:mb-0 leading-relaxed text-[15px] text-foreground/85">{children}</p>
   },
   h1({ children }: { children?: React.ReactNode }) {
-    return <h1 className="text-xl font-bold text-foreground mt-5 first:mt-0 mb-3 pb-1.5 border-b border-border/60">{children}</h1>
+    return <h1 className="text-xl font-bold text-foreground mt-6 first:mt-0 mb-3 pb-1.5 border-b border-border/60">{children}</h1>
   },
   h2({ children }: { children?: React.ReactNode }) {
-    return <h2 className="text-lg font-bold text-foreground mt-5 first:mt-0 mb-2">{children}</h2>
+    return <h2 className="text-[17px] font-bold text-foreground mt-6 first:mt-0 mb-2.5">{children}</h2>
   },
   h3({ children }: { children?: React.ReactNode }) {
-    return <h3 className="text-[15px] font-bold text-primary mt-4 first:mt-0 mb-1.5">{children}</h3>
+    return <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-primary mt-5 first:mt-0 mb-2">{children}</h3>
   },
   ul({ children }: { children?: React.ReactNode }) {
     return <ul className="my-2.5 space-y-1.5 list-disc pl-5">{children}</ul>
@@ -216,7 +221,7 @@ const mdComponents = {
     return <ol className="my-2.5 space-y-1.5 list-decimal pl-5">{children}</ol>
   },
   li({ children }: { children?: React.ReactNode }) {
-    return <li className="text-[15px] text-foreground/90 leading-relaxed">{children}</li>
+    return <li className="text-[15px] text-foreground/85 leading-relaxed">{children}</li>
   },
   blockquote({ children }: { children?: React.ReactNode }) {
     return (

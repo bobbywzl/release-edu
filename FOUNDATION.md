@@ -169,9 +169,25 @@ simplest words that still carry the full idea:
 - The session's depth calibrator raises DEPTH and rigor, never jargon density
   or wordiness: an advanced session still reads plainly, it just goes deeper.
 
-Implementation: `PLAIN_LANGUAGE` in `src/lib/tree-engine.ts`, injected through
-`sessionDirectives()` so every content-producing prompt in the session carries
-it automatically.
+**Structured & Short (companion clause, Aug 2026):** plain words alone are not
+enough — a plain-worded four-page essay is still a wall. Everything Bob writes
+is shaped for scanning:
+
+- Bullets with bold lead-ins are the default body; prose paragraphs only where
+  one flowing thought needs them, max ~3 short sentences, never stacked.
+- Visible hierarchy in every substantial reply: one `##` title for the turn's
+  topic, `###` subheads for its parts, bullets under them.
+- Say it once: one explanation, ONE example or analogy per concept — never the
+  same story retold; no preamble, no recap, no closing summary.
+- Length budgets: a typical teaching turn ~150 words; a remediation deep-dive
+  ~250; the explainer document 300-450. More only when the learner asks.
+
+Implementation: `PLAIN_LANGUAGE` + `STRUCTURED_BREVITY` in
+`src/lib/tree-engine.ts`, injected through `sessionDirectives()` so every
+content-producing prompt in the session carries both automatically. The
+renderer enforces the visual half: headers, subheaders (uppercase accent
+kickers), and body text are typographically distinct on desktop
+(`markdown-renderer.tsx`) and /m (`mobile.css`).
 
 ## Per-Node Redundancy Avoidance (law — the Answer Standard's companion)
 
