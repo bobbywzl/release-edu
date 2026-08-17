@@ -20,6 +20,8 @@ import { CHAT_MODELS, NO_THINKING } from '@/lib/chat-model-router'
 import { buildContextCatalog, fetchRequestedContext, type ContextRequestNode, type RecalledRef } from '@/lib/tree-context'
 import { ensureUserRow } from '@/lib/ensure-user'
 import { clampText } from '@/lib/clamp'
+import { NEW_PREFIX, REWIRE_MAX_OPS, simulateRewire, type RewireOp, type RewirePlan } from '@/lib/rewire'
+import { parseQuizState } from '@/lib/mastery'
 
 function langDirective(lang?: string): string {
   return lang === 'zh'
@@ -1300,38 +1302,19 @@ Output ONLY JSON: {"proposals": [{"title": "2-6 words", "summary": "1-2 sentence
 
 // ── Tree Copilot (one chatbox, every tree function) ──────────────────────
 
-/** A tree-reshaping action the copilot proposes — rendered as an approval
- *  chip; the student applies it with a tap (PATCH node route). NOTHING is
- *  executed by the copilot itself: same permission covenant as growth. */
-export interface CopilotAction {
-  type: 'edit' | 'move' | 'delete' | 'split' | 'merge' | 'spinoff' | 'rebalance' | 'reorder'
-  nodeId: string
-  /** The node's CURRENT title — what the chip names. */
-  title: string
-  newTitle?: string
-  newSummary?: string
-  newParentId?: string
-  newParentTitle?: string
-  /** split: how many recent workspace messages move into the new child. */
-  moveTail?: number
-  /** merge: the surviving node this one folds into. */
-  mergeIntoId?: string
-  mergeIntoTitle?: string
-  /** rebalance: exact UNPROVEN facet names moving into the new child. */
-  facets?: string[]
-  /** reorder: the parent's children ids in recommended learning order. */
-  childOrder?: string[]
-  childTitles?: string[]
-}
-
 export interface CopilotResult {
   reply: string
   proposals: TreeNode[]
   /** A sharper session purpose the conversation surfaced — applied only
    *  after the student taps Approve (permission-based, like all growth). */
   purposeUpdate?: string | null
-  /** Edit/move/delete chips — approval-gated tree reshaping. */
-  actions: CopilotAction[]
+  /** The REWIRE PLAN — the copilot's full structural control (add/edit/move/
+   *  delete/merge/reorder/split/rebalance/spinoff), server-validated against
+   *  the live tree, shipped as ONE approval card. The student's single tap
+   *  posts it to /api/tree/[id]/rewire, which re-validates and executes it
+   *  atomically (snapshot + restore-on-failure). NOTHING is executed by the
+   *  copilot itself: same permission covenant as growth. */
+  plan: RewirePlan | null
   /** Stored context the copilot recalled this turn (transparency line). */
   recalled?: RecalledRef[]
 }
@@ -1341,12 +1324,12 @@ export interface CopilotResult {
  * that combines every tree-level function: teach about the whole problem,
  * propose branches under ANY node, refine the session PURPOSE (e.g.
  * reorienting the tree into a build-partner for a product the student is
- * making), and RESHAPE the tree map and node contents (edit titles/summaries,
- * move subtrees, delete branches). Attachment analyses (images/audio/video/
- * files, via Gemini) arrive as grounding. EVERYTHING stays permission-based:
- * proposals are pending ghosts; purpose changes and reshaping actions ship
- * back as chips the student must explicitly approve — the copilot itself
- * never mutates an existing node.
+ * making), and REWIRE the tree (add/edit/move/delete/merge/reorder/split/
+ * rebalance/spinoff as ONE validated plan the student applies with one tap).
+ * Attachment analyses (images/audio/video/files, via Gemini) arrive as
+ * grounding. EVERYTHING stays permission-based: proposals are pending
+ * ghosts; purpose changes and the rewire plan ship back as approval cards —
+ * the copilot itself never mutates an existing node.
  */
 export async function copilotTurn(
   userId: string, treeId: string, message: string, lang?: string,
@@ -1439,16 +1422,18 @@ The UI renders it as a generated image in place. Never mention the block. At mos
 [{"name": "PhET — Gas Properties", "url": "https://phet.colorado.edu/en/simulations/gas-properties", "why": "lets you drop the divider yourself and watch the atoms fill the volume", "look": "Set 100 particles, then remove the barrier"}]
 \`\`\`
 1-3 items, each with a real https URL, a one-line "why this one", and "look" naming exactly what to open/see (figure number, section, control to move). Never leave a recommended resource as plain prose — an inert name is a resource a beginner will never find.
-6. RESHAPE THE TREE (edit / move / delete — approval-gated): when the student asks to rename, rewrite, reorganize or remove nodes — or the conversation shows a node is mistitled, misplaced, or doesn't belong — return "actions". Each ships to the student as an approve/dismiss chip; NOTHING changes until they tap it. Ops:
-   {"op":"edit","node":<handle>,"title":"new title","summary":"new 1-2 sentence summary"} — sharpen the wording of the SAME concept; include ONLY the field(s) you're changing. An edit never retargets a node to a DIFFERENT concept (its checkpoint history would lie) — for that, propose delete + a new branch.
-   {"op":"move","node":<handle>,"newParent":<handle>} — re-parent the node (its whole subtree follows) to where it truly belongs.
-   {"op":"delete","node":<handle>} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
-   {"op":"merge","node":<handle>,"mergeInto":<handle>} — fold an overlapping/duplicate node into another: its children, conversation, notes, files, highlights and syllabus contract all transfer to the target, then it is removed. The merged node must RE-PROVE the combined syllabus (it stays verified only if every combined facet is already proven) — say so in your reply. Only for genuine overlap.
-   {"op":"spinoff","node":<handle>} — a branch has outgrown THIS tree's goal (goal-necessity law): detach the node and its whole subtree into a NEW problem tree of its own — all workspaces, files and verification travel with it. Prefer this over delete whenever the work is valuable but off-goal.
-   {"op":"rebalance","node":<handle>,"title":"new child 2-6 words","summary":"1-2 sentences","facets":["exact UNPROVEN facet names to move"]} — an overloaded syllabus: move some of the node's unproven facets into a new child node. The node keeps at least one facet; PROVEN facets never move. Use when the catalog shows a wide contract barely advancing.
-   {"op":"reorder","node":<parent handle>,"children":[<child handles in recommended learning order>]} — set the LEARNING PATH through a node's children (the canvas numbers the path; ancestors are always learned before descendants). Use after inserting a prerequisite, or whenever the student asks "where do I start".
-   {"op":"split","node":<handle>,"title":"2-6 words","summary":"1-2 sentences","moveTail":<2-30>} — RESTRUCTURE DRIFT: when a node's workspace conversation has clearly outgrown that node's own syllabus (the catalog shows a long chat against a narrow or already-proven syllabus — RECALL the chat first to confirm the drift and choose the boundary), extract the drifted thread into a NEW CHILD node. On the student's tap a child is created under it and the LAST moveTail messages of that workspace MOVE into the child's workspace. One concept per node — the tree must stay the true map of what is being learned.
-   The ROOT can be edited (reframing their problem, when asked) but never moved or deleted. 0-8 actions per turn.
+6. REWIRE THE TREE (one-tap plan — full structural control): when the student asks to rename, rewrite, reorganize, merge, remove or completely restructure — or the conversation shows the map is wrong — return "plan": {"summary": "one line: what this rewire does", "ops": [...]}. The student sees the WHOLE plan as one card and applies it with ONE tap; ops execute in order, atomically (all or nothing), with an automatic undo snapshot. NOTHING changes until they tap Apply.
+   Node references inside ops: an existing node = its numeric #handle; a node this plan creates = the "ref" string its add op declared (e.g. "a").
+   {"op":"add","parent":3,"ref":"a","title":"2-6 words","summary":"1-2 sentences"} — create a new node (the plan tap is its approval). Use it INSIDE restructures — e.g. a new layer that later ops move existing nodes under. For ordinary "you could learn X next" growth use "proposals" (ghosts), never plan adds.
+   {"op":"edit","node":2,"title":"new title","summary":"new 1-2 sentence summary"} — sharpen the wording of the SAME concept; include ONLY the field(s) you're changing. An edit never retargets a node to a DIFFERENT concept (its checkpoint history would lie) — that is delete + add.
+   {"op":"move","node":5,"newParent":"a"} — re-parent the node (its whole subtree follows) to where it truly belongs.
+   {"op":"delete","node":7} — remove the node AND its entire subtree. Propose only when the student asked, or the node is clearly wrong for this tree — verified nodes carry the student's proven work, so deleting one needs an explicit ask.
+   {"op":"merge","node":4,"into":6} — fold an overlapping/duplicate node into an EXISTING node: its children, conversation, notes, files, highlights and syllabus contract all transfer to the target, then it is removed. The merged node must RE-PROVE the combined syllabus (it stays verified only if every combined facet is already proven) — say so in your reply. Only for genuine overlap.
+   {"op":"spinoff","node":9} — a branch has outgrown THIS tree's goal (goal-necessity law): detach the node and its whole subtree into a NEW problem tree of its own — all workspaces, files and verification travel with it. Prefer this over delete whenever the work is valuable but off-goal.
+   {"op":"rebalance","node":3,"title":"new child 2-6 words","summary":"1-2 sentences","facets":["exact UNPROVEN facet names to move"]} — an overloaded syllabus: move some of the node's unproven facets into a new child node. The node keeps at least one facet; PROVEN facets never move. Use when the catalog shows a wide contract barely advancing.
+   {"op":"reorder","node":0,"children":[2,"a",5]} — set the LEARNING PATH through a node's children (the canvas numbers the path; ancestors are always learned before descendants). Use after inserting a prerequisite, or whenever the student asks "where do I start".
+   {"op":"split","node":3,"title":"2-6 words","summary":"1-2 sentences","moveTail":8} — RESTRUCTURE DRIFT: when a node's workspace conversation has clearly outgrown that node's own syllabus (the catalog shows a long chat against a narrow or already-proven syllabus — RECALL the chat first to confirm the drift and choose the boundary), extract the drifted thread into a NEW CHILD node: the LAST moveTail (2-30) messages of that workspace MOVE into the child's workspace. One concept per node — the tree must stay the true map of what is being learned.
+   The ROOT (#0) can be edited (reframing their problem, when asked) but never moved, deleted, merged or spun off. Up to ${REWIRE_MAX_OPS} ops — a complete rewire of the whole tree fits in ONE plan; order matters, and later ops may reference earlier adds by ref. A single small change is simply a 1-op plan.
 7. RECALL STORED CONTEXT (on demand — the catalog above is your index): you do NOT automatically see the student's per-node work. Available kinds per node: "chat" (workspace conversation: node digest + rolling summary + recent messages), "notes" (their editable notes), "files" (attached evidence incl. analyzed images/audio/PDFs), "highlights" (passages they marked in chat), "annotations" (their notes on the explainer), "progress" (project-progress log), "syllabus" (verification/facet state), "explainer" (the stored full explainer). "tree" as the node value = files shared in THIS copilot.
    WHEN to recall: (a) the student asks about their own history/work/files/notes/conversations ("what did I discuss…", "based on my notes/files…", "summarize what I've learned"), or (b) you STRONGLY judge stored context would materially change your answer or proposals (e.g. proposing branches that a workspace may already have covered, or tailoring to evidence they attached earlier). Recall costs the student tokens — NEVER recall for greetings, small talk, or anything answerable from the tree structure and catalog alone.
    HOW: instead of a final reply, return ONLY {"contextRequest": {"nodes": [{"node": <handle or "tree">, "kinds": ["chat", …]}], "why": "one short line"}} — max 6 nodes, and only kinds the catalog actually lists for that node. The content arrives immediately and you answer in the SAME turn; you get ONE recall per turn, so request everything you need at once.
@@ -1456,16 +1441,17 @@ The UI renders it as a generated image in place. Never mention the block. At mos
 RULES:
 - NODE REFERENCES (trust-critical): the #numbers above are the student's own canvas labels. When your reply mentions a node, cite it EXACTLY as mapped — #k "Title" (the root by name). NEVER use a number, title, or node that is not in the map, and never renumber: an invented node reference reads to the student as you hallucinating their tree. If you can't tell which node the student means, ask.
 - ${GOAL_NECESSITY}
-- PLAN BEFORE PROPOSING: before returning proposals or reshape actions, silently work out what the root goal (through the session purpose) actually requires — every proposal traceable to that requirement, every delete/move justified by it.
+- PLAN BEFORE PROPOSING: before returning proposals or rewire ops, silently work out what the root goal (through the session purpose) actually requires — every proposal traceable to that requirement, every delete/move justified by it.
 - CURIOUS SPECIFICITY (like the grow box): judge each ask yourself; when underspecified, still act under the most likely reading AND end with ONE sharp fork question that would change what you propose. Never a bare "tell me more".
-- EVERYTHING is PERMISSION-BASED: proposals, purpose changes, and reshape actions are suggestions until tapped — never claim you already changed anything; say what the chips will do when approved.
-- On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept). Actions don't accumulate either — re-emit any still-relevant ones.
-- The reply never lists proposal/action titles as a menu (the UI shows cards) — speak about them naturally.
-- RADICAL CONCISENESS (UI constraint — the ambient cloud shows only 1-2 lines): "reply" is 1-2 SHORT sentences MAXIMUM. Be a concise executor: DO the instruction (proposals/chips), then confirm in one line ("Queued the edit — approve the chip." / "Proposed 2 branches under X."). At most ONE short fork question, and only when you genuinely cannot act without the answer. NO paragraphs, NO explanations of your reasoning, NO teaching in the reply — full teaching happens only when the student explicitly asks a learning question, and even then keep it tight or suggest opening the full conversation.
+- EVERYTHING is PERMISSION-BASED: proposals, purpose changes, and the rewire plan are suggestions until tapped — say what the plan will do when applied.
+- WORDS NEVER CHANGE THE TREE (hard law): the tree changes ONLY through this JSON's "plan" ops and ghost "proposals". NEVER write a reply claiming you renamed/moved/deleted/added/reorganized anything unless the matching ops are in THIS response — a reply describing a change it doesn't carry is lying to the student. If you cannot express the change as ops, say so honestly and ask.
+- On follow-up turns your NEW proposals replace your previous turn's unapproved ones (empty proposals list = previous set kept). The plan doesn't accumulate either — re-emit a still-relevant plan.
+- The reply never lists proposal/plan-op titles as a menu (the UI shows cards) — speak about them naturally.
+- RADICAL CONCISENESS (UI constraint — the ambient cloud shows only 1-2 lines): "reply" is 1-2 SHORT sentences MAXIMUM. Be a concise executor: DO the instruction (proposals/plan), then confirm in one line ("Plan's ready — one tap applies it." / "Proposed 2 branches under X."). At most ONE short fork question, and only when you genuinely cannot act without the answer. NO paragraphs, NO explanations of your reasoning, NO teaching in the reply — full teaching happens only when the student explicitly asks a learning question, and even then keep it tight or suggest opening the full conversation.
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON — either a normal turn:
-{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf", "adoptChildren": [1, 2]}], "purposeUpdate": "sharper purpose or null", "actions": [{"op":"edit|move|delete|split|merge|spinoff|rebalance|reorder","node":0,"title":"…","summary":"…","newParent":0,"moveTail":8,"mergeInto":0,"facets":["…"],"children":[1,2]}]}
+{"reply": "markdown (may contain one \`\`\`image block)", "proposals": [{"parent": 0, "title": "2-6 words", "summary": "1-2 sentences", "kind": "component|leaf", "adoptChildren": [1, 2]}], "purposeUpdate": "sharper purpose or null", "plan": {"summary": "one line", "ops": [{"op":"add|edit|move|delete|merge|reorder|split|rebalance|spinoff","node":0,"parent":0,"ref":"a","title":"…","summary":"…","newParent":0,"into":0,"children":[1,2],"moveTail":8,"facets":["…"]}]} or null}
 OR a recall request first (function 7):
 {"contextRequest": {"nodes": [{"node": 0, "kinds": ["chat","files"]}], "why": "…"}}`
 
@@ -1476,11 +1462,16 @@ STORED WORK CATALOG (the student's history you can RECALL on demand — counts o
 ${catalog || '(no stored work yet beyond the tree itself)'}
 ${grounding}`
 
+  type RawPlanOp = {
+    op?: string; node?: number | string; parent?: number | string; ref?: string
+    title?: string; summary?: string; newParent?: number | string; into?: number | string
+    children?: Array<number | string>; moveTail?: number; facets?: string[]
+  }
   type CopilotParsed = {
     reply?: string
     proposals?: Array<{ parent?: number; title?: string; summary?: string; kind?: string; adoptChildren?: number[] }>
     purposeUpdate?: string | null
-    actions?: Array<{ op?: string; node?: number; title?: string; summary?: string; newParent?: number; moveTail?: number; mergeInto?: number; facets?: string[]; children?: number[] }>
+    plan?: { summary?: string; ops?: RawPlanOp[] } | null
     contextRequest?: { nodes?: ContextRequestNode[]; why?: string }
   }
   const textOf = (r: { content: Array<{ type?: string; text?: string }> }) =>
@@ -1507,6 +1498,10 @@ ${grounding}`
     { type: 'text' as const, text: systemStatic, cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: systemLive },
   ]
+  // The system array that produced the CURRENT `parsed` — the recall pass
+  // swaps in its extended copy, and the plan-repair pass reuses whichever is
+  // live so the corrective call keeps the same grounding (and cache prefix).
+  let activeSystem: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> = cachedSystem
 
   let parsed: CopilotParsed | null = null
   let firstText = ''
@@ -1565,6 +1560,7 @@ ${fetched.block}
 Answer the student NOW, grounded in the content above; quote or reference it concretely. contextRequest is NOT available on this pass. A synthesis the student explicitly asked for may run up to ~5 short sentences despite the conciseness rule.`,
         },
       ]
+      activeSystem = system2
       let secondText = ''
       parsed = null
       try {
@@ -1593,6 +1589,151 @@ Answer the student NOW, grounded in the content above; quote or reference it con
       }
     }
   }
+  // ── REWIRE PLAN — build, validate, repair once if needed ────────────────
+  // Silently dropping an invalid op while the reply claims the change was
+  // THE "said it in words, tree unchanged" failure. Every rejected op is now
+  // collected with its reason and the model gets ONE corrective pass with
+  // the errors in front of it; a plan that still doesn't validate becomes an
+  // honest note on the reply instead of a phantom claim.
+  const buildPlan = (p: CopilotParsed | null): { plan: RewirePlan | null; errors: string[]; attempted: boolean } => {
+    const rawOps = Array.isArray(p?.plan?.ops) ? p!.plan!.ops! : []
+    if (rawOps.length === 0) return { plan: null, errors: [], attempted: false }
+    const errors: string[] = []
+    const ops: RewireOp[] = []
+    const declaredRefs = new Set<string>()
+    const refTitles = new Map<string, string>() // "new:<ref>" → title
+    const titleOf = (id: string): string => id.startsWith(NEW_PREFIX)
+      ? (refTitles.get(id) ?? id.slice(NEW_PREFIX.length))
+      : (handles.find(h => h.id === id)?.title ?? '?')
+    const resolveRef = (v: number | string | undefined, what: string, opIdx: number): string | null => {
+      if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < handles.length) return handles[v].id
+      if (typeof v === 'string' && declaredRefs.has(v.trim())) return NEW_PREFIX + v.trim()
+      errors.push(`op ${opIdx + 1} (${what}): "${String(v)}" is neither a live tree #handle nor a ref declared by an earlier add`)
+      return null
+    }
+    const cleanTitle = (v: unknown) => typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : undefined
+    const cleanSummary = (v: unknown) => typeof v === 'string' && v.trim() ? v.trim().slice(0, 500) : undefined
+    for (let i = 0; i < Math.min(rawOps.length, REWIRE_MAX_OPS); i++) {
+      const a = rawOps[i] ?? {}
+      if (a.op === 'add') {
+        const ref = typeof a.ref === 'string' && a.ref.trim() ? a.ref.trim().slice(0, 40) : ''
+        const title = cleanTitle(a.title)
+        if (!ref || declaredRefs.has(ref)) { errors.push(`op ${i + 1} (add): missing or duplicate ref`); continue }
+        if (!title) { errors.push(`op ${i + 1} (add): missing title`); continue }
+        const parent = resolveRef(a.parent, 'add.parent', i)
+        if (!parent) continue
+        declaredRefs.add(ref)
+        refTitles.set(NEW_PREFIX + ref, title)
+        ops.push({ op: 'add', ref, parentId: parent, title, summary: cleanSummary(a.summary), label: title, toLabel: titleOf(parent) })
+      } else if (a.op === 'edit') {
+        const target = resolveRef(a.node, 'edit.node', i)
+        if (!target) continue
+        const title = cleanTitle(a.title)
+        const summary = cleanSummary(a.summary)
+        if (!title && !summary) { errors.push(`op ${i + 1} (edit): no title or summary to change`); continue }
+        ops.push({ op: 'edit', nodeId: target, title, summary, label: titleOf(target), toLabel: title })
+      } else if (a.op === 'move') {
+        const target = resolveRef(a.node, 'move.node', i)
+        const parent = resolveRef(a.newParent, 'move.newParent', i)
+        if (!target || !parent) continue
+        ops.push({ op: 'move', nodeId: target, newParentId: parent, label: titleOf(target), toLabel: titleOf(parent) })
+      } else if (a.op === 'delete') {
+        const target = resolveRef(a.node, 'delete.node', i)
+        if (!target) continue
+        ops.push({ op: 'delete', nodeId: target, label: titleOf(target) })
+      } else if (a.op === 'merge') {
+        const target = resolveRef(a.node, 'merge.node', i)
+        const into = resolveRef(a.into, 'merge.into', i)
+        if (!target || !into) continue
+        ops.push({ op: 'merge', nodeId: target, intoId: into, label: titleOf(target), toLabel: titleOf(into) })
+      } else if (a.op === 'reorder') {
+        const target = resolveRef(a.node, 'reorder.node', i)
+        if (!target) continue
+        const kids = (Array.isArray(a.children) ? a.children : []).map(c => resolveRef(c, 'reorder.children', i))
+        if (kids.some(k => !k)) continue
+        const childIds = kids.filter((k): k is string => !!k)
+        if (childIds.length < 2) { errors.push(`op ${i + 1} (reorder): needs at least two children`); continue }
+        ops.push({ op: 'reorder', nodeId: target, childIds, label: titleOf(target), childLabels: childIds.map(titleOf) })
+      } else if (a.op === 'split') {
+        const target = resolveRef(a.node, 'split.node', i)
+        if (!target) continue
+        const title = cleanTitle(a.title)
+        if (!title) { errors.push(`op ${i + 1} (split): missing title`); continue }
+        const moveTail = Math.max(2, Math.min(30, Number.isFinite(a.moveTail as number) ? Math.round(a.moveTail as number) : 8))
+        ops.push({ op: 'split', nodeId: target, title, summary: cleanSummary(a.summary), moveTail, label: titleOf(target), toLabel: title })
+      } else if (a.op === 'rebalance') {
+        const target = resolveRef(a.node, 'rebalance.node', i)
+        if (!target) continue
+        const title = cleanTitle(a.title)
+        const facets = (Array.isArray(a.facets) ? a.facets : [])
+          .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+          .map(f => f.trim().slice(0, 200)).slice(0, 8)
+        if (!title || facets.length === 0) { errors.push(`op ${i + 1} (rebalance): needs a title and facet names`); continue }
+        // Facet names must match the node's real UNPROVEN facets EXACTLY —
+        // one wrong name would otherwise fail the whole atomic plan at
+        // apply. Checked here so the corrective pass sees the real names.
+        const have = parseQuizState(tree.nodes.find(n => n.id === target)?.quizState ?? null).facets ?? []
+        const unproven = have.filter(f => !f.done).map(f => f.name)
+        const wrong = facets.filter(f => !unproven.includes(f))
+        if (wrong.length > 0) {
+          errors.push(`op ${i + 1} (rebalance): ${wrong.map(f => `"${f}"`).join(', ')} not among that node's unproven facets (unproven: ${unproven.map(f => `"${f}"`).join(', ') || 'none'})`)
+          continue
+        }
+        if (facets.length >= have.length) { errors.push(`op ${i + 1} (rebalance): the node must keep at least one facet`); continue }
+        ops.push({ op: 'rebalance', nodeId: target, title, summary: cleanSummary(a.summary), facets, label: titleOf(target), toLabel: title })
+      } else if (a.op === 'spinoff') {
+        const target = resolveRef(a.node, 'spinoff.node', i)
+        if (!target) continue
+        ops.push({ op: 'spinoff', nodeId: target, label: titleOf(target) })
+      } else {
+        errors.push(`op ${i + 1}: unknown op "${String(a.op)}"`)
+      }
+    }
+    if (rawOps.length > REWIRE_MAX_OPS) errors.push(`plan too long: ${rawOps.length} ops (max ${REWIRE_MAX_OPS})`)
+    // Structural replay over ALL nodes (ghosts included — cycle guards must
+    // see them): the SAME validator the rewire route runs again at apply
+    // time, so a shipped plan can only fail later on live drift.
+    if (errors.length === 0 && ops.length > 0) {
+      const sim = simulateRewire(tree.nodes.map(n => ({ id: n.id, parentId: n.parentId })), ops)
+      if (!sim.ok) errors.push(`op ${sim.index + 1}: ${sim.reason}`)
+    }
+    const summary = typeof p?.plan?.summary === 'string' && p.plan.summary.trim() ? p.plan.summary.trim().slice(0, 300) : ''
+    return {
+      plan: errors.length === 0 && ops.length > 0
+        ? { summary: summary || (zh ? '树结构调整' : 'Tree rewire'), ops }
+        : null,
+      errors,
+      attempted: true,
+    }
+  }
+
+  let planBuild = buildPlan(parsed)
+  if (planBuild.errors.length > 0) {
+    // ONE corrective pass: the model sees exactly which ops were rejected
+    // and why, and re-emits the full JSON (cached prefix — the retry is
+    // mostly a cache read).
+    try {
+      const repairSystem = [
+        ...activeSystem,
+        {
+          type: 'text' as const,
+          text: `REWIRE PLAN REJECTED — ops in your previous JSON do not fit the live tree:
+${planBuild.errors.map(e => `- ${e}`).join('\n')}
+Your previous plan was: ${JSON.stringify(parsed?.plan ?? null).slice(0, 4000)}
+Re-emit your ENTIRE corrected JSON response now (same contract: reply/proposals/purposeUpdate/plan). Fix or drop the failing ops and keep the valid ones. If no valid rewire remains, set "plan": null and make the reply honestly say what could not be matched — NEVER claim a change happened.`,
+        },
+      ]
+      const result = await client.messages.create({ model, max_tokens: 3500, ...NO_THINKING, system: repairSystem, messages: turnMessages })
+      void recordUsage(result, userId, model, 'tree-copilot')
+      const reparsed = parseTurn(textOf(result))
+      if (reparsed && !reparsed.contextRequest) {
+        parsed = reparsed
+        planBuild = { ...buildPlan(parsed), attempted: true }
+      }
+    } catch { /* keep the failed build — the honest note below covers it */ }
+  }
+  const plan = planBuild.plan
+
   const rawProposals = (parsed?.proposals ?? []).filter(p => p && typeof p.title === 'string' && p.title.trim()).slice(0, 6)
 
   // Replace this dialog's previous unapproved ghosts ONLY when the new turn
@@ -1643,79 +1784,27 @@ Answer the student NOW, grounded in the content above; quote or reference it con
 
   let reply = typeof parsed?.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim().slice(0, 6000) : ''
   if (!reply) {
-    reply = created.length > 0
-      ? (zh ? `我提出了 ${created.length} 个分枝建议——在树上确认，或继续告诉我方向。` : `I've proposed ${created.length} ${created.length === 1 ? 'branch' : 'branches'} — approve them on the tree, or keep steering me.`)
-      : (zh ? '这次没能生成回应——再发一次，我会直接按最可能的理解来做。' : "That one didn't generate — send it again and I'll act on the most likely reading directly.")
+    reply = plan
+      ? (zh ? '重构方案已就绪——点一下即可应用。' : "The rewire plan is ready — one tap applies it.")
+      : created.length > 0
+        ? (zh ? `我提出了 ${created.length} 个分枝建议——在树上确认，或继续告诉我方向。` : `I've proposed ${created.length} ${created.length === 1 ? 'branch' : 'branches'} — approve them on the tree, or keep steering me.`)
+        : (zh ? '这次没能生成回应——再发一次，我会直接按最可能的理解来做。' : "That one didn't generate — send it again and I'll act on the most likely reading directly.")
   }
   const purposeUpdate = typeof parsed?.purposeUpdate === 'string' && parsed.purposeUpdate.trim()
     ? parsed.purposeUpdate.trim().slice(0, 500)
     : null
 
-  // ── Reshape actions (edit / move / delete) — validated, never executed ──
-  // Chips only: the student applies each via the node PATCH route, which
-  // re-validates on live data. Root is never movable/deletable; a move that
-  // would orbit a node into its own subtree is dropped.
-  const actions: CopilotAction[] = []
-  for (const a of (Array.isArray(parsed?.actions) ? parsed!.actions! : []).slice(0, 8)) {
-    const target = a && Number.isInteger(a.node) && (a.node as number) >= 0 ? handles[a.node as number] : undefined
-    if (!target) continue
-    if (a.op === 'edit') {
-      const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
-      const newSummary = typeof a.summary === 'string' && a.summary.trim() ? a.summary.trim().slice(0, 500) : undefined
-      if (!newTitle && !newSummary) continue
-      actions.push({ type: 'edit', nodeId: target.id, title: target.title, newTitle, newSummary })
-    } else if (a.op === 'move') {
-      const parent = Number.isInteger(a.newParent) && (a.newParent as number) >= 0 ? handles[a.newParent as number] : undefined
-      if (!parent || target.parentId === null || parent.id === target.parentId) continue
-      if (collectSubtreeIds(tree.nodes, target.id).has(parent.id)) continue
-      actions.push({ type: 'move', nodeId: target.id, title: target.title, newParentId: parent.id, newParentTitle: parent.title })
-    } else if (a.op === 'delete') {
-      if (target.parentId === null) continue
-      actions.push({ type: 'delete', nodeId: target.id, title: target.title })
-    } else if (a.op === 'merge') {
-      const into = Number.isInteger(a.mergeInto) && (a.mergeInto as number) >= 0 ? handles[a.mergeInto as number] : undefined
-      if (!into || target.parentId === null || into.parentId === null || into.id === target.id) continue
-      if (collectSubtreeIds(tree.nodes, target.id).has(into.id)) continue
-      actions.push({ type: 'merge', nodeId: target.id, title: target.title, mergeIntoId: into.id, mergeIntoTitle: into.title })
-    } else if (a.op === 'spinoff') {
-      if (target.parentId === null) continue
-      actions.push({ type: 'spinoff', nodeId: target.id, title: target.title })
-    } else if (a.op === 'rebalance') {
-      if (target.parentId === null) continue
-      const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
-      const facets = (Array.isArray(a.facets) ? a.facets : [])
-        .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
-        .map(f => f.trim().slice(0, 200)).slice(0, 8)
-      if (!newTitle || facets.length === 0) continue
-      actions.push({
-        type: 'rebalance', nodeId: target.id, title: target.title,
-        newTitle, newSummary: typeof a.summary === 'string' ? a.summary.trim().slice(0, 500) : undefined, facets,
-      })
-    } else if (a.op === 'reorder') {
-      const kids = (Array.isArray(a.children) ? a.children : [])
-        .filter(h => Number.isInteger(h) && (h as number) >= 0 && (h as number) < handles.length)
-        .map(h => handles[h as number])
-        .filter(n => n.parentId === target.id)
-      if (kids.length < 2) continue
-      actions.push({
-        type: 'reorder', nodeId: target.id, title: target.title,
-        childOrder: kids.map(k => k.id), childTitles: kids.map(k => k.title),
-      })
-    } else if (a.op === 'split') {
-      // Drift extraction: only real workspace-bearing nodes (never the root).
-      if (target.parentId === null) continue
-      const newTitle = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 120) : undefined
-      if (!newTitle) continue
-      const moveTail = Math.max(2, Math.min(30, Number.isFinite(a.moveTail as number) ? Math.round(a.moveTail as number) : 8))
-      actions.push({
-        type: 'split', nodeId: target.id, title: target.title,
-        newTitle, newSummary: typeof a.summary === 'string' ? a.summary.trim().slice(0, 500) : undefined,
-        moveTail,
-      })
-    }
+  // The words-only guard's last line: the model attempted structural ops but
+  // no valid plan survived even the repair pass — the reply must say so
+  // instead of standing on a phantom claim.
+  if (planBuild.attempted && !plan) {
+    const failNote = zh
+      ? '（有些结构改动没能匹配当前的树，方案未生成——告诉我你想怎么改，我再试一次。）'
+      : "(Some structural changes didn't match the live tree, so no plan was attached — tell me what to change and I'll retry.)"
+    reply = reply ? `${reply}\n\n${failNote}` : failNote
   }
 
-  return { reply, proposals: created, purposeUpdate, actions, recalled }
+  return { reply, proposals: created, purposeUpdate, plan, recalled }
 }
 
 // ── Explainer (generated once, cached on the node) ───────────────────────
