@@ -1,9 +1,11 @@
 'use client'
 
 /**
- * Shared markdown renderer — Release-EDU-grade reading typography.
- * Titles, subtitles, and content blocks get real hierarchy; body text is
- * full-contrast and comfortably sized (never small gray). KaTeX enabled.
+ * Shared markdown renderer — Tree EDU reading typography.
+ * Every block kind reads as a DIFFERENT thing at a glance: accent-barred
+ * titles, uppercase square-marked kickers, dimmed body with bright bold
+ * lead-ins, the ▸ facet-spotlight chip, callout quotes, carded tables and
+ * figures, accent list markers. KaTeX enabled.
  *
  * HIGHLIGHTS ARE DECLARATIVE: saved annotations are painted by a rehype
  * pass that wraps the intersecting rendered-text segments in <mark>
@@ -181,6 +183,19 @@ function HighlightMark({ span, focused, onClick, onDelete, children }: {
   )
 }
 
+/** Flatten a node's direct string children (enough to sniff markers like ▸). */
+function flatText(children: React.ReactNode): string {
+  if (typeof children === 'string') return children
+  if (Array.isArray(children)) return children.map(c => (typeof c === 'string' ? c : '')).join('')
+  return ''
+}
+
+// TYPOGRAPHIC HIERARCHY (user directive, Aug 2026, strengthened): every kind
+// of block must read as a DIFFERENT thing at a glance — you should know where
+// you are from shape and color alone. Big accent-barred titles (h1/h2), small
+// uppercase accent kickers with a square marker (h3), dimmed body, bright
+// bold lead-ins, the ▸ facet-spotlight chip, tinted callout quotes, carded
+// tables/figures, accent list markers.
 const mdComponents = {
   code({ children, className }: { children?: React.ReactNode; className?: string }) {
     const isInline = !className
@@ -189,52 +204,72 @@ const mdComponents = {
         {children}
       </code>
     ) : (
-      <pre className="bg-muted rounded-lg p-3 overflow-x-auto my-3">
+      <pre className="bg-muted rounded-lg p-3 overflow-x-auto my-3 border border-border/70">
         <code className="text-[13px] font-mono text-foreground">{children}</code>
       </pre>
     )
   },
   strong({ children }: { children?: React.ReactNode }) {
+    // FACET SPOTLIGHT: Bob opens facet-tied turns with **▸ facet** — that
+    // exact shape renders as the "you are here" chip, echoing the syllabus
+    // strip's highlight so the current point pops out of the text too.
+    if (flatText(children).trimStart().startsWith('▸')) {
+      return (
+        <strong className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/15 border border-primary/40 text-primary text-[11px] font-extrabold uppercase tracking-[0.12em] align-middle">
+          {children}
+        </strong>
+      )
+    }
+    // Bold lead-ins are the scannable skeleton: full-bright against the
+    // deliberately dimmed body.
     return <strong className="font-bold text-foreground">{children}</strong>
   },
-  // TYPOGRAPHIC HIERARCHY (user directive, Aug 2026): the three levels must
-  // read as three DIFFERENT things at a glance — big titles (h1/h2), small
-  // uppercase accent kickers (h3, matching the app's existing kicker voice),
-  // and slightly dimmed body — h3 used to sit at body size and the page read
-  // as one undifferentiated wall.
   p({ children }: { children?: React.ReactNode }) {
-    return <p className="mb-3 last:mb-0 leading-relaxed text-[15px] text-foreground/85">{children}</p>
+    return <p className="mb-3 last:mb-0 leading-[1.75] text-[15px] lg:text-base text-foreground/80">{children}</p>
   },
   h1({ children }: { children?: React.ReactNode }) {
-    return <h1 className="text-xl font-bold text-foreground mt-6 first:mt-0 mb-3 pb-1.5 border-b border-border/60">{children}</h1>
+    return <h1 className="text-2xl font-extrabold tracking-tight text-foreground mt-7 first:mt-0 mb-3.5 pb-2 border-b-2 border-primary/40">{children}</h1>
   },
   h2({ children }: { children?: React.ReactNode }) {
-    return <h2 className="text-[17px] font-bold text-foreground mt-6 first:mt-0 mb-2.5">{children}</h2>
+    return (
+      <h2 className="flex items-center gap-2.5 text-xl lg:text-[22px] font-extrabold tracking-tight text-foreground mt-7 first:mt-0 mb-3 pb-2 border-b border-border/50 before:content-[''] before:w-1.5 before:h-[1.15em] before:rounded-full before:bg-primary before:flex-shrink-0">
+        {children}
+      </h2>
+    )
   },
   h3({ children }: { children?: React.ReactNode }) {
-    return <h3 className="text-xs font-bold uppercase tracking-[0.08em] text-primary mt-5 first:mt-0 mb-2">{children}</h3>
+    return (
+      <h3 className="flex items-center gap-2 text-[11px] lg:text-xs font-extrabold uppercase tracking-[0.16em] text-primary mt-6 first:mt-0 mb-2 before:content-[''] before:w-2 before:h-2 before:rounded-[3px] before:bg-primary/80 before:flex-shrink-0">
+        {children}
+      </h3>
+    )
   },
   ul({ children }: { children?: React.ReactNode }) {
-    return <ul className="my-2.5 space-y-1.5 list-disc pl-5">{children}</ul>
+    return <ul className="my-2.5 space-y-1.5 list-disc pl-5 marker:text-primary">{children}</ul>
   },
   ol({ children }: { children?: React.ReactNode }) {
-    return <ol className="my-2.5 space-y-1.5 list-decimal pl-5">{children}</ol>
+    return <ol className="my-2.5 space-y-1.5 list-decimal pl-5 marker:text-primary marker:font-semibold">{children}</ol>
   },
   li({ children }: { children?: React.ReactNode }) {
-    return <li className="text-[15px] text-foreground/85 leading-relaxed">{children}</li>
+    return <li className="text-[15px] lg:text-base text-foreground/80 leading-[1.7]">{children}</li>
   },
   blockquote({ children }: { children?: React.ReactNode }) {
+    // The ONE takeaway worth remembering — a real callout, unmissable.
     return (
-      <blockquote className="my-3 border-l-2 border-primary/50 bg-primary/[0.06] rounded-r-lg pl-3.5 pr-3 py-2 text-[15px] text-foreground/85">
+      <blockquote className="my-4 border-l-4 border-primary bg-primary/10 rounded-r-xl pl-4 pr-4 py-3 text-[15px] lg:text-base font-medium [&_p]:text-foreground [&_li]:text-foreground">
         {children}
       </blockquote>
     )
   },
   table({ children }: { children?: React.ReactNode }) {
-    return <div className="overflow-x-auto my-3"><table className="text-sm border-collapse [&_th]:border [&_th]:border-border [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:bg-muted [&_th]:text-foreground [&_td]:border [&_td]:border-border [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:text-foreground/90">{children}</table></div>
+    return (
+      <div className="overflow-x-auto my-4 rounded-xl border border-border">
+        <table className="w-full text-sm border-collapse [&_th]:border-b-2 [&_th]:border-border [&_th]:px-3 [&_th]:py-2 [&_th]:bg-primary/10 [&_th]:text-foreground [&_th]:font-bold [&_th]:text-left [&_td]:border-b [&_td]:border-border/50 [&_td]:px-3 [&_td]:py-2 [&_td]:text-foreground/85 [&_tr:last-child_td]:border-b-0">{children}</table>
+      </div>
+    )
   },
   hr() {
-    return <hr className="my-4 border-border/60" />
+    return <hr className="my-5 border-border" />
   },
 }
 

@@ -1199,9 +1199,11 @@ function WorkspaceInner() {
             style={{ overflowAnchor: 'none' }}
             className="flex-1 overflow-y-auto p-4"
           >
-          {/* Full-screen lesson: transcript centers on the same measure as
-              the input dock below. */}
-          <div className="max-w-3xl mx-auto w-full space-y-4">
+          {/* FULL-WIDTH LESSON (user directive, Aug 2026): the chat fills the
+              whole workspace — the old max-w-3xl column left two thirds of a
+              big screen empty. The input dock and syllabus strip share the
+              same full measure. */}
+          <div className="w-full space-y-4 lg:px-4">
             {messages.length === 0 && !streaming && (
               <div className="text-center py-10 space-y-2">
                 <Bot className="w-8 h-8 text-primary mx-auto" />
@@ -1227,7 +1229,7 @@ function WorkspaceInner() {
                     'rounded-2xl px-4 py-3 text-[15px] leading-relaxed transition-shadow',
                     m.role === 'user'
                       ? 'max-w-[80%] bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
-                      : 'max-w-[92%] bg-card border border-border text-foreground rounded-bl-sm',
+                      : 'w-full bg-card border border-border text-foreground rounded-bl-sm',
                     // Checkpoint-rail jump target — a brief ring says "here".
                     flashMsgId === m.id && 'ring-2 ring-primary/70',
                   )}>
@@ -1338,7 +1340,7 @@ function WorkspaceInner() {
             })}
             {streaming && streamText && (
               <div className="flex justify-start">
-                <div className="max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
+                <div className="w-full rounded-2xl rounded-bl-sm px-4 py-3 bg-card border border-border text-foreground text-[15px] leading-relaxed">
                   {(() => {
                     const visible = streamText.split('[[TREE_SUGGEST]]')[0].split('[[QUIZ]]')[0].split('[[XP]]')[0].split('[[SYLLABUS]]')[0].split('[[ASSESS]]')[0]
                     return (
@@ -1360,7 +1362,7 @@ function WorkspaceInner() {
             {activeQuiz && !streaming && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                className="max-w-[92%] border border-primary/40 bg-primary/[0.06] rounded-2xl rounded-bl-sm px-4 py-3 space-y-3"
+                className="w-full border border-primary/40 bg-primary/[0.06] rounded-2xl rounded-bl-sm px-4 py-3 space-y-3"
               >
                 <p className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
                   <HelpCircle className="w-3.5 h-3.5" /> {t('workspace.checkpoint')}
@@ -1574,7 +1576,7 @@ function WorkspaceInner() {
               <motion.div
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 className={cn(
-                  'max-w-[92%] rounded-2xl rounded-bl-sm px-4 py-3 border',
+                  'w-full rounded-2xl rounded-bl-sm px-4 py-3 border',
                   treeOutcome === 'completed'
                     ? 'border-amber-400/50 bg-amber-500/[0.08]'
                     : treeOutcome === 'buildPending'
@@ -1641,7 +1643,7 @@ function WorkspaceInner() {
             {suggestion && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                className="max-w-[92%] border border-emerald-400/40 bg-emerald-500/[0.08] rounded-2xl rounded-bl-sm px-4 py-3"
+                className="w-full border border-emerald-400/40 bg-emerald-500/[0.08] rounded-2xl rounded-bl-sm px-4 py-3"
               >
                 {suggestion.type === 'add' ? (
                   <>
@@ -1698,7 +1700,7 @@ function WorkspaceInner() {
               correct answer closes a point — the felt moment of progress. */}
           {syllabus.length > 0 && node?.status !== 'understood' && (
             <div className="px-3 lg:px-4 pt-2 bg-card/30 border-t border-border/60">
-              <div className="max-w-3xl mx-auto w-full flex flex-wrap items-center gap-1.5 pb-1.5">
+              <div className="w-full lg:px-4 flex flex-wrap items-center gap-1.5 pb-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   🎯 {t('workspace.syllabusTitle')}
                 </span>
@@ -1728,7 +1730,7 @@ function WorkspaceInner() {
               SOTA multimodal capture row as the tree copilot (uniformity):
               📎 file · 📷 photo · 🎥 video · 🎙️ voice note. */}
           <div className="p-3 lg:p-4 border-t border-border bg-card/50 backdrop-blur-sm">
-            <div className="max-w-3xl mx-auto w-full space-y-1.5">
+            <div className="w-full lg:px-4 space-y-1.5">
               <AttachmentTray attachments={attachments} note={attachNote} onRemove={removeAt} />
               <CaptureControls addFiles={addFiles} recording={recording} toggleRecord={toggleRecord} />
               <div className="flex items-end gap-2 w-full">
@@ -1837,7 +1839,7 @@ function WorkspaceInner() {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-3xl mx-auto px-5 py-8 text-[15px] leading-relaxed">
+            <div className="w-full px-6 lg:px-10 py-8 text-[15px] leading-relaxed">
               <div ref={explainerFullRef}>
                 <MessageErrorBoundary fallbackText={node.explainer} degradedNote={t('workspace.renderDegraded')}>
                   <MarkdownRenderer content={node.explainer} imageContext={`${node.title} — ${node.summary}`} />

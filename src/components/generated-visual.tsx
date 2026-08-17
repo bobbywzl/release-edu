@@ -132,15 +132,21 @@ export function GeneratedVisual({ prompt, context = '' }: { prompt: string; cont
     )
   }
 
+  // FIGURE CARD (user directive, Aug 2026): visuals must read as figures —
+  // framed, with the diagram's own description as a visible caption — never
+  // as a bare image floating in the text.
   return (
-    <div className="my-3">
+    <figure className="my-4 rounded-xl border border-border bg-card/60 p-2.5">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={image}
         alt={prompt}
-        className="rounded-xl border border-border max-w-full max-h-[380px] object-contain bg-white"
+        className="rounded-lg border border-border/60 max-w-full max-h-[420px] object-contain bg-white mx-auto"
       />
+      <figcaption className="mt-2 px-1 text-xs text-muted-foreground italic text-center leading-snug">
+        {prompt}
+      </figcaption>
       {typeof confidence === 'number' && <ConfidenceBar value={confidence} issue={issue} />}
-    </div>
+    </figure>
   )
 }
