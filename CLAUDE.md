@@ -126,7 +126,7 @@ Release EDU first-run interview is deleted — first-run onboarding IS the setup
   sketch — a chunk-anchored history window whose tail carries a third
   breakpoint, and ALL per-turn material inside the final user message as
   `<turn_context>`; keep stable text out of that message and volatile text out
-  of the system blocks), the `[NODE_INTRO]` (barebones bullet syllabus, ~120
+  of the system blocks), the `[NODE_INTRO]` (barebones bullet syllabus, ~80
   words max + the `[[SYLLABUS]]` contract)/`[NODE_REVIEW]`/`[NODE_CHECKPOINT]`
   hooks (the last keeps checkpoints coming until the node verifies; checkpoints
   are scoped to THIS node's content, using the full tree only for boundaries), and
@@ -175,7 +175,11 @@ Release EDU first-run interview is deleted — first-run onboarding IS the setup
   clamped, 14k-char budget), ONE recall round per turn, surfaced to the
   student as a `tree.recalledNote` line.
 - `src/app/dashboard/workspace/page.tsx` — per-node work area: Bob chat,
-  explainer, editable notes, highlight-based annotations, file evidence.
+  explainer, editable notes, highlight-based annotations, file evidence. The
+  SYLLABUS STRIP above the composer shows the whole coverage map as pills with
+  the currently-learned facet pulsing (pending card's facet, else first undone);
+  in-text, Bob opens facet-tied turns with a **▸ facet** spotlight label (the
+  FACET SPOTLIGHT rule in the chat prompt).
 - `src/lib/insight-memory.ts` + `src/lib/insight-extraction.ts` — the personalization
   moat. PRESERVE in every change; extraction runs from workspace chats.
 - `src/lib/xp-engine.ts`, `src/lib/badges.ts`, `src/components/xp-panel.tsx` — XP,
@@ -246,8 +250,8 @@ that produce complete understanding — intuition first, every technical term
 unpacked in plain words in the same breath; the depth calibrator raises depth,
 never jargon. Its **Structured & Short** clause: bullets with bold lead-ins as
 the default body, `##`/`###` hierarchy on substantial replies, one example per
-concept told once, hard word budgets (~150 teaching turn / ~250 remediation /
-300-450 explainer). `PLAIN_LANGUAGE` + `STRUCTURED_BREVITY` in
+concept told once, hard word budgets (~100 teaching turn / ~180 remediation /
+300-450 explainer — ceilings, not targets). `PLAIN_LANGUAGE` + `STRUCTURED_BREVITY` in
 `src/lib/tree-engine.ts` ride inside `sessionDirectives()`, so any prompt using
 session directives gets both free; `markdown-renderer.tsx` + `mobile.css` keep
 headers / subheader kickers / body visually distinct.
@@ -281,7 +285,10 @@ TRULY UNDERSTANDS it: transfer to unseen contexts, why/what-if probes, edge case
 the memorized rule breaks. A question answerable by reciting an explainer is a failed
 question. Implementation: the CHECKPOINT QUESTIONS section of the node chat prompt
 (Bob authors every `[[QUIZ]]` under this law) + `judgeCheckpointAnswer` in
-`src/lib/tree-engine.ts` (short answers judged against the same bar).
+`src/lib/tree-engine.ts`. The law governs question AUTHORING only — short-answer
+GRADING is gist-based (user directive, Aug 2026): the core idea in the student's
+own loose words = correct; wrong is reserved for contradicting the core, a real
+misconception, or no grasp shown. Never keyword-match against the rubric.
 
 ## Database Rules
 

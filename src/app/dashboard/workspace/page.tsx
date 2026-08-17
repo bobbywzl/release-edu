@@ -53,6 +53,9 @@ interface QuizPayload {
   rubric?: string
   /** Answer-safe nudge behind the card's Hint button. */
   hint?: string
+  /** The syllabus facet this card probes (facet names are already fully
+   *  visible in the coverage map) — powers the strip's "now on" highlight. */
+  facet?: string
 }
 
 /**
@@ -92,7 +95,7 @@ let tempId = 0
  * a drawn-✓ tick animation the moment a later correct answer closes it — the
  * felt moment of real progress, not just a silent counter move.
  */
-function HolePill({ name, done, title }: { name: string; done: boolean; title: string }) {
+function HolePill({ name, done, current, struggled, title }: { name: string; done: boolean; current: boolean; struggled: boolean; title: string }) {
   const prevDone = useRef(done)
   const [pop, setPop] = useState(false)
   useEffect(() => {
@@ -116,7 +119,11 @@ function HolePill({ name, done, title }: { name: string; done: boolean; title: s
         'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium max-w-[240px]',
         done
           ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
-          : 'border-amber-400/40 bg-amber-500/10 text-amber-300',
+          : current
+            ? 'border-primary/70 bg-primary/15 text-primary ring-1 ring-primary/30'
+            : struggled
+              ? 'border-amber-400/40 bg-amber-500/10 text-amber-300'
+              : 'border-border bg-muted/40 text-muted-foreground',
       )}
     >
       {done ? (
@@ -125,10 +132,13 @@ function HolePill({ name, done, title }: { name: string; done: boolean; title: s
         <motion.svg key={pop ? 'tick-anim' : 'tick'} viewBox="0 0 24 24" className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round">
           <motion.path d="M20 6L9 17l-5-5" initial={{ pathLength: pop ? 0 : 1 }} animate={{ pathLength: 1 }} transition={{ duration: 0.45, ease: 'easeOut' }} />
         </motion.svg>
+      ) : current ? (
+        // The live "you are here" marker — the one point being learned now.
+        <span className="w-2 h-2 rounded-full bg-current animate-pulse flex-shrink-0" />
       ) : (
         <span className="w-2.5 h-2.5 border-[1.5px] border-current rounded-[3px] flex-shrink-0" />
       )}
-      <span className={cn('truncate', done && 'line-through decoration-emerald-400/60')}>{name}</span>
+      <span className={cn('truncate', done && 'line-through decoration-emerald-400/60', current && 'font-semibold')}>{name}</span>
     </motion.span>
   )
 }
@@ -291,14 +301,27 @@ function WorkspaceInner() {
     }, 150)
   }
 
-  // ── HOLES TO FILL (objective pills) ──
-  // Every facet the learner has MISSED a checkpoint on: open box while
-  // unfixed, animated tick the moment a correct answer closes it. Derived
+  // ── SYLLABUS STRIP (the coverage map, with "you are here") ──
+  // Every facet of the node's syllabus as a pill: ✓ proven, ⬜ open, amber =
+  // missed a checkpoint on it, and ONE highlighted as currently being learned
+  // — the live pending card's facet, else the first unproven point (exactly
+  // the "next undone facet" the chat prompt directs Bob to target). Derived
   // purely from the sanitized quizState, so it survives reloads.
-  const holes = useMemo(() => {
+  const syllabus = useMemo(() => {
     const qs = parseQuizState(node?.quizState)
-    return (qs.facets ?? []).filter(f => f.struggled).map(f => ({ name: f.name, done: f.done }))
-  }, [node?.quizState])
+    const facets = qs.facets ?? []
+    if (facets.length === 0) return []
+    const norm = (s: string) => s.trim().toLowerCase()
+    const pendingFacet = activeQuiz?.facet ? norm(activeQuiz.facet) : null
+    let currentIdx = pendingFacet ? facets.findIndex(f => norm(f.name) === pendingFacet) : -1
+    if (currentIdx === -1 || facets[currentIdx].done) currentIdx = facets.findIndex(f => !f.done)
+    return facets.map((f, i) => ({
+      name: f.name,
+      done: f.done,
+      struggled: f.struggled === true,
+      current: i === currentIdx,
+    }))
+  }, [node?.quizState, activeQuiz])
 
   // THE ROOT HAS NO WORKSPACE (law): it IS the problem statement, edited only
   // through the Tree Copilot. Any root deep-link bounces back to the tree.
@@ -1669,23 +1692,31 @@ function WorkspaceInner() {
           </div>
           </div>
 
-          {/* HOLES TO FILL — the to-do objectives strip: every syllabus point
-              the learner missed a checkpoint on pops in as an open box, and
-              draws its ✓ the moment a later correct answer closes it. The
-              tick, not a silent counter, is the felt moment of progress. */}
-          {holes.length > 0 && (
+          {/* SYLLABUS STRIP — the whole coverage map as pills: ✓ proven,
+              ⬜ open, amber = missed once, and the ONE point currently being
+              learned pulsing ("you are here"). Ticks still draw the moment a
+              correct answer closes a point — the felt moment of progress. */}
+          {syllabus.length > 0 && node?.status !== 'understood' && (
             <div className="px-3 lg:px-4 pt-2 bg-card/30 border-t border-border/60">
               <div className="max-w-3xl mx-auto w-full flex flex-wrap items-center gap-1.5 pb-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  🎯 {t('workspace.holesTitle')}
+                  🎯 {t('workspace.syllabusTitle')}
                 </span>
                 <AnimatePresence>
-                  {holes.map(h => (
+                  {syllabus.map(h => (
                     <HolePill
                       key={h.name}
                       name={h.name}
                       done={h.done}
-                      title={h.done ? t('workspace.railFixedHint') : t('workspace.holeOpenHint')}
+                      current={h.current}
+                      struggled={h.struggled}
+                      title={h.done
+                        ? (h.struggled ? t('workspace.railFixedHint') : t('workspace.syllabusDoneHint'))
+                        : h.current
+                          ? t('workspace.syllabusNowHint')
+                          : h.struggled
+                            ? t('workspace.holeOpenHint')
+                            : t('workspace.syllabusOpenHint')}
                     />
                   ))}
                 </AnimatePresence>

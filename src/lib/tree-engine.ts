@@ -75,7 +75,7 @@ export const STRUCTURED_BREVITY = `RULE — STRUCTURED & SHORT (law): write to b
 - Bullets with **bold lead-ins** are the DEFAULT body. A prose paragraph only where one flowing thought truly needs it — max 3 short sentences, never two paragraphs in a row.
 - Every substantial reply has visible structure: one ## title naming the turn's topic, ### subheads for its parts, bullets under them. A wall of stacked paragraphs is a failed reply.
 - SAY IT ONCE: one explanation and ONE example or analogy per concept — never the same story retold from a second angle, no preamble, no recap of what was already said, no closing summary.
-- LENGTH BUDGET: a typical teaching turn fits in ~150 words; a full remediation/deep-dive in ~250. Only the student explicitly asking for more justifies more. If half the lines could be cut without losing meaning, cut them BEFORE sending.`
+- LENGTH BUDGET — a HARD CEILING, not a target: a typical teaching turn fits in ~100 words; a full remediation/deep-dive in ~180. Only the student explicitly asking for more justifies more. Most replies should land well UNDER budget: a thought that fits in 2 sentences ships as 2 sentences. If half the lines could be cut without losing meaning, cut them BEFORE sending.`
 
 // Goal-Necessity & Plan-First Growth (law — canonical wording in
 // FOUNDATION.md): the discipline for EVERY prompt that lays out nodes
@@ -1925,8 +1925,11 @@ ${sessionDirectives(tree, lang)}`,
 export interface CheckpointJudgement { correct: boolean; score: number; feedback: string }
 
 /**
- * Judge one short-answer checkpoint (meaning over wording; the Differentiator
- * bar: does the answer show understanding that would transfer, or recitation?).
+ * Judge one short-answer checkpoint. GIST GRADING (user directive, Aug 2026):
+ * the core idea in the student's own loose words = correct — wrong is reserved
+ * for answers that contradict the core, assert a real misconception, or show
+ * no grasp at all. The rubric is a gist reference, never a keyword checklist.
+ * (The Differentiator law governs question AUTHORING — grading stays lenient.)
  */
 export async function judgeCheckpointAnswer(
   userId: string, treeId: string, nodeId: string,
@@ -1957,21 +1960,28 @@ The feedback must be INFORMATIVE, not a verdict: in 1-3 sentences name what the 
 ${sessionDirectives(tree, lang)}
 
 Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`
-    : `Judge whether the student's answer shows TRUE understanding (meaning over wording; partial credit for sound reasoning). Correct = score ≥ 7.
+    : `Judge whether the student's answer captures the CORE IDEA this checkpoint probes. Grade the GIST, never the wording. Correct = score ≥ 7.
 
 NODE UNDER STUDY: "${node.title}" — ${node.summary}
 ROOT PROBLEM: "${tree.title}"
 CHECKPOINT QUESTION: ${question.slice(0, 600)}
-${rubric ? `WHAT A TRULY-UNDERSTANDING ANSWER MUST CONTAIN: ${rubric.slice(0, 400)}` : ''}
+${rubric ? `THE CORE IDEA a correct answer shows (a gist reference for YOU, never a keyword checklist — the student has never seen this wording): ${rubric.slice(0, 400)}` : ''}
 STUDENT'S ANSWER${confidence ? ` [stated confidence: ${confidence}]` : ''}: ${answer.slice(0, 4000)}
+
+GIST GRADING (law):
+- 9-10: the core idea, precise and complete.
+- 7-8 (still CORRECT): the core idea is there in their own words — even loosely phrased, informal, imprecise on secondary detail, or missing every keyword of the reference. Generally the right direction and not at odds with the core = correct.
+- 4-6: no real grasp shown — restates the question, or so vague it could be written without understanding anything.
+- 0-3: contradicts the core idea, or asserts a real misconception.
+Vague-but-right-direction is CORRECT; polished-but-wrong is not. Loose phrasing, missing terminology, or an unmentioned secondary detail NEVER pull a right idea below 7 — only a wrong or absent idea does. Torn between two scores → give the higher one: a false "wrong" derails the student into remediation they don't need, and later checkpoints re-probe anyway.
 
 HYPERCORRECTION RULE: a CONFIDENT-WRONG answer is the most teachable state. If the answer is marked "sure" and scores below 5, your feedback must open by directly, memorably refuting the specific wrong belief (name it, then correct it).
 
-The feedback must be INFORMATIVE, not a verdict: in 1-3 sentences give the scientific reason the right answer is right (and where their reasoning broke, if it did).
+FEEDBACK: 1-2 short sentences, informative, never a bare verdict. Correct → confirm what their answer got right; at most sharpen ONE imprecision in a single clause. Wrong → the scientific reason the right answer is right and where their reasoning broke.
 
 ${sessionDirectives(tree, lang)}
 
-Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`
+Return ONLY JSON: {"score": 0-10, "feedback": "1-2 short sentences"}`
   const judgeBody = {
     max_tokens: 700,
     ...NO_THINKING,
@@ -2022,8 +2032,9 @@ Return ONLY JSON: {"score": 0-10, "feedback": "1-3 sentences"}`
   }
   const score = Math.max(0, Math.min(10, parsed.score))
   // Sentence-safe clamp — the raw slice showed the student "…caught the bon"
-  // at the exact moment of praise.
-  return { correct: score >= 7, score, feedback: clampText(parsed.feedback ?? '', 600) }
+  // at the exact moment of praise. 400 chars ≈ the 1-2 short sentences the
+  // prompt asks for (verbosity directive, Aug 2026).
+  return { correct: score >= 7, score, feedback: clampText(parsed.feedback ?? '', 400) }
 }
 
 export interface XpAwardLite { awarded: number; label: string; levelUp: boolean; newLevel: number; source?: string }

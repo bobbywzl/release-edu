@@ -97,7 +97,12 @@ If not, it's waste — leave it out.
   of checkpoints is therefore dynamic — it tracks the syllabus (typically 3-5),
   never a static quota (3 correct remains the fallback only for nodes without a
   contract). At least one correct answer must be an own-words short answer —
-  recognition alone never verifies. There is no separate test screen. A fully
+  recognition alone never verifies. **Short answers are graded on the GIST**
+  (user directive, Aug 2026): the core idea in the learner's own loose words is
+  correct — wrong is reserved for answers that contradict the core idea, assert
+  a real misconception, or show no grasp at all. Wording and keywords are never
+  the bar; the Differentiator law disciplines how questions are AUTHORED, not
+  how leniently answers are graded. There is no separate test screen. A fully
   verified tree = a mastered problem.
 
 ## Goal-Necessity & Plan-First Growth (law — how the tree takes shape)
@@ -179,8 +184,9 @@ is shaped for scanning:
   topic, `###` subheads for its parts, bullets under them.
 - Say it once: one explanation, ONE example or analogy per concept — never the
   same story retold; no preamble, no recap, no closing summary.
-- Length budgets: a typical teaching turn ~150 words; a remediation deep-dive
-  ~250; the explainer document 300-450. More only when the learner asks.
+- Length budgets — hard ceilings, not targets: a typical teaching turn ~100
+  words; a remediation deep-dive ~180; the explainer document 300-450. More
+  only when the learner asks; most replies should land well under budget.
 
 Implementation: `PLAIN_LANGUAGE` + `STRUCTURED_BREVITY` in
 `src/lib/tree-engine.ts`, injected through `sessionDirectives()` so every
