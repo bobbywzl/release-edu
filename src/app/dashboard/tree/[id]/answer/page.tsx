@@ -8,14 +8,16 @@
  * from (each claim in the document is also tagged inline with the node
  * that proved it), regenerate, and print/PDF export.
  *
- * Staleness contract: answer with no generatedAt = the tree just
- * (re)completed and the document is being reassembled — show the banner and
- * poll until the fresh version lands instead of presenting the old one as
- * current.
+ * Auto-reveal contract: completion fires the synthesis in the background and
+ * GET reports `assembling` while it runs. Arriving early shows an honest
+ * "assembling…" state — never a generate button that would duplicate the
+ * running job — and polls until the document lands, then reveals it. Only
+ * if the polls outlive the job's window does the manual button return.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { motion } from 'framer-motion'
 import { ArrowLeft, FileText, Loader2, Printer, RefreshCw, ShieldCheck } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useLanguage } from '@/lib/i18n'
@@ -28,6 +30,11 @@ interface TreeMeta {
   nodes: Array<{ id: string; title: string; status: string | null; parentId: string | null; pending?: boolean }>
 }
 
+// 6s × 34 ≈ 3.4 min — outlives the server's assembling window (3 min), so
+// the manual button only returns once the server has stopped claiming a job.
+const POLL_MS = 6000
+const POLL_BUDGET = 34
+
 export default function AnswerReaderPage() {
   const params = useParams<{ id: string }>()
   const treeId = params?.id
@@ -36,10 +43,12 @@ export default function AnswerReaderPage() {
   const [tree, setTree] = useState<TreeMeta | null>(null)
   const [answer, setAnswer] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<string | null>(null)
+  const [assembling, setAssembling] = useState(false)
+  const [gaveUp, setGaveUp] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [note, setNote] = useState<string | null>(null)
-  const pollsLeft = useRef(20)
+  const pollsLeft = useRef(POLL_BUDGET)
 
   const loadAnswer = useCallback(async () => {
     if (!treeId) return
@@ -47,6 +56,7 @@ export default function AnswerReaderPage() {
       const d = await (await fetch(`/api/tree/${treeId}/answer`, { cache: 'no-store' })).json()
       setAnswer(typeof d.answer === 'string' && d.answer.trim() ? d.answer : null)
       setGeneratedAt(d.generatedAt ?? null)
+      setAssembling(!!d.assembling)
     } catch { /* keeps last state */ }
   }, [treeId])
 
@@ -62,18 +72,27 @@ export default function AnswerReaderPage() {
       if (an) {
         setAnswer(typeof an.answer === 'string' && an.answer.trim() ? an.answer : null)
         setGeneratedAt(an.generatedAt ?? null)
+        setAssembling(!!an.assembling)
       }
     }).catch(() => {}).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [treeId])
 
-  // Stale (answer, no timestamp) = reassembly in flight — poll it in.
-  const stale = !!answer && !generatedAt
+  // Assembly in flight — poll it in, then reveal. A fresh document always
+  // clears `assembling` server-side, which ends the loop. An interval, not a
+  // re-armed timeout: empty polls change no state, so effects keyed on state
+  // would never re-fire.
   useEffect(() => {
-    if (!stale || pollsLeft.current <= 0) return
-    const timer = setTimeout(() => { pollsLeft.current -= 1; loadAnswer() }, 6000)
-    return () => clearTimeout(timer)
-  }, [stale, answer, generatedAt, loadAnswer])
+    if (!assembling || gaveUp) return
+    const timer = setInterval(() => {
+      if (pollsLeft.current <= 0) { setGaveUp(true); return }
+      pollsLeft.current -= 1
+      loadAnswer()
+    }, POLL_MS)
+    return () => clearInterval(timer)
+  }, [assembling, gaveUp, loadAnswer])
+
+  const waiting = assembling && !gaveUp
 
   async function regenerate() {
     if (generating || !treeId) return
@@ -84,10 +103,18 @@ export default function AnswerReaderPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lang: language }),
       })
+      if (res.status === 202) {
+        // The completion synthesis is already running — wait for it.
+        pollsLeft.current = POLL_BUDGET
+        setGaveUp(false)
+        setAssembling(true)
+        return
+      }
       const body = await res.json().catch(() => ({}))
       if (res.ok && typeof body.answer === 'string') {
         setAnswer(body.answer)
         setGeneratedAt(body.generatedAt ?? new Date().toISOString())
+        setAssembling(false)
       } else {
         setNote(typeof body.error === 'string' ? body.error : t('tree.actionFailed'))
       }
@@ -114,7 +141,7 @@ export default function AnswerReaderPage() {
         </div>
         <button
           onClick={regenerate}
-          disabled={generating}
+          disabled={generating || waiting}
           className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/40 text-amber-300 text-xs px-2.5 py-1.5 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
         >
           {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -134,10 +161,10 @@ export default function AnswerReaderPage() {
           <div className="py-24 flex justify-center"><Loader2 className="w-6 h-6 text-primary animate-spin" /></div>
         ) : (
           <>
-            {(stale || (generating && answer)) && (
+            {(waiting || (generating && answer)) && (
               <div className="print:hidden flex items-center gap-2.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-200">
                 <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-                {t('tree.answerReassembling')}
+                {t('tree.answerAssembling')}
               </div>
             )}
 
@@ -162,17 +189,32 @@ export default function AnswerReaderPage() {
             )}
 
             {answer ? (
-              <>
-                <div className={cn('text-[15px] leading-relaxed', stale && 'opacity-80')}>
+              /* Keyed on the generation stamp: a freshly landed document
+                 re-mounts and slides in — the reveal moment. */
+              <motion.div
+                key={generatedAt ?? 'pre'}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+              >
+                <div className={cn('text-[15px] leading-relaxed', waiting && 'opacity-80')}>
                   <MarkdownRenderer content={answer} />
                 </div>
                 {generatedAt && (
-                  <p className="print:hidden text-[11px] text-muted-foreground/70">{new Date(generatedAt).toLocaleString()}</p>
+                  <p className="print:hidden mt-6 text-[11px] text-muted-foreground/70">{new Date(generatedAt).toLocaleString()}</p>
                 )}
-              </>
+              </motion.div>
+            ) : waiting ? (
+              /* First assembly in flight and nothing cached yet: the honest
+                 wait — no button that would duplicate the running job. */
+              <div className="py-16 text-center space-y-4">
+                <Loader2 className="w-8 h-8 text-amber-300/80 mx-auto animate-spin" />
+                <p className="text-sm text-amber-200/90 max-w-md mx-auto">{t('tree.answerAssembling')}</p>
+              </div>
             ) : (
               <div className="py-16 text-center space-y-4">
                 <FileText className="w-8 h-8 text-amber-300/70 mx-auto" />
+                {gaveUp && <p className="text-[12px] text-amber-300/90 max-w-md mx-auto">{t('tree.answerAssemblyFailed')}</p>}
                 <p className="text-sm text-muted-foreground max-w-md mx-auto">{t('tree.rootAnswerHint')}</p>
                 <button
                   onClick={regenerate}

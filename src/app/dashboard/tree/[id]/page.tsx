@@ -771,27 +771,54 @@ function NodeProgressCard({ node }: { node: TreeNodeData }) {
 // demand from here once anything is verified. Claim tags name the node
 // that proved each point; an honest-boundary section covers the rest.
 
+// Matches the reader page: outlive the server's 3-min assembling window so
+// the generate button only returns once no job can still be running.
+const ANSWER_POLL_MS = 6000
+const ANSWER_POLL_BUDGET = 34
+
 function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified: boolean }) {
   const { t, language } = useLanguage()
   const [answer, setAnswer] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<string | null>(null)
+  const [assembling, setAssembling] = useState(false)
+  const [gaveUp, setGaveUp] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const pollsLeft = useRef(ANSWER_POLL_BUDGET)
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/tree/${treeId}/answer`, { cache: 'no-store' })
+      if (!r.ok) return
+      const d = await r.json()
+      setAnswer(typeof d.answer === 'string' && d.answer.trim() ? d.answer : null)
+      setGeneratedAt(d.generatedAt ?? null)
+      setAssembling(!!d.assembling)
+    } catch { /* keeps last state */ }
+  }, [treeId])
 
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/tree/${treeId}/answer`, { cache: 'no-store' })
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => {
-        if (cancelled || !d) return
-        setAnswer(typeof d.answer === 'string' && d.answer.trim() ? d.answer : null)
-        setGeneratedAt(d.generatedAt ?? null)
-      })
-      .catch(() => { /* panel just shows the generate button */ })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    load().finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [treeId])
+  }, [load])
+
+  // Completion fired the synthesis in the background — poll it in so the
+  // document reveals itself here without a click. An interval, not a
+  // re-armed timeout: empty polls change no state, so effects keyed on
+  // state would never re-fire.
+  useEffect(() => {
+    if (!assembling || gaveUp) return
+    const timer = setInterval(() => {
+      if (pollsLeft.current <= 0) { setGaveUp(true); return }
+      pollsLeft.current -= 1
+      load()
+    }, ANSWER_POLL_MS)
+    return () => clearInterval(timer)
+  }, [assembling, gaveUp, load])
+
+  const waiting = assembling && !gaveUp
 
   async function generate() {
     if (generating) return
@@ -802,10 +829,18 @@ function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lang: language }),
       })
+      if (res.status === 202) {
+        // The completion synthesis is already running — wait for it.
+        pollsLeft.current = ANSWER_POLL_BUDGET
+        setGaveUp(false)
+        setAssembling(true)
+        return
+      }
       const body = await res.json().catch(() => ({}))
       if (res.ok && typeof body.answer === 'string') {
         setAnswer(body.answer)
         setGeneratedAt(body.generatedAt ?? new Date().toISOString())
+        setAssembling(false)
       } else {
         setNote(typeof body.error === 'string' ? body.error : t('tree.actionFailed'))
       }
@@ -817,7 +852,7 @@ function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified:
   }
 
   if (loading) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-  if (!answer && !hasVerified) return null
+  if (!answer && !hasVerified && !waiting) return null
   return (
     <div className="border border-amber-400/30 rounded-xl p-3 space-y-2 bg-amber-500/[0.04]">
       <p className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -842,24 +877,33 @@ function RootAnswerPanel({ treeId, hasVerified }: { treeId: string; hasVerified:
               <span className="text-[10px] text-muted-foreground/70 flex-1">
                 {new Date(generatedAt).toLocaleString()}
               </span>
-            ) : (
-              /* Stale-stamped: the tree just re-completed and the document
-                 is being reassembled — never present the old version as new. */
+            ) : waiting ? (
+              /* The tree just (re)completed and the document is being
+                 reassembled — never present the old version as new. */
               <span className="text-[10px] text-amber-300/90 flex-1 inline-flex items-center gap-1">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" /> {t('tree.answerReassembling')}
+                <Loader2 className="w-2.5 h-2.5 animate-spin flex-shrink-0" /> {t('tree.answerAssembling')}
               </span>
+            ) : (
+              <span className="text-[10px] text-amber-300/90 flex-1">{t('tree.answerAssemblyFailed')}</span>
             )}
             <button
               onClick={generate}
-              disabled={generating}
+              disabled={generating || waiting}
               className="inline-flex items-center gap-1 rounded-lg border border-amber-400/40 text-amber-300 text-[11px] px-2 py-1 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
             >
               {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : null} {t('tree.rootAnswerRegen')}
             </button>
           </div>
         </>
+      ) : waiting ? (
+        /* First assembly in flight, nothing cached yet: the honest wait —
+           no button that would duplicate the running job. */
+        <p className="text-[11px] text-amber-300/90 leading-snug inline-flex items-start gap-1.5">
+          <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 mt-0.5" /> {t('tree.answerAssembling')}
+        </p>
       ) : (
         <>
+          {gaveUp && <p className="text-[11px] text-amber-300/90 leading-snug">{t('tree.answerAssemblyFailed')}</p>}
           <p className="text-[11px] text-muted-foreground leading-snug">{t('tree.rootAnswerHint')}</p>
           <button
             onClick={generate}
