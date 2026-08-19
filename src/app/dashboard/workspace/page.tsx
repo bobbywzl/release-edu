@@ -214,6 +214,31 @@ function WorkspaceInner() {
   // seeded branch verified but the tree never grew — the honest question
   // card ("is the problem actually answered?") renders instead of a trophy.
   const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | 'buildPending' | null>(null)
+  // THE ANSWER auto-reveal: completion fires the synthesis in the background
+  // (20-120s), so the trophy card watches for the document and flips its
+  // status line to "ready" by itself — no false "assembled" claim, no click.
+  const [answerStatus, setAnswerStatus] = useState<'assembling' | 'ready' | null>(null)
+  useEffect(() => {
+    if (treeOutcome !== 'completed' || !treeId) { setAnswerStatus(null); return }
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    let polls = 34 // ≈ 3.4 min at 6s — outlives the job's 3-min window
+    setAnswerStatus('assembling')
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/tree/${treeId}/answer`, { cache: 'no-store' })
+        const d = r.ok ? await r.json() : null
+        if (cancelled) return
+        if (d?.generatedAt) { setAnswerStatus('ready'); return }
+        if (d && !d.assembling) { setAnswerStatus(null); return } // job died — the reader offers manual assembly
+      } catch { /* keep polling */ }
+      polls -= 1
+      if (polls <= 0) { if (!cancelled) setAnswerStatus(null); return }
+      timer = setTimeout(tick, 6000)
+    }
+    timer = setTimeout(tick, 2000) // first check quickly — fast syntheses land in ~20s
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [treeOutcome, treeId])
   // One facet-growth call in flight at a time (the ⬆ grow-into-branch chips).
   const [facetGrowBusy, setFacetGrowBusy] = useState<string | null>(null)
   // Checkpoint-rail navigation: the message being flashed after a jump.
@@ -1590,13 +1615,25 @@ function WorkspaceInner() {
                       <Trophy className="w-3.5 h-3.5" /> {t('workspace.treeCompleteTitle')}
                     </p>
                     <p className="text-sm text-foreground mt-1.5">{t('workspace.treeCompleteBody')}</p>
+                    {/* Live assembly status — the document builds itself in
+                        the background; this line flips to "ready" on its own. */}
+                    {answerStatus && (
+                      <p className="mt-1.5 text-[11px] text-amber-300/90 inline-flex items-center gap-1.5">
+                        {answerStatus === 'ready'
+                          ? <><ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" /> {t('workspace.answerReady')}</>
+                          : <><Loader2 className="w-3 h-3 animate-spin flex-shrink-0" /> {t('tree.answerAssembling')}</>}
+                      </p>
+                    )}
                     {/* Straight to the payoff DOCUMENT (the full-width
                         reader), not a dead-end drop on the graph with
                         nothing selected. */}
                     <div className="mt-2.5 flex flex-wrap gap-2">
                       <button
                         onClick={() => router.push(`/dashboard/tree/${treeId}/answer`)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors"
+                        className={cn(
+                          'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-semibold hover:bg-amber-500/30 transition-colors',
+                          answerStatus === 'ready' && 'shadow-[0_0_14px_rgba(251,191,36,0.35)]',
+                        )}
                       >
                         <FileText className="w-3.5 h-3.5" /> {t('tree.rootAnswerExpand')}
                       </button>
