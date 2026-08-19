@@ -9,7 +9,7 @@ export const maxDuration = 120
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
-import { seedTree, generateTreeDisplayTitle } from '@/lib/tree-engine'
+import { seedTree, generateTreeDisplayTitle, completeTreeIfProven } from '@/lib/tree-engine'
 
 // Per-instance guard so a burst of list GETs doesn't fire duplicate Haiku
 // backfills for the same tree while the first write is still in flight.
@@ -43,6 +43,20 @@ export async function GET() {
       }
     }
   } catch { /* non-critical — cards fall back to the verbatim title */ }
+
+  // Tree-level self-heal (seed-only gate removed, Aug 2026): a tree sitting
+  // fully proven but still 'active' — stranded by the retired gate —
+  // completes on its next list load: crown, status flip, THE ANSWER fired.
+  // Runs before the evidence pass so a healed tree gets its chip this load.
+  for (const t of trees) {
+    if (t.status !== 'active') continue
+    const real = t.nodes.filter(n => !n.pending && n.parentId !== null)
+    if (real.length === 0 || !real.every(n => n.status === 'understood')) continue
+    try {
+      const done = await completeTreeIfProven(userId, t.id, t.language ?? undefined)
+      if (done.treeCompleted) t.status = 'completed'
+    } catch { /* best-effort — the detail read retries */ }
+  }
 
   // Explained vs Deployed (qa-findings-4 №2): a completed tree is DEPLOYED
   // when real build evidence exists — a non-empty build log on any node, or

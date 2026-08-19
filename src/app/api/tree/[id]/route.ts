@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getUserId } from '@/lib/get-user-id'
-import { getTreeWithNodes } from '@/lib/tree-engine'
+import { getTreeWithNodes, completeTreeIfProven } from '@/lib/tree-engine'
 import { sanitizeQuizStateForClient, parseQuizState, masteryMet } from '@/lib/mastery'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -34,6 +34,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         console.warn('[tree] reconciled stranded verification', { nodeId: n.id })
       }
     } catch { /* repair is best-effort; next read retries */ }
+  }
+
+  // Tree-level reconciliation: the completion flip normally rides the last
+  // verify, but a tree can sit fully proven while still 'active' — stranded
+  // by the retired seed-only gate, or by a node the loop above just
+  // repaired. Complete it here on read: crown, trophy, THE ANSWER fired.
+  if (tree.status === 'active') {
+    const real = tree.nodes.filter(n => !n.pending && n.parentId !== null)
+    if (real.length > 0 && real.every(n => n.status === 'understood')) {
+      try {
+        const done = await completeTreeIfProven(userId, id, tree.language ?? undefined)
+        if (done.treeCompleted) {
+          tree.status = 'completed'
+          for (const n of tree.nodes) if (n.parentId === null) n.status = 'understood'
+        }
+      } catch { /* best-effort; next read retries */ }
+    }
   }
 
   // Answer-key protection (mastery.ts invariant): the live checkpoint's

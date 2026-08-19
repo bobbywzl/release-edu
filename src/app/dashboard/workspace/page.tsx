@@ -210,10 +210,10 @@ function WorkspaceInner() {
   // Discovery card from Bob's folded assessment ([[TREE_SUGGEST]] marker).
   const [suggestion, setSuggestion] = useState<null | { type: 'add'; title: string; summary: string } | { type: 'move'; nodeId: string; title: string }>(null)
   // Tree-level outcome of the answer that just verified this node:
-  // 'completed' = the whole tree (crown + trophy) · 'seedComplete' = every
-  // seeded branch verified but the tree never grew — the honest question
-  // card ("is the problem actually answered?") renders instead of a trophy.
-  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'seedComplete' | 'buildPending' | null>(null)
+  // 'completed' = the whole tree (crown + trophy) · 'buildPending' = every
+  // branch verified but this deployable-depth session still owes build
+  // evidence — the "show me it running" card renders instead of a trophy.
+  const [treeOutcome, setTreeOutcome] = useState<'completed' | 'buildPending' | null>(null)
   // THE ANSWER auto-reveal: completion fires the synthesis in the background
   // (20-120s), so the trophy card watches for the document and flips its
   // status line to "ready" by itself — no false "assembled" claim, no click.
@@ -1054,8 +1054,8 @@ function WorkspaceInner() {
           // The payoff moment gets an AUTHOR (deep-audit §7): Bob restates
           // what was proven as capabilities, ties it to the root, and names
           // the next stop — the [[NEXT_NODE]] button rides his reply. The
-          // tree-level outcome (completed / seed-complete) renders as a card.
-          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.seedComplete ? 'seedComplete' : !!body.buildPending ? 'buildPending' : null)
+          // tree-level outcome (completed / build-pending) renders as a card.
+          setTreeOutcome(!!body.treeCompleted ? 'completed' : !!body.buildPending ? 'buildPending' : null)
           void streamFromBob('[NODE_VERIFIED]', false)
         }
       }, verified ? 2200 : 1500)
@@ -1595,8 +1595,8 @@ function WorkspaceInner() {
             )}
 
             {/* Tree-level outcome of the verifying answer: the trophy when
-                the whole tree is proven, or the HONEST QUESTION when only the
-                seed is — a 3-node seed is a plan, not a mastered problem. */}
+                the whole tree is proven, or the build-evidence ask when a
+                deployable-depth session still owes proof it runs. */}
             {treeOutcome && !streaming && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
@@ -1604,9 +1604,7 @@ function WorkspaceInner() {
                   'w-full rounded-2xl rounded-bl-sm px-4 py-3 border',
                   treeOutcome === 'completed'
                     ? 'border-amber-400/50 bg-amber-500/[0.08]'
-                    : treeOutcome === 'buildPending'
-                      ? 'border-violet-400/40 bg-violet-500/[0.06]'
-                      : 'border-emerald-400/40 bg-emerald-500/[0.06]',
+                    : 'border-violet-400/40 bg-violet-500/[0.06]',
                 )}
               >
                 {treeOutcome === 'completed' ? (
@@ -1645,7 +1643,7 @@ function WorkspaceInner() {
                       </button>
                     </div>
                   </>
-                ) : treeOutcome === 'buildPending' ? (
+                ) : (
                   <>
                     <p className="text-xs font-bold text-violet-300 uppercase tracking-wider flex items-center gap-1.5">
                       <Trophy className="w-3.5 h-3.5 opacity-60" /> {t('workspace.buildPendingTitle')}
@@ -1656,19 +1654,6 @@ function WorkspaceInner() {
                       className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 border border-violet-400/40 text-violet-300 text-xs font-semibold hover:bg-violet-500/30 transition-colors"
                     >
                       <ArrowRight className="w-3.5 h-3.5" /> {t('workspace.buildPendingCta')}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <Sprout className="w-3.5 h-3.5" /> {t('workspace.seedCompleteTitle')}
-                    </p>
-                    <p className="text-sm text-foreground mt-1.5">{t('workspace.seedCompleteBody')}</p>
-                    <button
-                      onClick={() => router.push(`/dashboard/tree/${treeId}`)}
-                      className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-semibold hover:bg-emerald-500/30 transition-colors"
-                    >
-                      <Bot className="w-3.5 h-3.5" /> {t('workspace.seedCompleteCta')}
                     </button>
                   </>
                 )}
