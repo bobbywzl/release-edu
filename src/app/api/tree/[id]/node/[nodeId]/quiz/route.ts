@@ -510,20 +510,15 @@ STUDENT'S NOTE (their commentary — the artifact itself is what must show the e
   // workspace can never durably disagree.
   let verified = false
   let treeCompleted = false
-  // Every branch verified but the tree never grew past its seed: the trophy
-  // is withheld (completion gate) and the client asks the honest question —
-  // "is the problem actually answered?" — with the Copilot gap-check as CTA.
-  let seedComplete = false
-  // Deployable-depth twin of seedComplete: every branch verified, but the
-  // session promised deployable understanding and no build evidence exists —
-  // the client asks for it ("show me it running") instead of the trophy.
+  // Every branch verified, but the session promised deployable understanding
+  // and no build evidence exists — the client asks for it ("show me it
+  // running") instead of the trophy.
   let buildPending = false
   if (!isVerifiedNode && masteryMet(tally)) {
     verified = true
     try {
       const r = await markNodeVerified(userId, id, nodeId, zh ? 'zh' : undefined)
       treeCompleted = r.treeCompleted
-      seedComplete = r.seedOnly ?? false
       buildPending = r.buildPending ?? false
       xp.push(...r.xp)
     } catch (err) {
@@ -606,7 +601,6 @@ STUDENT'S NOTE (their commentary — the artifact itself is what must show the e
     // that's already done — the review is ONE question, not a chain).
     alreadyVerified: isVerifiedNode,
     treeCompleted,
-    seedComplete,
     buildPending,
     review: isReview,
     // The "hole filled" moment: this correct answer closed a previously

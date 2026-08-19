@@ -2083,21 +2083,86 @@ async function deployableGateBlocks(treeId: string): Promise<boolean> {
   } catch { return false }
 }
 
+/**
+ * Crown the tree once every real branch node is verified: root →
+ * 'understood', status → 'completed' (compare-and-set — the completion
+ * bonus pays exactly once), THE ANSWER assembled in the background.
+ *
+ * The SEED-ONLY GATE IS REMOVED (user decision, Aug 2026, reversing
+ * deep-audit A3/2): 100% verified = mastered, whether or not the tree grew
+ * past its seed. The DEPLOYABLE COMPLETION GATE stays (qa-findings-4 №2):
+ * sessions targeting advanced/professional depth promised deployable
+ * understanding — their completion requires ≥1 piece of real build evidence
+ * on top of all-verified (checkpoints alone certify EXPLAINED).
+ *
+ * Also called from the tree GET routes as a read-time self-heal, so trees
+ * stranded at 100%-verified-but-active by the old gate complete on their
+ * next load. Never throws; failure = "not completed", next call retries.
+ */
+export async function completeTreeIfProven(
+  userId: string, treeId: string, lang?: string,
+): Promise<{ treeCompleted: boolean; buildPending: boolean; xp: XpAwardLite[] }> {
+  const xp: XpAwardLite[] = []
+  try {
+    const [total, remaining] = await Promise.all([
+      prisma.treeNode.count({ where: { treeId, pending: false, parentId: { not: null } } }),
+      prisma.treeNode.count({
+        where: { treeId, pending: false, parentId: { not: null }, status: { not: 'understood' } },
+      }),
+    ])
+    // No branches yet = a plan, not a proven problem — never crown it.
+    if (total === 0 || remaining > 0) return { treeCompleted: false, buildPending: false, xp }
+    if (await deployableGateBlocks(treeId)) {
+      // Every branch is verified — EXPLAINED — but this session's target
+      // depth promised "real-life deployable understanding" and no build
+      // evidence exists yet, so the crown waits: the quiz route surfaces
+      // "show me it running" with the build-log/upload path as the next step.
+      return { treeCompleted: false, buildPending: true, xp }
+    }
+    await prisma.treeNode.updateMany({
+      where: { treeId, parentId: null },
+      data: { status: 'understood' },
+    }).catch(() => null)
+    // Compare-and-set on the tree status: the completion bonus pays exactly
+    // once per tree. Growing a completed tree and mastering the new node
+    // must not re-pay it (repeatable XP inflation), and two nodes verifying
+    // concurrently must not both take this branch.
+    const flipped = await prisma.problemTree.updateMany({
+      where: { id: treeId, status: { not: 'completed' } },
+      data: { status: 'completed' },
+    })
+    if (flipped.count > 0) {
+      const { awardXp } = await import('@/lib/xp-engine')
+      const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
+      if (a) xp.push(a)
+    }
+    // THE ROOT ANSWER (the founding paragraph's missing artifact): on
+    // completion, assemble the resolution from the verified nodes' digests
+    // — the answer the learner came for, not a status report. Backgrounded.
+    // The old cached document is STALE-STAMPED first (rootAnswerAt = null,
+    // doc kept): clients read answer-without-timestamp as "reassembling"
+    // instead of serving the pre-completion version as if it were new.
+    try {
+      await prisma.problemTree.updateMany({
+        where: { id: treeId, rootAnswer: { not: null } },
+        data: { rootAnswerAt: null },
+      }).catch(() => null)
+      const { inBackground } = await import('@/lib/background')
+      inBackground(generateRootAnswer(userId, treeId, lang))
+    } catch { /* non-critical */ }
+    return { treeCompleted: true, buildPending: false, xp }
+  } catch {
+    return { treeCompleted: false, buildPending: false, xp }
+  }
+}
+
 export async function markNodeVerified(
   userId: string, treeId: string, nodeId: string, lang?: string,
-): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean; seedOnly?: boolean; buildPending?: boolean }> {
+): Promise<{ xp: XpAwardLite[]; treeCompleted: boolean; buildPending?: boolean }> {
   const node = await prisma.treeNode.findUnique({ where: { id: nodeId } })
   if (!node) throw new Error('Node not found')
   const zh = lang === 'zh'
   const xp: XpAwardLite[] = []
-  let treeCompleted = false
-  let seedOnly = false
-  // DEPLOYABLE COMPLETION GATE (qa-findings-4 №2): sessions targeting
-  // advanced/professional depth promised deployable understanding — their
-  // completion requires ≥1 piece of real build evidence (a cited build-log
-  // entry or an uploaded artifact) on top of all-verified. Checkpoints alone
-  // certify EXPLAINED; the evidence flips the tree to DEPLOYED.
-  let buildPending = false
 
   await prisma.treeNode.update({ where: { id: nodeId }, data: { status: 'understood' } })
   // Node mastery is the small-step reward of the Tree product.
@@ -2136,73 +2201,10 @@ export async function markNodeVerified(
   // the crown once every branch is proven; tree completion rides on that
   // same flip, so the only path to "problem mastered" runs through
   // AI-verified checkpoints.
-  try {
-    const remaining = await prisma.treeNode.count({
-      where: { treeId, pending: false, parentId: { not: null }, status: { not: 'understood' } },
-    })
-    if (remaining === 0) {
-      // COMPLETION GATE (deep-audit A3/2): a tree that never grew past its
-      // 1-3 seeded branches is a plan, not a mastered problem — certifying
-      // it hands out the trophy for ~15 answers and every incentive then
-      // points away from growth. The seed is depth-capped BY DESIGN, so
-      // completion requires at least one learner-driven node (copilot /
-      // question / manual origin). Legacy trees predating the origin column
-      // (all-null origins) are exempt — they can't be distinguished.
-      const grown = await prisma.treeNode.findMany({
-        where: { treeId, pending: false, parentId: { not: null } },
-        select: { origin: true },
-      })
-      const hasOriginData = grown.some(g => g.origin !== null)
-      const grewPastSeed = grown.some(g => g.origin === 'copilot' || g.origin === 'question' || g.origin === 'manual')
-      if (hasOriginData && !grewPastSeed) {
-        // Every seeded branch is verified but the tree never grew: no crown,
-        // no trophy — the quiz route surfaces "is the problem actually
-        // answered?" with the Copilot gap-check as the next step instead.
-        seedOnly = true
-      } else if (await deployableGateBlocks(treeId)) {
-        // DEPLOYABLE COMPLETION GATE: this session's target depth promised
-        // "real-life deployable understanding" (Mode: the learner's own files
-        // and products as an answer to "do you understand this point").
-        // Every branch is verified — EXPLAINED — but no build evidence exists
-        // yet, so the crown waits: the quiz route surfaces "show me it
-        // running" with the build-log/upload path as the next step.
-        buildPending = true
-      } else {
-      await prisma.treeNode.updateMany({
-        where: { treeId, parentId: null },
-        data: { status: 'understood' },
-      }).catch(() => null)
-      // Compare-and-set on the tree status: the completion bonus pays exactly
-      // once per tree. Growing a completed tree and mastering the new node
-      // must not re-pay it (repeatable XP inflation), and two nodes verifying
-      // concurrently must not both take this branch.
-      const flipped = await prisma.problemTree.updateMany({
-        where: { id: treeId, status: { not: 'completed' } },
-        data: { status: 'completed' },
-      })
-      if (flipped.count > 0) {
-        const { awardXp } = await import('@/lib/xp-engine')
-        const a = await awardXp(userId, 'chapter_completed', { sessionScore: 90 })
-        if (a) xp.push(a)
-      }
-      treeCompleted = true
-      // THE ROOT ANSWER (the founding paragraph's missing artifact): on
-      // completion, assemble the resolution from the verified nodes' digests
-      // — the answer the learner came for, not a status report. Backgrounded.
-      // The old cached document is STALE-STAMPED first (rootAnswerAt = null,
-      // doc kept): clients read answer-without-timestamp as "reassembling"
-      // instead of serving the pre-completion version as if it were new.
-      try {
-        await prisma.problemTree.updateMany({
-          where: { id: treeId, rootAnswer: { not: null } },
-          data: { rootAnswerAt: null },
-        }).catch(() => null)
-        const { inBackground } = await import('@/lib/background')
-        inBackground(generateRootAnswer(userId, treeId, lang))
-      } catch { /* non-critical */ }
-      }
-    }
-  } catch { /* non-critical */ }
+  const completion = await completeTreeIfProven(userId, treeId, lang)
+  const treeCompleted = completion.treeCompleted
+  const buildPending = completion.buildPending
+  xp.push(...completion.xp)
 
   // The node's CONTEXT SUMMARY should now reflect its freshly-VERIFIED state so
   // every ancestor-reading descendant knows this ground is proven. Refresh it
@@ -2213,7 +2215,7 @@ export async function markNodeVerified(
     inBackground(refreshNodeContextSummary(userId, treeId, nodeId, lang))
   } catch { /* non-critical */ }
 
-  return { xp, treeCompleted, seedOnly, buildPending }
+  return { xp, treeCompleted, buildPending }
 }
 
 // ── THE ROOT ANSWER (the artifact the founding paragraph promises) ───────
